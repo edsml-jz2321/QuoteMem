@@ -1,0 +1,36 @@
+QuoteMem
+Copyright (c) 2026 Quei
+Licensed under the MIT License (see LICENSE).
+
+This repository contains only QuoteMem's own source code and two benchmark
+source manifests. It does not bundle third-party code or benchmark data.
+
+Runtime dependencies
+--------------------
+QuoteMem installs its dependencies from the Python Package Index; each keeps
+its own licence. The direct dependencies are anyio, heavenbase, httpx, numpy,
+pydantic, pyyaml, sqlalchemy, starlette and uvicorn (plus pywin32 on Windows,
+and pyarrow and tiktoken for the optional "bench" extra).
+
+  HeavenBase - MIT License, installed from PyPI at version 0.1.2.3.
+
+Benchmark sources (not redistributed)
+-------------------------------------
+benchmarks/sources.json and benchmarks/sources-additional.json list public
+benchmark files by URL, pinned revision, SHA-256 and licence. The benchmark
+tool downloads them from their publishers; no benchmark content is stored in
+this repository. Users must follow each dataset's licence:
+
+  LoCoMo-Refined (mem-eval-suite/LoCoMo_refined, revision 8870911),
+    derived from LoCoMo (Snap Research, ACL 2024) - CC BY-NC 4.0,
+    non-commercial use only.
+  LongMemEval (xiaowu0162/longmemeval-cleaned, revision 98d7416) - MIT.
+  BEAM (mohammadtavakoli78/BEAM, revision b2da22e) - data listed under
+    CC BY-SA 4.0 in benchmarks/sources-additional.json; code MIT,
+    Copyright (c) 2025 Mohammad Tavakoli.
+  MemoryAgentBench (ai-hyz/MemoryAgentBench, revision 7ea0669) - MIT.
+
+Optional baseline
+-----------------
+The benchmark tool can compare against Mem0 (mem0ai, Apache License 2.0) when
+the user installs it separately. No Mem0 code is included.
