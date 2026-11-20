@@ -31,10 +31,10 @@ history and its review decision, so every stored fact can be checked against
 the conversation.
 
 **Result.** In the Agent Memory Leaderboard (AMLB) Cycle 2 official results,
-this system scored **59.83** overall and ranked **23rd of 125** entries in
-*Textual · Closed-source Methods*. It is listed there under the entry name
-"QMem" (not the separate entry "QMEM"):
-<https://agentmemoryleaderboard.ai/results/cycle-2/>.
+QuoteMem scored **59.83** overall and ranked **23rd of 125** entries in
+*Textual Memory · Closed-source Methods*, where it is listed as "QuoteMem"
+with a link to this repository:
+<https://agentmemoryleaderboard.ai/results/cycle-2/#industry-textual>.
 
 A paper describing the system is in preparation.
 
