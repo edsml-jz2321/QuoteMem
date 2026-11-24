@@ -1,0 +1,920 @@
+manifest_version: 2
+coordinate: heavenbase/backends/sql
+version: 0.1.2.3
+compatibility: {heavenbase: {min: 0.1.2.3, before: 0.1.3.0}}
+bundle: backend-sql
+items:
+  - kind: backend_type
+    identifier: sql
+    aliases: [SQLBackend]
+    name: SQL Backend
+    desc: Generic SQL-family Backend.
+    source: python-import
+    target: heavenbase.backends.sql.base:SQLBackend
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      factory: null
+      tags: &sql_backend_tags
+        portable: true
+        storage-roles: [row]
+        sql: true
+        row-lookup: {get_many: native, exists_many: native, count: native}
+        scalar-index:
+          value: true
+          unique: true
+          composite: true
+          composite_unique: true
+          opt_out: true
+          supported_types: [boolean, categorical, date, duration, float, identifier, integer, short-text, timestamp]
+          default_types: [identifier, short-text, integer, float]
+  - kind: backend_type
+    identifier: sqlite
+    aliases: [SQLiteBackend]
+    name: SQLite Backend
+    desc: SQLite SQL-family Backend.
+    source: python-import
+    target: heavenbase.backends.sql.sqlite:SQLiteBackend
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      factory: null
+      tags:
+        <<: *sql_backend_tags
+        atomic-upsert: true
+        compare-upsert: provider
+  - kind: backend_type
+    identifier: duckdb
+    aliases: [DuckDBBackend]
+    name: DuckDB Backend
+    desc: DuckDB SQL-family Backend.
+    source: python-import
+    target: heavenbase.backends.sql.duckdb:DuckDBBackend
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      factory: null
+      tags:
+        <<: *sql_backend_tags
+        atomic-upsert: true
+  - kind: backend_type
+    identifier: postgres
+    aliases: [postgresql, pg, PostgresBackend]
+    name: PostgreSQL Backend
+    desc: PostgreSQL SQL-family Backend.
+    source: python-import
+    target: heavenbase.backends.sql.postgres:PostgresBackend
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      factory: null
+      tags:
+        <<: *sql_backend_tags
+        atomic-upsert: true
+        workspace-database-namespace: true
+  - kind: backend_type
+    identifier: supabase
+    aliases: [SupabaseBackend]
+    name: Supabase Backend
+    desc: Supabase PostgreSQL SQL-family Backend.
+    source: python-import
+    target: heavenbase.backends.sql.supabase:SupabaseBackend
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      factory: null
+      tags:
+        <<: *sql_backend_tags
+        atomic-upsert: true
+  - kind: backend_type
+    identifier: trino
+    aliases: [TrinoBackend]
+    name: Trino Backend
+    desc: Trino SQL-family Backend.
+    source: python-import
+    target: heavenbase.backends.sql.trino:TrinoBackend
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      factory: null
+      tags: &sql_backend_no_index_tags
+        portable: true
+        storage-roles: [row]
+        sql: true
+        row-lookup: {get_many: native, exists_many: native, count: native}
+  - kind: backend_type
+    identifier: clickhouse
+    aliases: [ClickHouseBackend]
+    name: ClickHouse Backend
+    desc: ClickHouse MergeTree SQL-family Backend.
+    source: python-import
+    target: heavenbase.backends.sql.clickhouse:ClickHouseBackend
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      factory: null
+      tags:
+        <<: *sql_backend_no_index_tags
+        binary-storage: base64
+        unsupported-storage-types: [array, hyper-g]
+  - kind: backend_type
+    identifier: mysql
+    aliases: [MySQLBackend]
+    name: MySQL Backend
+    desc: MySQL SQL-family Backend.
+    source: python-import
+    target: heavenbase.backends.sql.mysql:MySQLBackend
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      factory: null
+      tags:
+        <<: *sql_backend_tags
+        atomic-upsert: true
+        workspace-database-namespace: true
+  - kind: backend_type
+    identifier: seekdb
+    aliases: [SeekDBBackend]
+    name: seekdb Backend
+    desc: seekdb MySQL-compatible SQL-family Backend.
+    source: python-import
+    target: heavenbase.backends.sql.seekdb:SeekDBBackend
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      factory: null
+      tags:
+        <<: *sql_backend_tags
+        atomic-upsert: true
+        workspace-database-namespace: true
+  - kind: backend_type
+    identifier: dolt
+    aliases: [DoltBackend]
+    name: Dolt Backend
+    desc: Dolt MySQL-compatible SQL-family Backend.
+    source: python-import
+    target: heavenbase.backends.sql.dolt:DoltBackend
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      factory: null
+      tags:
+        <<: *sql_backend_tags
+        atomic-upsert: true
+        workspace-database-namespace: true
+  - kind: backend_type
+    identifier: starrocks
+    aliases: [StarRocksBackend]
+    name: StarRocks Backend
+    desc: StarRocks SQL-family Backend.
+    source: python-import
+    target: heavenbase.backends.sql.starrocks:StarRocksBackend
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      factory: null
+      tags: *sql_backend_no_index_tags
+  - kind: backend_type
+    identifier: oceanbase
+    aliases: [OceanBaseBackend]
+    name: OceanBase Backend
+    desc: OceanBase SQL-family Backend.
+    source: python-import
+    target: heavenbase.backends.sql.oceanbase:OceanBaseBackend
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      factory: null
+      tags:
+        <<: *sql_backend_tags
+        atomic-upsert: true
+        workspace-database-namespace: true
+  - kind: backend_type
+    identifier: mssql
+    aliases: [msql, sqlserver, sql-server, MsSQLBackend]
+    name: Microsoft SQL Server Backend
+    desc: Microsoft SQL Server SQL-family Backend.
+    source: python-import
+    target: heavenbase.backends.sql.mssql:MsSQLBackend
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      factory: null
+      tags:
+        <<: *sql_backend_tags
+        atomic-upsert: true
+  - kind: backend_type
+    identifier: oracle
+    aliases: [OracleBackend]
+    name: Oracle Backend
+    desc: Oracle SQL-family Backend.
+    source: python-import
+    target: heavenbase.backends.sql.oracle:OracleBackend
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      factory: null
+      tags:
+        <<: *sql_backend_tags
+        atomic-upsert: true
+  - kind: database_dialect
+    identifier: default
+    groups: {sqlglot: [default]}
+    name: Default Database Dialect
+    desc: Explicit neutral physical database metadata.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: &database_dialect_tags {database: true, sql: true}
+      definition: {}
+
+  - kind: database_dialect
+    identifier: sql
+    groups: {sqlglot: [sql]}
+    name: SQL Database Dialect
+    desc: Generic physical SQL database metadata.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: *database_dialect_tags
+      definition: {}
+
+  - kind: database_dialect
+    identifier: sqlite
+    groups: {sqlglot: [sqlite]}
+    name: SQLite Database Dialect
+    desc: SQLite physical types, lifecycle, and reflection metadata.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags:
+        <<: *database_dialect_tags
+        database-blob-native: true
+        database-dynamic-typing: true
+        database-local-path: true
+        database-create: true
+        database-drop: true
+      definition:
+        requires_host: false
+        supports_memory: true
+        file_uri_query: true
+        memory_pool_class: static
+        memory_connect_args: {check_same_thread: false}
+        json_text_type: text
+        name_warning_dialect_factory: [sqlalchemy.dialects.sqlite, dialect]
+        retryable_error_messages: [database is locked, database table is locked, database schema is locked]
+        current_database_sql: PRAGMA database_list
+        static_database_names: [main]
+
+  - kind: database_dialect
+    identifier: postgresql
+    aliases: [postgres, pg, pgvector]
+    groups: {sqlglot: [postgres]}
+    name: PostgreSQL Database Dialect
+    desc: PostgreSQL physical types, lifecycle, and reflection metadata.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags:
+        <<: *database_dialect_tags
+        database-json-native: true
+        database-blob-native: true
+        database-create: true
+        database-drop: true
+      definition:
+        requires_host: true
+        superuser_database: postgres
+        sqlglot_dialect: postgres
+        sqlalchemy_aliases: [postgres, pg, pgvector]
+        json_native_type: postgresql_jsonb
+        vector_native_type: float_array
+        name_warning_dialect_factory: [sqlalchemy.dialects.postgresql, dialect]
+        current_database_sql: SELECT current_database() AS name
+        list_databases_sql: SELECT datname AS name FROM pg_database
+        owner_after_create_sql_keys: [postgresql_owner]
+        before_drop_force_sql_key: postgresql
+
+  - kind: database_dialect
+    identifier: mysql
+    aliases: [mariadb]
+    groups: {sqlglot: [mysql]}
+    name: MySQL Database Dialect
+    desc: MySQL physical types, lifecycle, and reflection metadata.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags:
+        <<: *database_dialect_tags
+        database-blob-native: true
+        database-create: true
+        database-drop: true
+      definition:
+        text_min_len: 16384
+        text_threshold_type: mysql_text
+        json_text_type: mysql_text
+        scope_style: database_only
+        superuser_database: mysql
+        sqlglot_dialect: mysql
+        sqlalchemy_aliases: [mariadb]
+        identifier_quote_style: backtick
+        name_warning_dialect_factory: [sqlalchemy.dialects.mysql, dialect]
+        current_database_sql: SELECT DATABASE() AS name
+        list_databases_sql: SELECT SCHEMA_NAME AS name FROM INFORMATION_SCHEMA.SCHEMATA
+
+  - kind: database_dialect
+    identifier: duckdb
+    groups: {sqlglot: [duckdb]}
+    name: DuckDB Database Dialect
+    desc: DuckDB physical types, local lifecycle, and reflection metadata.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags:
+        <<: *database_dialect_tags
+        database-json-native: true
+        database-blob-native: true
+        database-local-path: true
+        database-create: true
+        database-drop: true
+      definition:
+        requires_host: false
+        supports_memory: true
+        memory_pool_class: static
+        json_native_type: json
+        name_warning_dialect_factory: [duckdb_engine, Dialect]
+        current_database_sql: SELECT current_database() AS name
+        column_reflection_sql: DESCRIBE {table_name}
+        # The primary key's columns in declared order (PRAGMA table_info lists them in table column order).
+        # The schema is unqualified or, as duckdb-engine names it from DuckDB 0.7 on, "<database>.<schema>" in any of
+        # its quotings. DuckDB before 0.7 has one database and no database_name column: there each subquery's
+        # database_name binds to the outer single_database row, so its database test always holds.
+        primary_key_reflection_sql: >-
+          SELECT name, true AS pk FROM (SELECT unnest(k.constraint_column_names) AS name, generate_subscripts(k.constraint_column_names, 1) AS ordinal
+          FROM duckdb_constraints() AS k, (SELECT current_database() AS database_name) AS single_database
+          WHERE k.constraint_type = 'PRIMARY KEY' AND k.table_name = {table_literal} AND k.table_oid IN (SELECT table_oid FROM duckdb_constraints() WHERE
+          database_name = current_database() AND schema_name = coalesce({schema_literal}, current_schema())
+          OR {schema_literal} IN (database_name || '.' || schema_name, '"' || replace(database_name, '"', '""') || '".' || schema_name,
+          database_name || '."' || replace(schema_name, '"', '""') || '"', '"' || replace(database_name, '"', '""') || '"."' || replace(schema_name, '"', '""') || '"'))) AS key_columns
+          ORDER BY ordinal
+        index_reflection_sql: >-
+          SELECT i.index_name AS name, i.is_unique AS "unique", i.expressions AS columns, i.sql AS definition
+          FROM duckdb_indexes() AS i, (SELECT current_database() AS database_name) AS single_database
+          WHERE i.table_name = {table_literal} AND i.index_oid IN (SELECT index_oid FROM duckdb_indexes() WHERE
+          database_name = current_database() AND schema_name = coalesce({schema_literal}, current_schema())
+          OR {schema_literal} IN (database_name || '.' || schema_name, '"' || replace(database_name, '"', '""') || '".' || schema_name,
+          database_name || '."' || replace(schema_name, '"', '""') || '"', '"' || replace(database_name, '"', '""') || '"."' || replace(schema_name, '"', '""') || '"'))
+        empty_foreign_keys_on_reflection_error: true
+
+  - kind: database_dialect
+    identifier: mssql
+    aliases: [msql, sqlserver, sql-server]
+    groups: {sqlglot: [tsql]}
+    name: MsSQL Database Dialect
+    desc: Microsoft SQL Server physical types, lifecycle, and DDL metadata.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags:
+        <<: *database_dialect_tags
+        database-blob-native: true
+        database-create: true
+        database-drop: true
+      definition:
+        varchar_max: 8000
+        varchar_overflow_type: text
+        superuser_database: master
+        sqlglot_dialect: tsql
+        sqlalchemy_aliases: [msql, sqlserver, sql-server]
+        identifier_quote_style: bracket
+        json_text_type: text
+        name_warning_dialect_factory: [sqlalchemy.dialects.mssql, dialect]
+        current_database_sql: SELECT DB_NAME() AS name
+        before_drop_force_sql_key: mssql
+        before_drop_force_mode: quoted_database
+        rename_table_sql: "EXEC sp_rename :old_name, :new_name"
+        rename_table_bind_params: true
+        add_column_sql: ALTER TABLE {table} ADD {column}
+
+  - kind: database_dialect
+    identifier: oracle
+    groups: {sqlglot: [oracle]}
+    name: Oracle Database Dialect
+    desc: Oracle physical types, user lifecycle, and DDL metadata.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags:
+        <<: *database_dialect_tags
+        database-blob-native: true
+        database-create: true
+        database-drop: true
+      definition:
+        varchar_max: 4000
+        varchar_overflow_type: clob
+        json_text_type: clob
+        superuser_database: "{database}"
+        requires_host: false
+        url_database_omit_params: [service_name]
+        scope_style: service_sid_dsn
+        name_warning_dialect_factory: [sqlalchemy.dialects.oracle, dialect]
+        lifecycle_namespace_source: schema_or_username
+        lifecycle_namespace_upper: true
+        after_create_sql_keys: [oracle]
+        add_column_sql: ALTER TABLE {table} ADD ({column})
+
+  - kind: database_dialect
+    identifier: trino
+    groups: {sqlglot: [trino]}
+    name: Trino Database Dialect
+    desc: Trino physical JSON and identifier metadata.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags:
+        <<: *database_dialect_tags
+        database-json-native: true
+      definition:
+        requires_host: false
+        scope_style: catalog_schema
+        json_native_type: json
+        name_warning_dialect_factory: [sqlalchemy_trino.dialect, TrinoDialect]
+
+  - kind: database_dialect
+    identifier: clickhousedb
+    aliases: [clickhouse]
+    groups: {sqlglot: [clickhouse]}
+    name: ClickHouse Database Dialect
+    desc: ClickHouse Connect physical types, reflection, and identifier metadata.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: *database_dialect_tags
+      definition:
+        requires_host: true
+        scope_style: database_only
+        superuser_database: default
+        sqlglot_dialect: clickhouse
+        sqlalchemy_aliases: [clickhouse]
+        identifier_quote_style: backtick
+        name_warning_dialect_factory: [clickhouse_connect.cc_sqlalchemy.dialect, ClickHouseDialect]
+        current_database_sql: SELECT currentDatabase() AS name
+        list_databases_sql: SHOW DATABASES
+        column_reflection_sql: DESCRIBE TABLE {table_name}
+
+  - kind: database_dialect
+    identifier: starrocks
+    name: StarRocks Database Dialect
+    desc: StarRocks physical text and lifecycle metadata.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags:
+        <<: *database_dialect_tags
+        database-create: true
+        database-drop: true
+      definition:
+        sqlglot_dialect: mysql
+        sqlglot_preferred: false
+        identifier_quote_style: backtick
+        json_text_type: text
+        name_warning_dialect_factory: [sqlalchemy.dialects.mysql, dialect]
+        current_database_sql: SELECT DATABASE() AS name
+
+  - kind: database_dialect
+    identifier: oceanbase
+    name: OceanBase Database Dialect
+    desc: OceanBase MySQL-compatible physical metadata.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: *database_dialect_tags
+      definition:
+        superuser_database: mysql
+        sqlglot_dialect: mysql
+        sqlglot_preferred: false
+        name_warning_dialect_factory: [sqlalchemy.dialects.mysql, dialect]
+        current_database_sql: SELECT DATABASE() AS name
+
+  - kind: database_dialect
+    identifier: hive
+    groups: {sqlglot: [hive]}
+    name: Hive Database Dialect
+    desc: Hive physical text and lifecycle metadata.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags:
+        <<: *database_dialect_tags
+        database-create: true
+        database-drop: true
+      definition:
+        superuser_database: default
+        identifier_quote_style: backtick
+        json_text_type: text
+  - kind: sql_dialect
+    identifier: sql
+    name: SQL Dialect
+    desc: Conservative generic SQL handler metadata.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: &sql_dialect_tags {sql: true}
+      definition: &sql_definition
+        native_ops: [eq, ne, lt, lte, gt, gte, match, like, ilike, contains, starts_with, ends_with, in, regex, wildcard]
+        native_text_ops: []
+        native_text_key_ops: []
+        native_aggregate_ops: []
+        case_insensitive_like: false
+        supports_regex: false
+        supports_wildcard: false
+        regex_style: regexp_like
+        wildcard_style: like
+        side_table_json_object_style: json_object
+        side_table_json_agg_style: json_group_array
+        json_path_style: null
+        unique_nulls_distinct: true
+        fallback_like: false
+        fallback_reasons: {}
+        text_evidence: null
+        text_filter_factory: null
+        text_key_evidence: null
+        text_key_factory: null
+
+  - kind: sql_dialect
+    identifier: sqlite
+    name: SQLite SQL Dialect
+    desc: SQLite handler, JSON path, and canonical text metadata.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: *sql_dialect_tags
+      definition:
+        <<: *sql_definition
+        native_ops: [eq, ne, lt, lte, gt, gte, match, like, ilike, contains, starts_with, ends_with, in, regex, wildcard, get]
+        native_text_ops: [eq, ne, lt, lte, gt, gte, in, contains, starts_with, ends_with]
+        native_text_key_ops: [group, distinct, order]
+        native_aggregate_ops: [count, min, max]
+        case_insensitive_like: true
+        supports_wildcard: true
+        wildcard_style: glob
+        json_path_style: json1
+        fallback_like: true
+        fallback_reasons:
+          ilike: SQLite handles ILIKE through a lower() SQL workaround.
+          like: SQLite LIKE is case-insensitive by default; using Python scan for case-sensitive behavior.
+          regex: SQLite does not support REGEXP without a user-defined function; using Python scan fallback.
+        text_evidence: {kind: heavenbase.executable, version: 1, source: python-import, target: "heavenbase.backends.sql.parity.sqlite:text_evidence"}
+        text_filter_factory: {kind: heavenbase.executable, version: 1, source: python-import, target: "heavenbase.backends.sql.parity.sqlite:text_filter"}
+        text_key_evidence: {kind: heavenbase.executable, version: 1, source: python-import, target: "heavenbase.backends.sql.parity.sqlite:text_key_evidence"}
+        text_key_factory: {kind: heavenbase.executable, version: 1, source: python-import, target: "heavenbase.backends.sql.parity.sqlite:text_key"}
+
+  - kind: sql_dialect
+    identifier: postgres
+    name: Postgres SQL Dialect
+    desc: Postgres SQL handler and SideTable projection metadata.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: *sql_dialect_tags
+      definition: &postgres_sql_definition
+        <<: *sql_definition
+        native_aggregate_ops: [count, min, max]
+        supports_regex: true
+        supports_wildcard: true
+        regex_style: postgres_tilde
+        side_table_json_object_style: json_build_object
+        side_table_json_agg_style: postgres_json_agg_ordered
+
+  - kind: sql_dialect
+    identifier: postgresql
+    name: PostgreSQL SQL Dialect
+    desc: PostgreSQL SQL handler and SideTable projection metadata.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: *sql_dialect_tags
+      definition:
+        <<: *postgres_sql_definition
+
+  - kind: sql_dialect
+    identifier: supabase
+    name: Supabase SQL Dialect
+    desc: Supabase PostgreSQL handler and SideTable projection metadata.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: *sql_dialect_tags
+      definition:
+        <<: *postgres_sql_definition
+
+  - kind: sql_dialect
+    identifier: pgvector
+    name: PgVector SQL Dialect
+    desc: PgVector SQL handler metadata.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: *sql_dialect_tags
+      definition:
+        <<: *sql_definition
+
+  - kind: sql_dialect
+    identifier: mysql
+    name: MySQL SQL Dialect
+    desc: MySQL SQL handler and collation-proof metadata.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: *sql_dialect_tags
+      definition:
+        <<: *sql_definition
+        native_text_ops: [eq, ne, in]
+        native_aggregate_ops: [count, min, max]
+        case_insensitive_like: true
+        supports_regex: true
+        regex_style: regexp_like_case_sensitive
+        side_table_json_agg_style: json_arrayagg
+        fallback_reasons:
+          ilike: MySQL handles ILIKE through a lower() SQL workaround.
+          like: MySQL LIKE behaviour depends on collation.
+          wildcard: MySQL LIKE collation is ambiguous for case-sensitive wildcard; using Python scan fallback.
+        text_evidence: {kind: heavenbase.executable, version: 1, source: python-import, target: "heavenbase.backends.sql.parity.mysql:text_evidence"}
+        text_filter_factory: {kind: heavenbase.executable, version: 1, source: python-import, target: "heavenbase.backends.sql.parity.mysql:text_filter"}
+
+  - kind: sql_dialect
+    identifier: seekdb
+    name: seekdb SQL Dialect
+    desc: Conservative seekdb MySQL-compatible handler metadata.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: *sql_dialect_tags
+      definition:
+        <<: *sql_definition
+        native_aggregate_ops: [count, min, max]
+        case_insensitive_like: true
+        side_table_json_agg_style: json_arrayagg
+        fallback_reasons:
+          ilike: seekdb handles ILIKE through a lower() SQL workaround.
+          like: seekdb text comparison behavior depends on the selected collation.
+          regex: seekdb regex parity is not declared; using Python scan fallback.
+          wildcard: seekdb wildcard parity is not declared; using Python scan fallback.
+
+  - kind: sql_dialect
+    identifier: dolt
+    name: Dolt SQL Dialect
+    desc: Conservative Dolt MySQL-compatible handler metadata.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: *sql_dialect_tags
+      definition:
+        <<: *sql_definition
+        native_aggregate_ops: [count, min, max]
+        case_insensitive_like: true
+        side_table_json_agg_style: json_arrayagg
+        fallback_reasons:
+          ilike: Dolt handles ILIKE through a lower() SQL workaround.
+          like: Dolt text comparison behavior depends on the selected collation.
+          regex: Dolt regex parity is not declared; using Python scan fallback.
+          wildcard: Dolt wildcard parity is not declared; using Python scan fallback.
+
+  - kind: sql_dialect
+    identifier: duckdb
+    name: DuckDB SQL Dialect
+    desc: DuckDB SQL handler and aggregate metadata.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: *sql_dialect_tags
+      definition:
+        <<: *sql_definition
+        native_aggregate_ops: [count, min, max]
+        supports_regex: true
+        supports_wildcard: true
+        regex_style: duckdb_tilde_search
+
+  - kind: sql_dialect
+    identifier: mssql
+    aliases: [msql, sqlserver, sql-server]
+    name: MsSQL SQL Dialect
+    desc: MsSQL SQL handler and filtered-unique-index metadata.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: *sql_dialect_tags
+      definition:
+        <<: *sql_definition
+        native_aggregate_ops: [count, min, max]
+        case_insensitive_like: true
+        unique_nulls_distinct: false
+        fallback_reasons:
+          contains: MsSQL does not support CONTAINS text search without Full-Text Index; using Python scan fallback.
+          ilike: MsSQL handles ILIKE through a lower() SQL workaround.
+          match: MsSQL does not support MATCH; using Python scan fallback.
+          regex: MsSQL does not support REGEXP natively; using Python scan fallback.
+          wildcard: MsSQL LIKE is case-insensitive by default; using Python scan fallback.
+
+  - kind: sql_dialect
+    identifier: oracle
+    name: Oracle SQL Dialect
+    desc: Oracle SQL handler metadata.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: *sql_dialect_tags
+      definition:
+        <<: *sql_definition
+        supports_regex: true
+        supports_wildcard: true
+        fallback_reasons:
+          contains: Oracle does not support CONTAINS without Oracle Text; using Python scan fallback.
+          ilike: Oracle does not support ILIKE; using func.lower() workaround via Python scan fallback.
+          match: Oracle does not support MATCH; using Python scan fallback.
+
+  - kind: sql_dialect
+    identifier: trino
+    name: Trino SQL Dialect
+    desc: Trino SQL handler metadata.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: *sql_dialect_tags
+      definition:
+        <<: *sql_definition
+        case_insensitive_like: true
+        supports_regex: true
+        supports_wildcard: true
+        fallback_reasons:
+          contains: Trino does not support CONTAINS; using Python scan fallback.
+          ilike: Trino does not support ILIKE natively for all connectors; using Python scan fallback.
+          match: Trino does not support MATCH; using Python scan fallback.
+
+  - kind: sql_dialect
+    identifier: clickhouse
+    name: ClickHouse SQL Dialect
+    desc: Conservative ClickHouse scalar-filter and aggregate metadata.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: *sql_dialect_tags
+      definition:
+        <<: *sql_definition
+        native_aggregate_ops: [count, min, max]
+        fallback_reasons:
+          ilike: ClickHouse text ILIKE parity is not declared; using Python scan fallback.
+          like: ClickHouse text collation parity is not declared; using Python scan fallback.
+          regex: ClickHouse regex parity is not declared; using Python scan fallback.
+          wildcard: ClickHouse wildcard parity is not declared; using Python scan fallback.
+
+  - kind: sql_dialect
+    identifier: starrocks
+    name: StarRocks SQL Dialect
+    desc: StarRocks SQL handler metadata.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: *sql_dialect_tags
+      definition:
+        <<: *sql_definition
+        case_insensitive_like: true
+        supports_regex: true
+        supports_wildcard: true
+        regex_style: regexp_like_case_sensitive
+        side_table_json_agg_style: json_arrayagg
+        fallback_reasons:
+          contains: StarRocks does not support CONTAINS; using Python scan fallback.
+          ilike: StarRocks does not support ILIKE; using func.lower() workaround via Python scan fallback.
+          match: StarRocks does not support MATCH; using Python scan fallback.
+
+  - kind: sql_dialect
+    identifier: oceanbase
+    name: OceanBase SQL Dialect
+    desc: OceanBase SQL handler metadata.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: *sql_dialect_tags
+      definition:
+        <<: *sql_definition
+        case_insensitive_like: true
+        side_table_json_agg_style: json_arrayagg
+        fallback_reasons:
+          ilike: OceanBase handles ILIKE through a lower() SQL workaround.
+          wildcard: OceanBase wildcard pushdown is not declared; using Python scan fallback.
+  - kind: handler
+    identifier: sql
+    groups: {backend: [sql]}
+    name: SQL handlers
+    desc: SQL-family filter, aggregate, and fallback compilers.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      dependencies: [backend_type:sql]
+      definition:
+        seed: {kind: heavenbase.executable, version: 1, source: python-import, target: "heavenbase.backends.sql.handler:register_handlers"}
+        reasons: {kind: heavenbase.executable, version: 1, source: python-import, target: "heavenbase.backends.sql.handler:register_reasons"}

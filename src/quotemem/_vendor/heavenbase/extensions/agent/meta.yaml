@@ -1,0 +1,144 @@
+manifest_version: 2
+coordinate: heavenbase/extensions/agent
+version: 0.1.2.3
+compatibility: {heavenbase: {min: 0.1.2.3, before: 0.1.3.0}}
+bundle: agent-extension
+items:
+  - kind: tag
+    identifier: agent
+    name: Agent
+    desc: Broad agent-domain categorization.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      definition:
+        schema: {type: boolean}
+        default: false
+        subjects: [entity, extension, toolkit_family, mcp_call_logger]
+        subject_policy: category-open
+        layers: [static]
+  - kind: tag
+    identifier: session
+    name: Session
+    desc: Broad persisted-session categorization.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      definition:
+        schema: {type: boolean}
+        default: false
+        subjects: [entity, extension, mcp_call_logger]
+        subject_policy: category-open
+        layers: [static]
+  - kind: tag
+    identifier: skill
+    name: Skill
+    desc: Broad persisted-skill categorization.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      definition:
+        schema: {type: boolean}
+        default: false
+        subjects: [entity, extension]
+        subject_policy: category-open
+        layers: [static]
+  - kind: entity
+    identifier: agent-message
+    aliases: [Message]
+    name: Message
+    desc: Persistent agent message entity.
+    source: path
+    target: {module: message, qualname: Message}
+    active: true
+    meta: {schema_version: 1, version: 0.1.2.1, tags: {agent: true}}
+  - kind: entity
+    identifier: agent-session
+    aliases: [Session]
+    name: Session
+    desc: Persistent agent session entity.
+    source: path
+    target: {module: session, qualname: Session}
+    active: true
+    meta: {schema_version: 1, version: 0.1.2.1, tags: {agent: true, session: true}}
+  - kind: entity
+    identifier: agent-skill
+    aliases: [Skill]
+    name: Skill
+    desc: Persistent agent skill entity.
+    source: path
+    target: {module: skill, qualname: Skill}
+    active: true
+    meta: {schema_version: 1, version: 0.1.2.1, tags: {agent: true, skill: true}}
+  - kind: entity
+    identifier: agent-agent
+    aliases: [Agent]
+    name: Agent
+    desc: Persistent agent recipe entity.
+    source: path
+    target: {module: agent, qualname: Agent}
+    active: true
+    meta: {schema_version: 1, version: 0.1.2.1, tags: {agent: true}}
+  - kind: extension
+    identifier: agent
+    name: Agent
+    desc: Optional persistent agent entities for messages, sessions, skills, and agent recipes.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: {agent: true, llm: true, mcp: true, session: true, skill: true}
+      dependencies: [entity:agent-message, entity:agent-session, entity:agent-skill, entity:agent-agent]
+      definition:
+        identifier: agent
+        name: Agent
+        version: 0.1.2.1
+        desc: Optional persistent agent entities for messages, sessions, skills, and agent recipes.
+        required: false
+        requires: []
+        entities: [agent-message, agent-session, agent-skill, agent-agent]
+        meta: {}
+        setup: null
+        api: null
+        api_name: null
+  - kind: toolkit_family
+    identifier: agent
+    name: Agent
+    desc: Agent skill MCP tools for live workspace guidance and persisted Skill archives.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: {agent: true, mcp: true}
+      dependencies: [extension:agent]
+      workspace_requires: [agent, toolkit]
+      definition:
+        tool_names: [list_skills, read_skill]
+        builder: {kind: heavenbase.executable, version: 1, source: path, target: {module: toolkit.factory, qualname: agent_tool_functions}}
+        meta: {builder_context: workspace_tool_context}
+  - kind: mcp_call_logger
+    identifier: agent
+    name: Agent MCP call logger
+    desc: Open a persisted Agent Session call log for one MCP Toolkit exposure.
+    source: path
+    target: {module: session, qualname: open_mcp_call_log}
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: {agent: true, mcp: true, session: true}
+      dependencies: [extension:agent]
+      workspace_requires: [agent, toolkit]

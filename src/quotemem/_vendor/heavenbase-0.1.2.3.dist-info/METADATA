@@ -1,0 +1,31 @@
+Metadata-Version: 2.4
+Name: heavenbase
+Version: 0.1.2.3
+Summary: HeavenBase: an agent-native polyglot engine for structured data management. Your data, speakable by agents.
+Author: Magolor
+License-Expression: MIT
+Project-URL: Repository, https://github.com/Magolor/HeavenBase
+Keywords: semantic-layer,entity,vector-db,agents,heavenbase,hvnb
+Classifier: Development Status :: 3 - Alpha
+Classifier: Intended Audience :: Developers
+Classifier: Topic :: Database
+Classifier: Topic :: Scientific/Engineering :: Artificial Intelligence
+Classifier: Programming Language :: Python :: 3
+Classifier: Operating System :: OS Independent
+Requires-Python: <3.14,>=3.10
+License-File: LICENSE
+Requires-Dist: pyyaml>=6.0
+Requires-Dist: omegaconf>=2.3
+Requires-Dist: cloudpickle>=3.0
+Requires-Dist: fastmcp>=4.0.0b1
+Requires-Dist: openai>=1.0
+Requires-Dist: anthropic>=0.105
+Requires-Dist: sqlalchemy>=2.0
+Requires-Dist: typer>=0.12
+Requires-Dist: click>=8.1
+Requires-Dist: pydantic>=2.12
+Requires-Dist: starlette>=0.40
+Requires-Dist: uvicorn>=0.30
+Requires-Dist: prompt_toolkit>=3.0
+Requires-Dist: pandas>=1.5
+Dynamic: license-file

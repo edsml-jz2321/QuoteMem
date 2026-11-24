@@ -1,0 +1,102 @@
+manifest_version: 2
+coordinate: heavenbase/placement
+version: 0.1.2.3
+compatibility: {heavenbase: {min: 0.1.2.3, before: 0.1.3.0}}
+bundle: placement
+items:
+  - kind: tag
+    identifier: storage-roles
+    name: Storage roles
+    desc: Storage roles a Backend implementation can provide.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      definition:
+        schema: {type: set, items: {type: identifier}}
+        default: []
+        subjects: [backend_type]
+        subject_policy: exact
+        layers: [static]
+  - kind: tag
+    identifier: graph
+    name: Graph
+    desc: Broad graph-domain categorization.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      definition:
+        schema: {type: boolean}
+        default: false
+        subjects: [backend_type, logical_type, strategy, storage_profile]
+        subject_policy: category-open
+        layers: [static]
+  - kind: tag
+    identifier: side
+    name: Side representation
+    desc: Broad side-table or nested-representation categorization.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      definition:
+        schema: {type: boolean}
+        default: false
+        subjects: [logical_type, strategy, storage_profile]
+        subject_policy: category-open
+        layers: [static]
+  - kind: tag
+    identifier: vector
+    name: Vector
+    desc: Broad vector-domain categorization and candidate nomination.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      definition:
+        schema: {type: boolean}
+        default: false
+        subjects: [backend_type, logical_type, operation, strategy, storage_profile]
+        subject_policy: category-open
+        layers: [static]
+  - kind: tag
+    identifier: search
+    name: Search
+    desc: Broad text-search and indexing categorization.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      definition:
+        schema: {type: boolean}
+        default: false
+        subjects: [backend_type, logical_type, strategy, storage_profile]
+        subject_policy: category-open
+        layers: [static]
+  - kind: tag
+    identifier: sql
+    name: SQL
+    desc: Broad SQL-ecosystem categorization and candidate nomination.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      definition:
+        schema: {type: boolean}
+        default: false
+        subjects: [backend_type, database_dialect, sql_dialect, storage_profile, extension]
+        subject_policy: category-open
+        layers: [static]

@@ -1,0 +1,31 @@
+manifest_version: 2
+coordinate: heavenbase/backends/tinydb
+version: 0.1.2.3
+compatibility: {heavenbase: {min: 0.1.2.3, before: 0.1.3.0}}
+bundle: backend-tinydb
+items:
+  - kind: backend_type
+    identifier: tinydb
+    aliases: [tiny, TinyDBBackend]
+    name: TinyDB Backend
+    desc: Persistent local TinyDB document Backend.
+    source: python-import
+    target: heavenbase.backends.tinydb.backend:TinyDBBackend
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      factory: null
+      tags:
+        portable: true
+        storage-roles: [row]
+        row-lookup: {get_many: native, exists_many: native, count: native}
+        binary-storage: base64
+        scalar-index:
+          value: false
+          unique: false
+          composite: false
+          composite_unique: false
+          opt_out: false
+          supported_types: []
+          default_types: []

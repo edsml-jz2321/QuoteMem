@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "quotemem": {
+      "command": "node",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/mcp.mjs"],
+      "env": {
+        "QUOTEMEM_PLUGIN_OPTION_URL": "${user_config.url}",
+        "QUOTEMEM_PLUGIN_OPTION_TOKEN": "${user_config.token}",
+        "QUOTEMEM_PLUGIN_OPTION_USER_ID": "${user_config.user_id}",
+        "QUOTEMEM_AUTO": "1"
+      }
+    }
+  }
+}

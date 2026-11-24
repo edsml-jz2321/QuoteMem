@@ -1,0 +1,84 @@
+manifest_version: 2
+coordinate: heavenbase/interop
+version: 0.1.2.3
+compatibility: {heavenbase: {min: 0.1.2.3, before: 0.1.3.0}}
+bundle: interop
+items:
+  - kind: interop_inferer
+    identifier: bool
+    name: Boolean
+    desc: Infer Boolean from homogeneous bool samples.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      definition:
+        fn: {kind: heavenbase.executable, version: 1, source: python-import, target: heavenbase.interop.mapping:_bool_inferer}
+        priority: 0
+  - kind: interop_inferer
+    identifier: int
+    name: Integer
+    desc: Infer Integer from homogeneous integer samples.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      definition:
+        fn: {kind: heavenbase.executable, version: 1, source: python-import, target: heavenbase.interop.mapping:_int_inferer}
+        priority: 10
+  - kind: interop_inferer
+    identifier: float
+    name: Float
+    desc: Infer Float from homogeneous numeric samples.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      definition:
+        fn: {kind: heavenbase.executable, version: 1, source: python-import, target: heavenbase.interop.mapping:_float_inferer}
+        priority: 20
+  - kind: interop_inferer
+    identifier: text
+    name: Text
+    desc: Infer LongText from homogeneous string samples.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      definition:
+        fn: {kind: heavenbase.executable, version: 1, source: python-import, target: heavenbase.interop.mapping:_text_inferer}
+        priority: 30
+  - kind: interop_inferer
+    identifier: array
+    name: Array
+    desc: Infer Array from homogeneous sequence samples.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      definition:
+        fn: {kind: heavenbase.executable, version: 1, source: python-import, target: heavenbase.interop.mapping:_array_inferer}
+        priority: 40
+  - kind: interop_inferer
+    identifier: json
+    name: JSON
+    desc: Infer Json from homogeneous mapping samples.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      definition:
+        fn: {kind: heavenbase.executable, version: 1, source: python-import, target: heavenbase.interop.mapping:_json_inferer}
+        priority: 50

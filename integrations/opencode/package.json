@@ -1,0 +1,43 @@
+{
+  "name": "quotemem-opencode",
+  "version": "0.3.0",
+  "private": true,
+  "description": "QuoteMem automatic memory for OpenCode: silent capture, recall and forget.",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./server": "./index.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "adapter.js",
+    "env.js",
+    "mcp.js",
+    "core",
+    "install",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "opencode": ">=1.18.29",
+    "node": ">=20.3"
+  },
+  "license": "MIT",
+  "author": "Quei",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/edsml-jz2321/QuoteMem.git",
+    "directory": "integrations/opencode"
+  },
+  "keywords": [
+    "opencode-plugin",
+    "agent-memory",
+    "memory",
+    "long-term-memory"
+  ],
+  "scripts": {
+    "test": "node --test test/opencode.test.mjs"
+  }
+}

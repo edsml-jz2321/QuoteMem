@@ -1,0 +1,62 @@
+manifest_version: 2
+coordinate: heavenbase/extensions/python
+version: 0.1.2.3
+compatibility: {heavenbase: {min: 0.1.2.3, before: 0.1.3.0}}
+bundle: python-extension
+items:
+  - kind: extension
+    identifier: python
+    name: Python
+    desc: Optional in-process Python execution over one open workspace.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: {mcp: true}
+      definition:
+        requires: []
+        entities: []
+        meta: {}
+        setup: null
+        api: null
+        api_name: null
+  - kind: toolkit_family
+    identifier: python
+    name: Python
+    desc: Run caller-authored Python against the open workspace.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: {mcp: true}
+      dependencies: [extension:python]
+      workspace_requires: [python, toolkit]
+      definition:
+        tool_names: [run_python, python_guide]
+        builder: {kind: heavenbase.executable, version: 1, source: path, target: {module: toolkit.factory, qualname: python_tool_functions}}
+        meta: {tool_layout: one_tool_per_file}
+  - kind: mcp_profile
+    identifier: python
+    name: Python
+    desc: Python execution over one workspace, for questions the query spec cannot express.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: {mcp: true}
+      workspace_requires: [python, toolkit]
+      dependencies: [serializer:jstr, toolkit_family:python]
+      definition:
+        extends: []
+        tools: [run_python, python_guide]
+        entities: []
+        skills: []
+        serializer: jstr
+        desc: Python execution over one workspace, for questions the query spec cannot express.
+        meta: {}

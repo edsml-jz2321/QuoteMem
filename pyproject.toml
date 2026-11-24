@@ -1,6 +1,6 @@
 [project]
-name = "aml"
-version = "0.1.0"
+name = "quotemem"
+version = "0.3.0"
 description = "QuoteMem: auditable agent memory with quoted evidence, versioned supersession and forgetting"
 readme = "README.md"
 license = "MIT"
@@ -9,7 +9,7 @@ authors = [{ name = "Quei" }]
 requires-python = ">=3.12,<3.13"
 dependencies = [
   "anyio==4.15.1",
-  "heavenbase==0.1.2.3",
+  "cryptography==50.0.1",
   "httpx==0.28.1",
   "numpy==2.5.2",
   "pydantic>=2.12,<3",
@@ -18,10 +18,20 @@ dependencies = [
   "starlette==1.6.0",
   "uvicorn==0.52.4",
   "pywin32>=306; sys_platform == 'win32'",
+  # What the included HeavenBase 0.1.2.3 (src/quotemem/_vendor) needs besides these.
+  "anthropic>=0.105",
+  "click>=8.1",
+  "cloudpickle>=3.0",
+  "fastmcp>=4.0.0",
+  "omegaconf>=2.3",
+  "openai>=1.0",
+  "pandas>=1.5",
+  "prompt_toolkit>=3.0",
+  "typer>=0.12",
 ]
 
 [project.scripts]
-aml = "aml.api.cli:main"
+quotemem = "quotemem.api.cli:main"
 
 [project.optional-dependencies]
 dev = ["ruff==0.12.12", "pyright[nodejs]==1.1.405"]
@@ -36,19 +46,40 @@ required-version = ">=0.11.21"
 constraint-dependencies = ["fastmcp-slim>=4.0.0b1"]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/aml"]
+packages = ["src/quotemem"]
+
+[tool.hatch.build.targets.sdist]
+only-include = [
+  "src/quotemem",
+  "benchmarks/sources.json",
+  "benchmarks/sources-additional.json",
+  "README.md",
+  "CHANGELOG.md",
+  "LICENSE",
+  "NOTICE",
+  "pyproject.toml",
+]
 
 [tool.ruff]
 target-version = "py312"
 line-length = 100
+extend-exclude = ["src/quotemem/_vendor"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
 
 [tool.pyright]
 include = ["src"]
-exclude = ["**/node_modules", "**/__pycache__", "**/.*"]
+exclude = ["**/node_modules", "**/__pycache__", "**/.*", "src/quotemem/_vendor"]
+extraPaths = ["src/quotemem/_vendor"]
 typeCheckingMode = "strict"
+enableExperimentalFeatures = true
 pythonVersion = "3.12"
 venvPath = "."
 venv = ".venv"
+
+[[tool.pyright.executionEnvironments]]
+root = "src/quotemem/bench/mem0_oss.py"
+reportUnknownVariableType = false
+reportUnknownMemberType = false
+reportUnknownArgumentType = false

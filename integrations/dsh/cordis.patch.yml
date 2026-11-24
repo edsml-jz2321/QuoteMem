@@ -1,0 +1,53 @@
+- insert:
+    - id: quotemem-mcp
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: quotemem
+        transport: stdio
+        # Runs this bundle's server.mjs with `node` from PATH. The bundle entry
+        # (index.cjs, installed in the profile directory, ctx.baseUrl) gives its path.
+        # The server talks to a QuoteMem service that is already running
+        # (`quotemem serve`) and reads QUOTEMEM_URL, QUOTEMEM_TOKEN_FILE and the
+        # other QUOTEMEM_* variables from the environment DSH starts with; for a
+        # service on this computer it reads the service's own token file.
+        command: !!js process.env.QUOTEMEM_NODE || 'node'
+        args: !!js "[process.env.QUOTEMEM_MCP_SERVER || process.getBuiltinModule('node:module').createRequire(new URL('package.json', ctx.baseUrl))('quotemem').mcpServer]"
+        # dsh-mcp-client starts stdio servers with a scrubbed environment that
+        # drops names containing KEY, PASSWORD, SECRET or TOKEN. Pass the
+        # QuoteMem variables explicitly so QUOTEMEM_TOKEN_FILE (and a token an
+        # old setup still exports) reaches the server. They go in env, never in args.
+        # QUOTEMEM_AUTO tells the server that the quotemem-automem row
+        # below saves each conversation, so it hides quotemem_add. The server
+        # brings the tool back only when QUOTEMEM_CAPTURE_EVERY=off is in this
+        # environment: set that variable (not the row config) to turn capture
+        # off, and also when you disable the quotemem-automem row.
+        env: !!js "Object.assign(Object.fromEntries(Object.entries(process.env).filter(([k, v]) => typeof v === 'string' && k.startsWith('QUOTEMEM_'))), { QUOTEMEM_AUTO: '1' })"
+        cwd: !!js process.cwd()
+        startupTimeoutMs: 15000
+        # A memory write returns only after the memories are searchable; the
+        # server's own budget is QUOTEMEM_TIMEOUT_MS (default 30 minutes).
+        toolCallTimeoutMs: 1860000
+        # The memory tools are optional: DSH still starts if they cannot.
+        failOnStartupError: false
+        reconnect:
+          enabled: false
+    - id: quotemem-skills
+      name: '@deepseek-ai/dsh-skill-filesystem'
+      config:
+        providerName: quotemem
+        includeDefaultRoots: false
+        # Default: this bundle's own skills folder, found through the bundle entry.
+        customSkillDirs: !!js "[process.env.QUOTEMEM_SKILL_ROOT || process.getBuiltinModule('node:module').createRequire(new URL('package.json', ctx.baseUrl))('quotemem').skillsDir]"
+        watch: false
+    - id: quotemem-automem
+      # Automatic memory, a native plugin: silent recall before a memory
+      # question, silent capture every few turns and silent forget of a
+      # "forget …" request. The path resolves beside this file in both the
+      # npm package and a Git install.
+      name: './automem.mjs'
+      # Settings come from the QUOTEMEM_* environment variables (see README).
+      # A profile patch may override the behaviour settings here, for example
+      # `config: { recall: always, captureEvery: 5 }`. The service URL, user
+      # id, auth mode and token are read only from the environment, so the
+      # MCP tools above act on the same memory; never put the token here.
+      config: {}

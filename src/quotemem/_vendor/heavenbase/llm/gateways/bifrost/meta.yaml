@@ -1,0 +1,29 @@
+manifest_version: 2
+coordinate: heavenbase/llm/gateways/bifrost
+version: 0.1.2.3
+compatibility: {heavenbase: {min: 0.1.2.3, before: 0.1.3.0}}
+bundle: llm-gateway-bifrost
+items:
+  - kind: llm_gateway
+    identifier: bifrost
+    name: Bifrost LLM Gateway
+    desc: Bifrost transport for OpenAI-compatible and Anthropic-native endpoints.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: {llm: true}
+      definition:
+        compiler: semantic/v1
+        endpoints: [openai, anthropic]
+        compile: {kind: heavenbase.executable, version: 1, source: python-import, target: heavenbase.llm.gateways.bifrost.runtime:compile}
+        available: {kind: heavenbase.executable, version: 1, source: python-import, target: heavenbase.llm.gateways.bifrost.runtime:available}
+        chat: {kind: heavenbase.executable, version: 1, source: python-import, target: heavenbase.llm.gateways.bifrost.runtime:chat}
+        achat: {kind: heavenbase.executable, version: 1, source: python-import, target: heavenbase.llm.gateways.bifrost.runtime:achat}
+        embed: {kind: heavenbase.executable, version: 1, source: python-import, target: heavenbase.llm.gateways.bifrost.runtime:embed}
+        aembed: {kind: heavenbase.executable, version: 1, source: python-import, target: heavenbase.llm.gateways.bifrost.runtime:aembed}
+        imagen: {kind: heavenbase.executable, version: 1, source: python-import, target: heavenbase.llm.gateways.bifrost.runtime:imagen}
+        aimagen: {kind: heavenbase.executable, version: 1, source: python-import, target: heavenbase.llm.gateways.bifrost.runtime:aimagen}
+        client: {kind: heavenbase.executable, version: 1, source: python-import, target: heavenbase.llm.gateways.bifrost.runtime:client}

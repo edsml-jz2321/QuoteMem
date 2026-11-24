@@ -1,0 +1,20 @@
+{
+  "description": "QuoteMem automatic memory: silent capture, recall and forget",
+  "hooks": {
+    "SessionStart": [
+      { "hooks": [{ "type": "command", "command": "node \"${PLUGIN_ROOT}/hook.mjs\" SessionStart", "timeout": 3 }] }
+    ],
+    "UserPromptSubmit": [
+      { "hooks": [{ "type": "command", "command": "node \"${PLUGIN_ROOT}/hook.mjs\" UserPromptSubmit", "timeout": 15 }] }
+    ],
+    "Stop": [
+      { "hooks": [{ "type": "command", "command": "node \"${PLUGIN_ROOT}/hook.mjs\" Stop", "timeout": 3 }] }
+    ],
+    "Interrupt": [
+      { "hooks": [{ "type": "command", "command": "node \"${PLUGIN_ROOT}/hook.mjs\" Interrupt", "timeout": 2 }] }
+    ],
+    "SessionEnd": [
+      { "hooks": [{ "type": "command", "command": "node \"${PLUGIN_ROOT}/hook.mjs\" SessionEnd", "timeout": 3 }] }
+    ]
+  }
+}

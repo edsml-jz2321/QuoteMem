@@ -1,0 +1,15 @@
+manifest_version: 2
+coordinate: heavenbase/workspace-metaschema
+version: 0.1.2.3
+compatibility: {heavenbase: {min: 0.1.2.3, before: 0.1.3.0}}
+bundle: workspace-kernel
+items:
+  - kind: entity
+    identifier: sys-metaschema
+    aliases: [MetaSchema]
+    name: MetaSchema
+    desc: Fixed queryable projection of workspace and Registry metadata.
+    source: python-import
+    target: heavenbase.workspace.metaschema.entity:MetaSchema
+    active: true
+    meta: {schema_version: 1, version: 0.1.2.1, fixed_workspace_contract: true}

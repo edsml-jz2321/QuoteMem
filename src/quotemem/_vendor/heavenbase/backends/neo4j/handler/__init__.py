@@ -1,0 +1,24 @@
+"""Neo4j backend handler role."""
+
+from __future__ import annotations
+
+from heavenbase._lazy import _attach_lazy_exports
+
+__all__ = [
+    "neo4j_filter_handler",
+    "neo4j_graph_exists_handler",
+    "neo4j_near_handler",
+    "register_handlers",
+    "register_reasons",
+]
+
+_LAZY_EXPORTS = {
+    "neo4j_filter_handler": (".runtime", "neo4j_filter_handler"),
+    "neo4j_graph_exists_handler": (".runtime", "neo4j_graph_exists_handler"),
+    "neo4j_near_handler": (".runtime", "neo4j_near_handler"),
+    "register_handlers": (".runtime", "register_handlers"),
+    "register_reasons": (".runtime", "register_reasons"),
+}
+
+
+__getattr__, __dir__ = _attach_lazy_exports(__name__, globals(), _LAZY_EXPORTS, __all__)

@@ -1,0 +1,131 @@
+manifest_version: 2
+coordinate: heavenbase/extensions/memory
+version: 0.1.2.3
+compatibility: {heavenbase: {min: 0.1.2.3, before: 0.1.3.0}}
+bundle: memory-extension
+items:
+  - kind: tag
+    identifier: memory
+    name: Memory
+    desc: Broad persistent-memory domain categorization.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      definition:
+        schema: {type: boolean}
+        default: false
+        subjects: [entity, extension, toolkit_family, mcp_profile]
+        subject_policy: category-open
+        layers: [static]
+  - kind: entity
+    identifier: memory-note
+    aliases: [MemoryNote]
+    name: MemoryNote
+    desc: Persistent memory note and project-state version entity.
+    source: path
+    target: {module: note, qualname: MemoryNote}
+    active: true
+    meta: {schema_version: 1, version: 0.1.2.1, tags: {memory: true}}
+  - kind: extension
+    identifier: memory
+    name: Memory
+    desc: Optional persistent memory notes for MCP memory and memstate profiles.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: {memory: true, agent: true}
+      dependencies: [entity:memory-note]
+      definition:
+        identifier: memory
+        name: Memory
+        version: 0.1.2.1
+        desc: Optional persistent memory notes for MCP memory and memstate profiles.
+        required: false
+        requires: []
+        entities: [memory-note]
+        meta: {}
+        setup: null
+        api: {kind: heavenbase.executable, version: 1, source: path, target: {module: api, qualname: MemoryAPI}}
+        api_name: memory
+  - kind: toolkit_family
+    identifier: memory
+    name: Memory
+    desc: Persistent note tools for agent memory.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: {memory: true, mcp: true}
+      dependencies: [extension:memory]
+      workspace_requires: [memory, toolkit]
+      definition:
+        tool_names: [remember, recall, search_memory, list_memory, set_memory]
+        builder: {kind: heavenbase.executable, version: 1, source: path, target: {module: toolkit.factory, qualname: memory_tool_functions}}
+        meta: {tool_layout: one_tool_per_file}
+  - kind: toolkit_family
+    identifier: memstate
+    name: Memstate
+    desc: Versioned project keypath memory tools; call memstate_get before tasks to recover prior state.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: {memory: true, mcp: true}
+      dependencies: [extension:memory]
+      workspace_requires: [memory, toolkit]
+      definition:
+        tool_names: [memstate_remember, memstate_set, memstate_get, memstate_search, memstate_history, memstate_delete]
+        builder: {kind: heavenbase.executable, version: 1, source: path, target: {module: toolkit.factory, qualname: memory_tool_functions}}
+        meta: {tool_layout: one_tool_per_file}
+  - kind: mcp_profile
+    identifier: memory
+    name: Memory
+    desc: Small persistent note surface for agent memory.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: {memory: true, mcp: true}
+      workspace_requires: [memory, toolkit]
+      dependencies: [serializer:jstr, toolkit_family:memory, entity:memory-note]
+      definition:
+        extends: []
+        tools: [remember, recall, search_memory, list_memory, set_memory]
+        entities: [memory-note]
+        skills: []
+        serializer: jstr
+        desc: Small persistent note surface for agent memory.
+        meta: {}
+  - kind: mcp_profile
+    identifier: memstate
+    name: Memstate
+    desc: Versioned project keypath memory for agent workflows; call memstate_get before tasks to recover prior state.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: {memory: true, mcp: true}
+      workspace_requires: [memory, toolkit]
+      dependencies: [serializer:jstr, toolkit_family:memstate, entity:memory-note]
+      definition:
+        extends: []
+        tools: [memstate_remember, memstate_set, memstate_get, memstate_search, memstate_history, memstate_delete]
+        entities: [memory-note]
+        skills: []
+        serializer: jstr
+        desc: Versioned project keypath memory for agent workflows; call memstate_get before tasks to recover prior state.
+        meta: {}

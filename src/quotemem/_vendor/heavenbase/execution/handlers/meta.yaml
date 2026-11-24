@@ -1,0 +1,383 @@
+manifest_version: 2
+coordinate: heavenbase/execution/handlers
+version: 0.1.2.3
+compatibility: {heavenbase: {min: 0.1.2.3, before: 0.1.3.0}}
+bundle: handler-generic
+items:
+  - kind: tag
+    identifier: portable
+    name: Portable
+    desc: Portable execution or handler capability.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      definition:
+        schema: {type: boolean}
+        default: false
+        subjects: [backend_type, strategy, predicate, handler]
+        subject_policy: exact
+        layers: [static]
+  - kind: handler
+    identifier: generic
+    name: Generic handlers
+    desc: Portable scan and vector fallback compilers for registered Backends.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: {portable: true}
+      priority: 0
+      definition:
+        seed: {kind: heavenbase.executable, version: 1, source: python-import, target: "heavenbase.execution.handlers.seed:register_generic_handlers"}
+        reasons: {kind: heavenbase.executable, version: 1, source: python-import, target: "heavenbase.execution.handlers.filters:register_reasons"}
+
+  - kind: predicate
+    identifier: eq
+    name: Equals
+    desc: Portable Python equality predicate.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: {portable: true}
+      operation: eq
+      dependencies: [operation:eq]
+      definition:
+        matcher: {kind: heavenbase.executable, version: 1, source: python-import, target: "heavenbase.execution.handlers.predicates:_equal"}
+        preparer: {kind: heavenbase.executable, version: 1, source: python-import, target: "heavenbase.execution.handlers.predicates:_identity"}
+  - kind: predicate
+    identifier: ne
+    name: Not equals
+    desc: Portable Python inequality predicate.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: {portable: true}
+      operation: ne
+      dependencies: [operation:ne]
+      definition:
+        matcher: {kind: heavenbase.executable, version: 1, source: python-import, target: "heavenbase.execution.handlers.predicates:_not_equal"}
+        preparer: {kind: heavenbase.executable, version: 1, source: python-import, target: "heavenbase.execution.handlers.predicates:_identity"}
+  - kind: predicate
+    identifier: lt
+    name: Less than
+    desc: Portable strict less-than predicate.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: {portable: true}
+      operation: lt
+      dependencies: [operation:lt]
+      definition:
+        matcher: {kind: heavenbase.executable, version: 1, source: python-import, target: "heavenbase.execution.handlers.predicates:_less_than"}
+        preparer: {kind: heavenbase.executable, version: 1, source: python-import, target: "heavenbase.execution.handlers.predicates:_identity"}
+  - kind: predicate
+    identifier: lte
+    name: Less than or equal
+    desc: Portable inclusive less-than predicate.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: {portable: true}
+      operation: lte
+      dependencies: [operation:lte]
+      definition:
+        matcher: {kind: heavenbase.executable, version: 1, source: python-import, target: "heavenbase.execution.handlers.predicates:_less_than_or_equal"}
+        preparer: {kind: heavenbase.executable, version: 1, source: python-import, target: "heavenbase.execution.handlers.predicates:_identity"}
+  - kind: predicate
+    identifier: gt
+    name: Greater than
+    desc: Portable strict greater-than predicate.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: {portable: true}
+      operation: gt
+      dependencies: [operation:gt]
+      definition:
+        matcher: {kind: heavenbase.executable, version: 1, source: python-import, target: "heavenbase.execution.handlers.predicates:_greater_than"}
+        preparer: {kind: heavenbase.executable, version: 1, source: python-import, target: "heavenbase.execution.handlers.predicates:_identity"}
+  - kind: predicate
+    identifier: gte
+    name: Greater than or equal
+    desc: Portable inclusive greater-than predicate.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: {portable: true}
+      operation: gte
+      dependencies: [operation:gte]
+      definition:
+        matcher: {kind: heavenbase.executable, version: 1, source: python-import, target: "heavenbase.execution.handlers.predicates:_greater_than_or_equal"}
+        preparer: {kind: heavenbase.executable, version: 1, source: python-import, target: "heavenbase.execution.handlers.predicates:_identity"}
+  - kind: predicate
+    identifier: in
+    name: In
+    desc: Portable membership predicate.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: {portable: true}
+      operation: in
+      dependencies: [operation:in]
+      definition:
+        matcher: {kind: heavenbase.executable, version: 1, source: python-import, target: "heavenbase.execution.handlers.predicates:_member_of"}
+        preparer: {kind: heavenbase.executable, version: 1, source: python-import, target: "heavenbase.execution.handlers.predicates:_in_values"}
+  - kind: predicate
+    identifier: match
+    name: Match
+    desc: Portable case-insensitive text-match predicate.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: {portable: true}
+      operation: match
+      dependencies: [operation:match]
+      definition:
+        matcher: {kind: heavenbase.executable, version: 1, source: python-import, target: "heavenbase.execution.handlers.predicates:_text_match"}
+        preparer: {kind: heavenbase.executable, version: 1, source: python-import, target: "heavenbase.execution.handlers.predicates:_identity"}
+  - kind: predicate
+    identifier: like
+    name: Like
+    desc: Portable case-sensitive SQL-like predicate.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: {portable: true}
+      operation: like
+      dependencies: [operation:like]
+      definition:
+        matcher: {kind: heavenbase.executable, version: 1, source: python-import, target: "heavenbase.execution.handlers.predicates:_like_match"}
+        preparer: {kind: heavenbase.executable, version: 1, source: python-import, target: "heavenbase.execution.handlers.predicates:_like_pattern"}
+  - kind: predicate
+    identifier: ilike
+    name: Case-insensitive like
+    desc: Portable case-insensitive SQL-like predicate.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: {portable: true}
+      operation: ilike
+      dependencies: [operation:ilike]
+      definition:
+        matcher: {kind: heavenbase.executable, version: 1, source: python-import, target: "heavenbase.execution.handlers.predicates:_ilike_match"}
+        preparer: {kind: heavenbase.executable, version: 1, source: python-import, target: "heavenbase.execution.handlers.predicates:_ilike_pattern"}
+  - kind: predicate
+    identifier: wildcard
+    name: Wildcard
+    desc: Portable case-sensitive shell-wildcard predicate.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: {portable: true}
+      operation: wildcard
+      dependencies: [operation:wildcard]
+      definition:
+        matcher: {kind: heavenbase.executable, version: 1, source: python-import, target: "heavenbase.execution.handlers.predicates:_wildcard_match"}
+        preparer: {kind: heavenbase.executable, version: 1, source: python-import, target: "heavenbase.execution.handlers.predicates:_wildcard_pattern"}
+  - kind: predicate
+    identifier: regex
+    name: Regular expression
+    desc: Portable safety-checked regular-expression predicate.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: {portable: true}
+      operation: regex
+      dependencies: [operation:regex]
+      definition:
+        matcher: {kind: heavenbase.executable, version: 1, source: python-import, target: "heavenbase.execution.handlers.predicates:_regex_match"}
+        preparer: {kind: heavenbase.executable, version: 1, source: python-import, target: "heavenbase.execution.handlers.predicates:_regex_pattern"}
+  - kind: predicate
+    identifier: contains
+    name: Contains
+    desc: Portable text-containment predicate.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: {portable: true}
+      operation: contains
+      dependencies: [operation:contains]
+      definition:
+        matcher: {kind: heavenbase.executable, version: 1, source: python-import, target: "heavenbase.execution.handlers.predicates:_contains"}
+        preparer: {kind: heavenbase.executable, version: 1, source: python-import, target: "heavenbase.execution.handlers.predicates:_identity"}
+  - kind: predicate
+    identifier: starts_with
+    name: Starts with
+    desc: Portable text-prefix predicate.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: {portable: true}
+      operation: starts_with
+      dependencies: [operation:starts_with]
+      definition:
+        matcher: {kind: heavenbase.executable, version: 1, source: python-import, target: "heavenbase.execution.handlers.predicates:_starts_with"}
+        preparer: {kind: heavenbase.executable, version: 1, source: python-import, target: "heavenbase.execution.handlers.predicates:_identity"}
+  - kind: predicate
+    identifier: ends_with
+    name: Ends with
+    desc: Portable text-suffix predicate.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: {portable: true}
+      operation: ends_with
+      dependencies: [operation:ends_with]
+      definition:
+        matcher: {kind: heavenbase.executable, version: 1, source: python-import, target: "heavenbase.execution.handlers.predicates:_ends_with"}
+        preparer: {kind: heavenbase.executable, version: 1, source: python-import, target: "heavenbase.execution.handlers.predicates:_identity"}
+  - kind: predicate
+    identifier: array_contains
+    name: Array contains
+    desc: Portable list-membership predicate.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: {portable: true}
+      operation: array_contains
+      dependencies: [operation:array_contains]
+      definition:
+        matcher: {kind: heavenbase.executable, version: 1, source: python-import, target: "heavenbase.execution.handlers.predicates:_array_contains"}
+        preparer: {kind: heavenbase.executable, version: 1, source: python-import, target: "heavenbase.execution.handlers.predicates:_identity"}
+  - kind: predicate
+    identifier: contained_in
+    name: Contained in
+    desc: Portable reverse-containment predicate.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: {portable: true}
+      operation: contained_in
+      dependencies: [operation:contained_in]
+      definition:
+        matcher: {kind: heavenbase.executable, version: 1, source: python-import, target: "heavenbase.execution.handlers.predicates:_contained_in"}
+        preparer: {kind: heavenbase.executable, version: 1, source: python-import, target: "heavenbase.execution.handlers.predicates:_identity"}
+
+  - kind: predicate
+    identifier: for-4-json-eq
+    groups: {dtype: [json]}
+    name: JSON equals
+    desc: Portable strict JSON equality predicate.
+    source: inline
+    target: definition
+    active: true
+    dtype: json
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: {portable: true}
+      operation: eq
+      dependencies: [operation:eq, logical_type:json]
+      definition:
+        matcher: {kind: heavenbase.executable, version: 1, source: python-import, target: "heavenbase.execution.handlers.predicates:_json_equal"}
+        preparer: {kind: heavenbase.executable, version: 1, source: python-import, target: "heavenbase.execution.handlers.predicates:_identity"}
+  - kind: predicate
+    identifier: for-4-json-ne
+    groups: {dtype: [json]}
+    name: JSON not equals
+    desc: Portable strict JSON inequality predicate.
+    source: inline
+    target: definition
+    active: true
+    dtype: json
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: {portable: true}
+      operation: ne
+      dependencies: [operation:ne, logical_type:json]
+      definition:
+        matcher: {kind: heavenbase.executable, version: 1, source: python-import, target: "heavenbase.execution.handlers.predicates:_json_not_equal"}
+        preparer: {kind: heavenbase.executable, version: 1, source: python-import, target: "heavenbase.execution.handlers.predicates:_identity"}
+  - kind: predicate
+    identifier: for-4-json-in
+    groups: {dtype: [json]}
+    name: JSON in
+    desc: Portable strict JSON membership predicate.
+    source: inline
+    target: definition
+    active: true
+    dtype: json
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: {portable: true}
+      operation: in
+      dependencies: [operation:in, logical_type:json]
+      definition:
+        matcher: {kind: heavenbase.executable, version: 1, source: python-import, target: "heavenbase.execution.handlers.predicates:_json_in"}
+        preparer: {kind: heavenbase.executable, version: 1, source: python-import, target: "heavenbase.execution.handlers.predicates:_in_values"}
+  - kind: predicate
+    identifier: for-4-json-get
+    groups: {dtype: [json]}
+    name: JSON get
+    desc: Portable strict JSON path predicate.
+    source: inline
+    target: definition
+    active: true
+    dtype: json
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: {portable: true}
+      operation: get
+      dependencies: [operation:get, logical_type:json]
+      definition:
+        matcher: {kind: heavenbase.executable, version: 1, source: python-import, target: "heavenbase.execution.handlers.predicates:_json_get_match"}
+        preparer: {kind: heavenbase.executable, version: 1, source: python-import, target: "heavenbase.execution.handlers.predicates:_prepare_json_get"}

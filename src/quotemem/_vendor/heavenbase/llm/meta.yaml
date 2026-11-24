@@ -1,0 +1,22 @@
+manifest_version: 2
+coordinate: heavenbase/llm
+version: 0.1.2.3
+compatibility: {heavenbase: {min: 0.1.2.3, before: 0.1.3.0}}
+bundle: llm
+items:
+  - kind: tag
+    identifier: llm
+    name: LLM
+    desc: Broad large-language-model domain categorization.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      definition:
+        schema: {type: boolean}
+        default: false
+        subjects: [llm_gateway, extension, schema_text]
+        subject_policy: category-open
+        layers: [static]

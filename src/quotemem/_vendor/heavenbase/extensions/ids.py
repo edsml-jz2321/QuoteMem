@@ -1,0 +1,21 @@
+"""Stable identifiers for HeavenBase-owned extensions."""
+
+AGENT_EXTENSION_ID = "agent"
+AGENT_LOG_EXTENSION_ID = "agent-log"
+CAPSULE_EXTENSION_ID = "capsule"
+DATABASE_EXTENSION_ID = "database"
+MEMORY_EXTENSION_ID = "memory"
+PROMPT_EXTENSION_ID = "prompt"
+PYTHON_EXTENSION_ID = "python"
+TOOLKIT_EXTENSION_ID = "toolkit"
+
+__all__ = [
+    "AGENT_EXTENSION_ID",
+    "AGENT_LOG_EXTENSION_ID",
+    "CAPSULE_EXTENSION_ID",
+    "DATABASE_EXTENSION_ID",
+    "MEMORY_EXTENSION_ID",
+    "PROMPT_EXTENSION_ID",
+    "PYTHON_EXTENSION_ID",
+    "TOOLKIT_EXTENSION_ID",
+]

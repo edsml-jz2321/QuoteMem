@@ -1,0 +1,324 @@
+manifest_version: 2
+coordinate: heavenbase/query
+version: 0.1.2.3
+compatibility: {heavenbase: {min: 0.1.2.3, before: 0.1.3.0}}
+bundle: query-aggregates
+items:
+  - kind: tag
+    identifier: aggregate
+    name: Aggregate
+    desc: Broad aggregate-operation and reducer categorization.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      definition:
+        schema: {type: boolean}
+        default: false
+        subjects: [operation, reducer]
+        subject_policy: category-open
+        layers: [static]
+  - kind: tag
+    identifier: aggregate-modes
+    name: Aggregate modes
+    desc: Aggregate modes supported by a logical type.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      definition:
+        schema: {type: set, items: {type: identifier}}
+        default: []
+        subjects: [logical_type]
+        subject_policy: exact
+        layers: [static]
+  - kind: tag
+    identifier: aggregate-input-modes
+    name: Aggregate input modes
+    desc: Aggregate input modes accepted by a reducer.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      definition:
+        schema: {type: set, items: {type: identifier}}
+        default: []
+        subjects: [reducer]
+        subject_policy: exact
+        layers: [static]
+  - kind: operation
+    identifier: count
+    aliases: [$count]
+    name: Count
+    desc: Count non-null aggregate values.
+    source: inline
+    target: definition
+    active: true
+    meta: &operation_meta {schema_version: 1, version: 0.1.2.1, tags: {aggregate: true}, definition: {kind: operation}}
+  - kind: operation
+    identifier: min
+    aliases: [$min]
+    name: Minimum
+    desc: Select the minimum aggregate value.
+    source: inline
+    target: definition
+    active: true
+    meta: *operation_meta
+  - kind: operation
+    identifier: max
+    aliases: [$max]
+    name: Maximum
+    desc: Select the maximum aggregate value.
+    source: inline
+    target: definition
+    active: true
+    meta: *operation_meta
+  - kind: operation
+    identifier: code_reduce
+    aliases: [$code_reduce]
+    name: Code reduce
+    desc: Reduce a group with a caller-supplied expression.
+    source: inline
+    target: definition
+    active: true
+    meta: *operation_meta
+  - kind: operation
+    identifier: column_summary
+    aliases: [$column_summary]
+    name: Column summary
+    desc: Summarize a whole column the way its statistics kind calls for.
+    source: inline
+    target: definition
+    active: true
+    meta: *operation_meta
+  - kind: operation
+    identifier: value_counts
+    aliases: [$value_counts]
+    name: Value counts
+    desc: Count Json payload elements across a group.
+    source: inline
+    target: definition
+    active: true
+    meta: *operation_meta
+  - kind: operation
+    identifier: key_counts
+    aliases: [$key_counts]
+    name: Key counts
+    desc: Count Json payload keys across a group.
+    source: inline
+    target: definition
+    active: true
+    meta: *operation_meta
+  - kind: operation
+    identifier: key_sums
+    aliases: [$key_sums]
+    name: Key sums
+    desc: Total Json payload values per key across a group.
+    source: inline
+    target: definition
+    active: true
+    meta: *operation_meta
+  - kind: operation
+    identifier: sum
+    aliases: [$sum]
+    name: Sum
+    desc: Sum numeric aggregate values.
+    source: inline
+    target: definition
+    active: true
+    meta: *operation_meta
+  - kind: operation
+    identifier: avg
+    aliases: [$avg]
+    name: Average
+    desc: Average numeric aggregate values.
+    source: inline
+    target: definition
+    active: true
+    meta: *operation_meta
+  - kind: operation
+    identifier: median
+    aliases: [$median]
+    name: Median
+    desc: Select the continuous median aggregate value.
+    source: inline
+    target: definition
+    active: true
+    meta: *operation_meta
+  - kind: operation
+    identifier: percentile
+    aliases: [$percentile]
+    name: Percentile
+    desc: Select one continuous percentile aggregate value.
+    source: inline
+    target: definition
+    active: true
+    meta: *operation_meta
+  - kind: reducer
+    identifier: count
+    name: Count reducer
+    desc: Portable count fold.
+    source: python-import
+    target: heavenbase.query.aggregate:_count
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: {aggregate: true}
+      dependencies: [operation:count]
+      reducer:
+        normalize_options: {kind: heavenbase.executable, version: 1, source: python-import, target: "heavenbase.query.aggregate:_count_options"}
+        result_type: integer
+  - kind: reducer
+    identifier: min
+    name: Minimum reducer
+    desc: Portable minimum fold.
+    source: python-import
+    target: heavenbase.query.aggregate:_minimum
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: {aggregate: true, aggregate-input-modes: [order]}
+      dependencies: [operation:min]
+      reducer: {normalize_options: null, result_type: source}
+  - kind: reducer
+    identifier: max
+    name: Maximum reducer
+    desc: Portable maximum fold.
+    source: python-import
+    target: heavenbase.query.aggregate:_maximum
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: {aggregate: true, aggregate-input-modes: [order]}
+      dependencies: [operation:max]
+      reducer: {normalize_options: null, result_type: source}
+  - kind: reducer
+    identifier: code_reduce
+    name: Code reduce reducer
+    desc: Portable fold evaluating a caller-supplied expression over one group.
+    source: python-import
+    target: heavenbase.query.aggregate:_code_reduce
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: {aggregate: true}
+      dependencies: [operation:code_reduce]
+      reducer:
+        normalize_options: null
+        result_type: {kind: heavenbase.executable, version: 1, source: python-import, target: "heavenbase.query.aggregate:_code_reduce_result_type"}
+  - kind: reducer
+    identifier: column_summary
+    name: Column summary reducer
+    desc: Portable per-kind statistics fold over one whole column.
+    source: python-import
+    target: heavenbase.query.summary:column_summary
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: {aggregate: true}
+      dependencies: [operation:column_summary]
+      reducer: {normalize_options: null, result_type: null}
+  - kind: reducer
+    identifier: value_counts
+    name: Value counts reducer
+    desc: Portable per-element occurrence fold over Json list payloads.
+    source: python-import
+    target: heavenbase.query.aggregate:_value_counts
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: {aggregate: true}
+      dependencies: [operation:value_counts]
+      reducer: {normalize_options: null, result_type: json}
+  - kind: reducer
+    identifier: key_counts
+    name: Key counts reducer
+    desc: Portable per-key row-count fold over Json payloads.
+    source: python-import
+    target: heavenbase.query.aggregate:_key_counts
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: {aggregate: true}
+      dependencies: [operation:key_counts]
+      reducer: {normalize_options: null, result_type: json}
+  - kind: reducer
+    identifier: key_sums
+    name: Key sums reducer
+    desc: Portable per-key numeric total fold over Json payloads.
+    source: python-import
+    target: heavenbase.query.aggregate:_key_sums
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: {aggregate: true}
+      dependencies: [operation:key_sums]
+      reducer: {normalize_options: null, result_type: json}
+  - kind: reducer
+    identifier: sum
+    name: Sum reducer
+    desc: Portable numeric sum fold.
+    source: python-import
+    target: heavenbase.query.aggregate:_total
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: {aggregate: true, aggregate-input-modes: [numeric]}
+      dependencies: [operation:sum]
+      reducer: {normalize_options: null, result_type: source}
+  - kind: reducer
+    identifier: avg
+    name: Average reducer
+    desc: Portable numeric average fold.
+    source: python-import
+    target: heavenbase.query.aggregate:_average
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: {aggregate: true, aggregate-input-modes: [numeric]}
+      dependencies: [operation:avg]
+      reducer: {normalize_options: null, result_type: float}
+  - kind: reducer
+    identifier: median
+    name: Median reducer
+    desc: Portable numeric median fold.
+    source: python-import
+    target: heavenbase.query.aggregate:_median
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: {aggregate: true, aggregate-input-modes: [numeric]}
+      dependencies: [operation:median]
+      reducer: {normalize_options: null, result_type: float}
+  - kind: reducer
+    identifier: percentile
+    name: Percentile reducer
+    desc: Portable numeric percentile fold.
+    source: python-import
+    target: heavenbase.query.aggregate:_percentile
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: {aggregate: true, aggregate-input-modes: [numeric]}
+      dependencies: [operation:percentile]
+      reducer:
+        normalize_options: {kind: heavenbase.executable, version: 1, source: python-import, target: "heavenbase.query.aggregate:_percentile_options"}
+        result_type: float

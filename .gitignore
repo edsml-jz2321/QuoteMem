@@ -29,3 +29,7 @@ data/
 # Secrets
 .env
 *.key
+
+# Node (DSH bundle)
+node_modules/
+*.tgz

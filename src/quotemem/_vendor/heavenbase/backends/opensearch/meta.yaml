@@ -1,0 +1,47 @@
+manifest_version: 2
+coordinate: heavenbase/backends/opensearch
+version: 0.1.2.3
+compatibility: {heavenbase: {min: 0.1.2.3, before: 0.1.3.0}}
+bundle: backend-opensearch
+items:
+  - kind: backend_type
+    identifier: opensearch
+    aliases: [open-search, OpenSearchBackend]
+    name: OpenSearch Backend
+    desc: OpenSearch text-search Backend.
+    source: python-import
+    target: heavenbase.backends.opensearch.backend:OpenSearchBackend
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      factory: null
+      tags:
+        portable: true
+        storage-roles: [text]
+        search: true
+        row-lookup: {get_many: native, exists_many: native, count: native}
+        binary-storage: base64
+        scalar-index:
+          value: true
+          unique: false
+          composite: false
+          composite_unique: false
+          opt_out: true
+          supported_types: [boolean, categorical, date, duration, float, identifier, integer, long-text, medium-text, short-text, timestamp]
+          default_types: [boolean, categorical, date, duration, float, identifier, integer, long-text, medium-text, short-text, timestamp]
+  - kind: handler
+    identifier: opensearch
+    groups: {backend: [opensearch]}
+    name: OpenSearch handlers
+    desc: OpenSearch native scalar compilers and routing reasons.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      dependencies: [backend_type:opensearch]
+      definition:
+        seed: {kind: heavenbase.executable, version: 1, source: python-import, target: "heavenbase.backends.opensearch.handler:register_handlers"}
+        reasons: {kind: heavenbase.executable, version: 1, source: python-import, target: "heavenbase.backends.opensearch.handler:register_reasons"}

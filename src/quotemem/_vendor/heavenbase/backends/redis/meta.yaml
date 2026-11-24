@@ -1,0 +1,46 @@
+manifest_version: 2
+coordinate: heavenbase/backends/redis
+version: 0.1.2.3
+compatibility: {heavenbase: {min: 0.1.2.3, before: 0.1.3.0}}
+bundle: backend-redis
+items:
+  - kind: backend_type
+    identifier: redis
+    aliases: [RedisBackend]
+    name: Redis Backend
+    desc: Redis row-storage Backend.
+    source: python-import
+    target: heavenbase.backends.redis.backend:RedisBackend
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      factory: null
+      tags:
+        portable: true
+        storage-roles: [row]
+        row-lookup: {get_many: native, exists_many: native, count: scan}
+        binary-storage: base64
+        scalar-index:
+          value: true
+          unique: false
+          composite: false
+          composite_unique: false
+          opt_out: true
+          supported_types: [boolean, categorical, date, duration, float, identifier, integer, long-text, medium-text, short-text, timestamp]
+          default_types: [boolean, categorical, date, duration, float, identifier, integer, long-text, medium-text, short-text, timestamp]
+  - kind: handler
+    identifier: redis
+    groups: {backend: [redis]}
+    name: Redis handlers
+    desc: Redis value-index compilers.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      dependencies: [backend_type:redis]
+      definition:
+        seed: {kind: heavenbase.executable, version: 1, source: python-import, target: "heavenbase.backends.redis.handler:register_handlers"}
+        reasons: null

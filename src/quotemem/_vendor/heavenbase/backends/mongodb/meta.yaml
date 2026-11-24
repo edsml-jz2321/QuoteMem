@@ -1,0 +1,32 @@
+manifest_version: 2
+coordinate: heavenbase/backends/mongodb
+version: 0.1.2.3
+compatibility: {heavenbase: {min: 0.1.2.3, before: 0.1.3.0}}
+bundle: backend-mongodb
+items:
+  - kind: backend_type
+    identifier: mongodb
+    aliases: [mongo, MongoDBBackend]
+    name: MongoDB Backend
+    desc: MongoDB native document Backend.
+    source: python-import
+    target: heavenbase.backends.mongodb.backend:MongoDBBackend
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      factory: null
+      tags:
+        portable: true
+        storage-roles: [row]
+        row-lookup: {get_many: native, exists_many: native, count: native}
+        binary-storage: bytes
+        workspace-database-namespace: true
+        scalar-index:
+          value: true
+          unique: true
+          composite: true
+          composite_unique: true
+          opt_out: true
+          supported_types: [boolean, categorical, date, duration, float, identifier, integer, long-text, medium-text, short-text, timestamp]
+          default_types: [boolean, categorical, date, duration, float, identifier, integer, long-text, medium-text, short-text, timestamp]

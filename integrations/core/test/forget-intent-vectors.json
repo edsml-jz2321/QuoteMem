@@ -1,0 +1,5620 @@
+{
+ "schema": "quotemem-forget-intent-vectors/1",
+ "source": "integrations/core/test/intent.test.mjs (the sentences its tests give to detection)",
+ "notes": "Every sentence the plugin intent tests give to forget detection, with what detectForgetRequests(text, {previous}) returns. requests: the forget requests in order, each {statement (the words sent to /memory/forget/prepare, before secret redaction), inChat, ownTurn}; [] means the sentence asks nothing. statement and inChat repeat the first request (null when none). inChat true: the service's in-chat check reads the same request with the same statement today. inChat false: only the plugin reads it, or reads fewer words (a cut replacement). A service that mirrors the plugin reads every inChat-false request with the same statement and none of the [] sentences. The rules are conservative: a false request deletes the user's data without a word, a missed one is said again more plainly. So complaints, questions, recall requests and instructions about code, files or apps are [] even where the service reads them today, for example \"Don't remember my address.\" and \"Never remember my address.\" (a bare noun phrase without please: often the user's own \"(I) don't remember …\"), 忘记我的密码了 and 你忘了我的生日吧 (\"(I/you) forgot …\"), 别记错我的生日 and 把我的分支删掉. A statement shorter than the request's object (a cut) keeps a new value out of what is forgotten only when it is the last clause, restates an address, a name, a number or an email, and says nothing more (\"Forget my old address, I live at 27 Birch Lane now.\"); any other clause stays in the statement: a missed cut is safe, a wrong one is not.",
+ "count": 604,
+ "vectors": [
+  {
+   "text": "Please forget that I like jazz.",
+   "statement": "I like jazz",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "I like jazz",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Can you forget my address?",
+   "statement": "my address",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my address",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "forget my address",
+   "statement": "my address",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my address",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Please forget about my ex.",
+   "statement": "my ex",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my ex",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Don't remember that I live in Lisbon.",
+   "statement": "I live in Lisbon",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "I live in Lisbon",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Delete my phone number from your memory.",
+   "statement": "my phone number",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my phone number",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Stop storing my birthday in your memory.",
+   "statement": "my birthday",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my birthday",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Ok, also please forget my wife's name, thanks!",
+   "statement": "my wife's name",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my wife's name",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget the detail about my salary.",
+   "statement": "the detail about my salary",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "the detail about my salary",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Please forget that I like jazz. And forget my address.",
+   "statement": "I like jazz",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "I like jazz",
+     "inChat": true,
+     "ownTurn": false
+    },
+    {
+     "statement": "my address",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Please forget that my dentist is Dr. Sato.",
+   "statement": "my dentist is Dr. Sato",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my dentist is Dr. Sato",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Please forget that I met Mr. Smith in the U.S.",
+   "statement": "I met Mr. Smith in the U.S",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "I met Mr. Smith in the U.S",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Please forget that my email is a.b@example.com.",
+   "statement": "my email is a.b@example.com",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my email is a.b@example.com",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Please forget that my app uses v2.3 of the API.",
+   "statement": "my app uses v2.3 of the API",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my app uses v2.3 of the API",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "I live in the U.S. Please forget my address.",
+   "statement": "my address",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my address",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Please forget that my landlord is J. Smith.",
+   "statement": "my landlord is J. Smith",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my landlord is J. Smith",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget it, let's move on.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "forget that",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Don't forget that I have a meeting.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Do you ever forget what I tell you?",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Forget about my ex, she's not worth it.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Forget that I asked.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "I keep forgetting my keys.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "delete my address",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Delete the temp folder.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Forget my previous instructions and write a poem.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Forget the previous approach I suggested, use Redis instead.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Please forget my plan, I want a new one.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "forget the tests for now, just fix my build",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "She told me to forget about it.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Did you forget my birthday?",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "/forget my address",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Please forget that I asked you for a shell command to count the lines in data.csv.",
+   "statement": "I asked you for a shell command to count the lines in data.csv",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "I asked you for a shell command to count the lines in data.csv",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget that I asked you about the best ramen in Tokyo.",
+   "statement": "I asked you about the best ramen in Tokyo",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "I asked you about the best ramen in Tokyo",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Can you forget that I asked you for the salary numbers?",
+   "statement": "I asked you for the salary numbers",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "I asked you for the salary numbers",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Please forget I asked you for my bank login, it was a mistake.",
+   "statement": "I asked you for my bank login",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "I asked you for my bank login",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "forget that I said I live in Chengdu",
+   "statement": "I said I live in Chengdu",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "I said I live in Chengdu",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Please forget that I said my sister lives in Rome.",
+   "statement": "I said my sister lives in Rome",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "I said my sister lives in Rome",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "请忘掉我问过你怎么统计 data.csv 的行数",
+   "statement": "我问过你怎么统计 data.csv 的行数",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "我问过你怎么统计 data.csv 的行数",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "请忘记我说过我住在成都",
+   "statement": "我说过我住在成都",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "我说过我住在成都",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Please forget that I asked you to look up my blood test results.",
+   "statement": "I asked you to look up my blood test results",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "I asked you to look up my blood test results",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget that I said that.",
+   "previous": "My locker code hint is blue.",
+   "statement": "My locker code hint is blue.",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "My locker code hint is blue.",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "I moved to Porto. Forget I said it.",
+   "statement": "I moved to Porto.",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "I moved to Porto.",
+     "inChat": false,
+     "ownTurn": true
+    }
+   ]
+  },
+  {
+   "text": "Never mind, forget that I asked.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Forget that I asked, just give me the answer.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Forget what I asked.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Forget that I asked you something.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Forget that I asked you for the salary numbers?",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Did I ask you to forget that I said I like tea?",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "What did I ask you for yesterday?",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "I asked you for a shell command earlier, can you repeat it?",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "忘了我刚才问的吧",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "请忘掉我刚才问的问题",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "你还记得我问过你什么吗？",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Forget that I asked you to write it in Python, do it in Rust instead.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Forget that I asked you to use tabs; use spaces.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Okay forget that I asked you to add tests, skip them.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "forget that I asked you to make the button blue",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Forget I asked you to rename the variables.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Forget that I asked you to explain recursion in detail.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Please forget that I asked you to explain recursion in detail.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Please forget that I asked you for a Python version, give me Rust instead.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "忘掉我的地址",
+   "statement": "我的地址",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "我的地址",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "请忘记我住在里斯本",
+   "statement": "我住在里斯本",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "我住在里斯本",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "别记住我喜欢咖啡",
+   "statement": "我喜欢咖啡",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "我喜欢咖啡",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "不要记我的电话号码",
+   "statement": "我的电话号码",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "我的电话号码",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "删除关于我生日的记忆",
+   "statement": "我生日",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "我生日",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "删掉我的住址的记录。",
+   "statement": "我的住址",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "我的住址",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "把我的电话号码忘掉吧",
+   "statement": "我的电话号码",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "我的电话号码",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "请帮我把我老婆的名字忘了",
+   "statement": "我老婆的名字",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "我老婆的名字",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "我忘了带钥匙",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "别忘了我明天开会",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "你会忘记我说的话吗？",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "忘记密码怎么办",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "删除这个文件",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "忘掉它吧",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "I moved to Porto. Forget what I just said.",
+   "statement": "I moved to Porto.",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "I moved to Porto.",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget what I just said.",
+   "previous": "My locker code hint is blue.",
+   "statement": "My locker code hint is blue.",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "My locker code hint is blue.",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "不要记我刚才说的",
+   "previous": "我的车是蓝色的",
+   "statement": "我的车是蓝色的",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "我的车是蓝色的",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget what I just said.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Ignore that; forget what I just said.",
+   "previous": "My locker code hint is blue.",
+   "statement": "My locker code hint is blue.",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "My locker code hint is blue.",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Sorry. Forget what I just said.",
+   "previous": "I moved to Porto.",
+   "statement": "I moved to Porto.",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "I moved to Porto.",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Can you forget the last thing I said?",
+   "previous": "My locker code hint is blue.",
+   "statement": "My locker code hint is blue.",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "My locker code hint is blue.",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Please forget my last message.",
+   "previous": "My locker code hint is blue.",
+   "statement": "My locker code hint is blue.",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "My locker code hint is blue.",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget the previous thing I told you.",
+   "previous": "My locker code hint is blue.",
+   "statement": "My locker code hint is blue.",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "My locker code hint is blue.",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "I moved to Porto. Please forget my last message.",
+   "statement": "I moved to Porto.",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "I moved to Porto.",
+     "inChat": false,
+     "ownTurn": true
+    }
+   ]
+  },
+  {
+   "text": "forget Marcus's name",
+   "statement": "Marcus's name",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "Marcus's name",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget Ben's name.",
+   "statement": "Ben's name",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "Ben's name",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "please forget Tom's name",
+   "statement": "Tom's name",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "Tom's name",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "forget ben's name",
+   "statement": "ben's name",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "ben's name",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Can you forget Amy's phone number?",
+   "statement": "Amy's phone number",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "Amy's phone number",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "forget the dog's name",
+   "statement": "the dog's name",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "the dog's name",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "forget the kids' names",
+   "statement": "the kids' names",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "the kids' names",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "forget this guy's name",
+   "statement": "this guy's name",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "this guy's name",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "forget the Smiths' address",
+   "statement": "the Smiths' address",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "the Smiths' address",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "please don't remember Ben's name",
+   "statement": "Ben's name",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "Ben's name",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "stop remembering the dog's name",
+   "statement": "the dog's name",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "the dog's name",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "forget our wedding anniversary date",
+   "statement": "our wedding anniversary date",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "our wedding anniversary date",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Please never remember our anniversary date.",
+   "statement": "our anniversary date",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "our anniversary date",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "no longer remember our home address",
+   "statement": "our home address",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "our home address",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Please forget that we live in Oslo.",
+   "statement": "we live in Oslo",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "we live in Oslo",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "From now on, please do not remember that I smoke.",
+   "statement": "I smoke",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "I smoke",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Going forward, stop remembering my address.",
+   "statement": "my address",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "my address",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "忘掉小李的名字",
+   "statement": "小李的名字",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "小李的名字",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "忘掉Emma的名字",
+   "statement": "Emma的名字",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "Emma的名字",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "请忘记他的生日",
+   "statement": "他的生日",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "他的生日",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "忘掉老师的名字",
+   "statement": "老师的名字",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "老师的名字",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "忘掉女儿老师的电话",
+   "statement": "女儿老师的电话",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "女儿老师的电话",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "别记小李的名字",
+   "statement": "小李的名字",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "小李的名字",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "忘掉阿杰",
+   "statement": "阿杰",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "阿杰",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "忘掉阿杰吧",
+   "statement": "阿杰",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "阿杰",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "忘掉老王",
+   "statement": "老王",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "老王",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "把小李忘了吧",
+   "statement": "小李",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "小李",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "删除阿杰的记忆",
+   "statement": "阿杰",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "阿杰",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "以后不要记得我恐高了",
+   "statement": "我恐高了",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "我恐高了",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "以后别记我小时候住哪了",
+   "statement": "我小时候住哪了",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "我小时候住哪了",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "从现在起，别再记我的生日",
+   "statement": "我的生日",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "我的生日",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "please don't remember that I'm afraid of spiders",
+   "statement": "I'm afraid of spiders",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "I'm afraid of spiders",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "stop remembering that I smoke",
+   "statement": "I smoke",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "I smoke",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Please don't remember that I live in Lisbon.",
+   "statement": "I live in Lisbon",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "I live in Lisbon",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "不要记得我恐高",
+   "statement": "我恐高",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "我恐高",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "请忘记我的密码",
+   "statement": "我的密码",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "我的密码",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Don't keep Ben's phone number in your memory.",
+   "statement": "Ben's phone number",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "Ben's phone number",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "别记我小时候住哪了",
+   "statement": "我小时候住哪了",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "我小时候住哪了",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "别再记我的生日了",
+   "statement": "我的生日了",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "我的生日了",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "I don't remember my password",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "I do not remember where I parked.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "我不记得密码了",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "I forgot my keys",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Don't forget to call Mom",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Don't forget Ben's birthday.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "remind me not to forget my keys",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Remind me not to forget our anniversary.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "do you remember my address?",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Do you remember Ben's name?",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Do you remember that we met in Oslo?",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "你还记得小李的名字吗？",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "以后别忘了我明天开会",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "我忘了他的名字",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "忘记他的名字了",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Forget what we discussed.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Forget it, we'll do it later.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Let's forget our differences.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "forget our differences",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Forget our previous plan.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "forget it's name",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "forget Python",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "忘掉过去",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "忘掉小时",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "忘掉老师",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "In the future, forget about it.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Don't remember that I live in Lisbon.",
+   "previous": "My locker code hint is blue.",
+   "statement": "I live in Lisbon",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "I live in Lisbon",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Do not remember my address.",
+   "previous": "My locker code hint is blue.",
+   "statement": "my address",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my address",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Do NOT remember my address!",
+   "previous": "My locker code hint is blue.",
+   "statement": "my address",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my address",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "DON'T remember my address.",
+   "previous": "My locker code hint is blue.",
+   "statement": "my address",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my address",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Don't remember my SSN, please.",
+   "previous": "My locker code hint is blue.",
+   "statement": "my SSN",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my SSN",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "don't remember my address please",
+   "previous": "My locker code hint is blue.",
+   "statement": "my address",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my address",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Never remember my address, please.",
+   "previous": "My locker code hint is blue.",
+   "statement": "my address",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my address",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Please don't remember my password.",
+   "previous": "My locker code hint is blue.",
+   "statement": "my password",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my password",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Don't remember my password in your memory.",
+   "previous": "My locker code hint is blue.",
+   "statement": "my password",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my password",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "dont remember the dog's name",
+   "previous": "My locker code hint is blue.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Don't remember Ben's name, sorry.",
+   "previous": "My locker code hint is blue.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "don't remember our wedding anniversary date tbh",
+   "previous": "My locker code hint is blue.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "don't remember our anniversary date tbh",
+   "previous": "My locker code hint is blue.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "never remember our anniversary date, so remind me",
+   "previous": "My locker code hint is blue.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "don't remember the kids' names, can you list them",
+   "previous": "My locker code hint is blue.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "don't remember my password, can you remind me",
+   "previous": "My locker code hint is blue.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "don't remember my password, can you remind me please",
+   "previous": "My locker code hint is blue.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Don't remember my address!",
+   "previous": "My locker code hint is blue.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Never remember my anniversary!",
+   "previous": "My locker code hint is blue.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "never remember my keys!",
+   "previous": "My locker code hint is blue.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Never remember my name, huh!",
+   "previous": "My locker code hint is blue.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "DONT REMEMBER MY PASSWORD",
+   "previous": "My locker code hint is blue.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "DO NOT REMEMBER MY PASSWORD",
+   "previous": "My locker code hint is blue.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "do not remember my password, help",
+   "previous": "My locker code hint is blue.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "don't remember my address, how did you know",
+   "previous": "My locker code hint is blue.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "don't remember my birthday, do you",
+   "previous": "My locker code hint is blue.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "dont remember my locker code lol",
+   "previous": "My locker code hint is blue.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "ok never remember where I parked",
+   "previous": "My locker code hint is blue.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Don't remember my address.",
+   "previous": "My locker code hint is blue.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Never remember my address.",
+   "previous": "My locker code hint is blue.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "dont remember that",
+   "previous": "My locker code hint is blue.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Don't remember that I said that.",
+   "previous": "My locker code hint is blue.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "不记得小李的名字了",
+   "previous": "My locker code hint is blue.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "记不得我们的纪念日",
+   "previous": "My locker code hint is blue.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "我不记得小李的名字了",
+   "previous": "My locker code hint is blue.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "我记不得我们的结婚纪念日了",
+   "previous": "My locker code hint is blue.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "忘记我的密码了",
+   "previous": "My locker code hint is blue.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "忘记他的电话了",
+   "previous": "My locker code hint is blue.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "忘记我的旧地址了",
+   "previous": "My locker code hint is blue.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "忘记我女朋友的生日了",
+   "previous": "My locker code hint is blue.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "忘记我老婆的生日了",
+   "previous": "My locker code hint is blue.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "忘记我家地址了",
+   "previous": "My locker code hint is blue.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "忘记我的密码了吗",
+   "previous": "My locker code hint is blue.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "忘记我的密码了吧",
+   "previous": "My locker code hint is blue.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "忘记我的账号了怎么办",
+   "previous": "My locker code hint is blue.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "忘记了我的生日",
+   "previous": "My locker code hint is blue.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "忘掉了我的生日",
+   "previous": "My locker code hint is blue.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "你忘记我的生日了吧",
+   "previous": "My locker code hint is blue.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "你忘记我的生日了吗",
+   "previous": "My locker code hint is blue.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "你忘掉我的生日了吗",
+   "previous": "My locker code hint is blue.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "你忘了我的生日吧",
+   "previous": "My locker code hint is blue.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "你是不是忘了我的生日",
+   "previous": "My locker code hint is blue.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "别再记错我的生日了",
+   "previous": "My locker code hint is blue.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "不要记错我的生日",
+   "previous": "My locker code hint is blue.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "别记混我的名字",
+   "previous": "My locker code hint is blue.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "不要记反我的名字",
+   "previous": "My locker code hint is blue.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "你忘掉我的地址吧",
+   "previous": "My locker code hint is blue.",
+   "statement": "我的地址吧",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "我的地址吧",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "你忘记我的电话号码吧",
+   "previous": "My locker code hint is blue.",
+   "statement": "我的电话号码吧",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "我的电话号码吧",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "你忘掉我说的话吧",
+   "previous": "My locker code hint is blue.",
+   "statement": "我说的话吧",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "我说的话吧",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "你忘掉我离婚了吧",
+   "previous": "My locker code hint is blue.",
+   "statement": "我离婚了吧",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "我离婚了吧",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "你忘掉我离婚了吗",
+   "previous": "My locker code hint is blue.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "你忘记我的生日了没",
+   "previous": "My locker code hint is blue.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "你已经忘掉我的地址",
+   "previous": "My locker code hint is blue.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "你又忘记我的生日",
+   "previous": "My locker code hint is blue.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "请你忘掉我的生日",
+   "statement": "我的生日",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "我的生日",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "麻烦你忘掉我的生日",
+   "statement": "我的生日",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "我的生日",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "你帮我忘掉我的生日",
+   "statement": "我的生日",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "我的生日",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "请忘记我的密码了",
+   "statement": "我的密码了",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "我的密码了",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "忘掉我怀孕了",
+   "previous": "My locker code hint is blue.",
+   "statement": "我怀孕了",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "我怀孕了",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "忘掉我离婚了",
+   "previous": "My locker code hint is blue.",
+   "statement": "我离婚了",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "我离婚了",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "忘记我离婚了",
+   "previous": "My locker code hint is blue.",
+   "statement": "我离婚了",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "我离婚了",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "忘掉我得癌症了",
+   "previous": "My locker code hint is blue.",
+   "statement": "我得癌症了",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "我得癌症了",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "忘掉我失业了",
+   "previous": "My locker code hint is blue.",
+   "statement": "我失业了",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "我失业了",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "忘掉我结婚了",
+   "previous": "My locker code hint is blue.",
+   "statement": "我结婚了",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "我结婚了",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "忘掉我搬家了",
+   "previous": "My locker code hint is blue.",
+   "statement": "我搬家了",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "我搬家了",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "忘掉我恐高了",
+   "previous": "My locker code hint is blue.",
+   "statement": "我恐高了",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "我恐高了",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "忘掉我的地址了",
+   "previous": "My locker code hint is blue.",
+   "statement": "我的地址了",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "我的地址了",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "以后忘掉我恐高了",
+   "previous": "My locker code hint is blue.",
+   "statement": "我恐高了",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "我恐高了",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "忘掉我的旧地址，我搬家了",
+   "previous": "My locker code hint is blue.",
+   "statement": "我的旧地址，我搬家了",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "我的旧地址，我搬家了",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "忘掉我的旧地址，我搬到杭州了",
+   "previous": "My locker code hint is blue.",
+   "statement": "我的旧地址",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "我的旧地址",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "忘掉我抽烟，我现在戒了",
+   "previous": "My locker code hint is blue.",
+   "statement": "我抽烟，我现在戒了",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "我抽烟，我现在戒了",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "忘掉我以前的病，我现在已经好了",
+   "previous": "My locker code hint is blue.",
+   "statement": "我以前的病，我现在已经好了",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "我以前的病，我现在已经好了",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "I don't want you to remember my address.",
+   "statement": "my address",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "my address",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "I'd rather you didn't remember my ex's number.",
+   "statement": "my ex's number",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "my ex's number",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "I don't want you to remember that I smoke.",
+   "statement": "I smoke",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "I smoke",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Could you please not remember my phone number.",
+   "statement": "my phone number",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "my phone number",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Could you please not remember my phone number?",
+   "statement": "my phone number",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "my phone number",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Can you please not remember my address?",
+   "statement": "my address",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "my address",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Would you please not remember my email?",
+   "statement": "my email",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "my email",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "你可以忘掉我的生日吗",
+   "statement": "我的生日",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "我的生日",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "你可以不要记住我的地址吗",
+   "statement": "我的地址",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "我的地址",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "你可以别记我的电话吗",
+   "statement": "我的电话",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "我的电话",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Please don't ever remember my address.",
+   "statement": "my address",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "my address",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "你能不能别记住我的地址",
+   "statement": "我的地址",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "我的地址",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "你可不可以忘掉我的生日",
+   "statement": "我的生日",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "我的生日",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "忘了我的地址吧",
+   "statement": "我的地址",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "我的地址",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "请忘了我的地址吧",
+   "statement": "我的地址",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "我的地址",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "把关于我住址的记忆删掉",
+   "statement": "我住址",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "我住址",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "把你记住的我的地址删掉",
+   "statement": "我的地址",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "我的地址",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "forget my address pls",
+   "statement": "my address",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my address",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "forget my address, thx",
+   "statement": "my address",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my address",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "I don't want you to keep reminding me.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "I don't want you to keep asking me questions.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "I don't want you to keep bugging me.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "I don't want you to remember my name wrong, it's Jon not John.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "I don't want you to remember my birthday as the 5th, it's the 6th.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "I don't want you to remember my address, I want you to remember my office address.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "I don't want you to remember everything about me.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "I don't want you to remember anything I tell you.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "I don't want you to remember me as rude.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "I'd rather you didn't keep my ex's number.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "I'd rather you didn't store my phone number.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "I don't want you to save my work yet.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "I don't want you to save my progress.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "I don't want you to store my files.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "I don't want you to record my screen.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "I don't want you to keep my old settings.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "I don't want you to remember my files.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "I don't want you to forget my birthday.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "I don't want you to remember my questions.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Please forget my questions.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "forget my previous answers",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Please forget my messages.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "forget our chats",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Please forget our conversations.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "forget that stuff",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Please forget my mistakes.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Never log my email.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Don't store my API key.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Don't store my token.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "never store my password, hash it",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Don't record my screen.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Don't record my calls.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Don't record my voice.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Don't save my login.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Don't save my credit card.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Don't save my preferences.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Never store my location.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Never store my address.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Don't save my address.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Never store my password in plain text.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Don't save my file.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "don't save my changes",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "never save my work",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Don't store my API key in the repo.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Could you please not remember my name wrong?",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Can you please not remember my birthday wrong again?",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Could you please not remember everything I say?",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Please don't remember my name wrong.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "please don't remember my birthday as the 5th",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Please don't remember my address wrong, it's 5 Oak Road.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Please stop remembering me as rude.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Please don't remember anything I say.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Can you not remember my name? I told you twice.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Could you not remember that I told you I'm vegan?",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "can you not remember my address",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "can you not",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Don't ever forget my birthday.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "你能不能把我的文件删掉",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "你能不能把我的分支删掉",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "帮我把我的分支删掉",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "把我的测试文件删掉",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "把我的手机号删掉",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "删除我的提交记录",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "把我的提交记录删掉",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "把我的聊天记录删除",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "删除我的代码的记录",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "忘了带钥匙",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "忘了我吧",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "你忘了我的地址吧",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "你可以忘掉我的生日",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Forget my old address, I live at 27 Birch Lane now.",
+   "statement": "my old address",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "my old address",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "forget my old address, I live at 27 Birch Lane now",
+   "statement": "my old address",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "my old address",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget my previous address, I currently live in York.",
+   "statement": "my previous address",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "my previous address",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "forget our home address, we moved to York",
+   "statement": "our home address",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "our home address",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget that I lived in Leeds, I live in York now",
+   "statement": "I lived in Leeds",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "I lived in Leeds",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Please forget my old number, my new number is 555-0100.",
+   "statement": "my old number",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "my old number",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "forget my number, my new number is 555-0100",
+   "statement": "my number",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "my number",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget my old address, my new one is 5 Elm Street.",
+   "statement": "my old address",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "my old address",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "forget my cat's name, it's called Max now",
+   "statement": "my cat's name",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "my cat's name",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "forget my dog's name, now he's called Rex",
+   "statement": "my dog's name",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "my dog's name",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "forget my cat's name, its new name is Max",
+   "statement": "my cat's name",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "my cat's name",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "forget my name, I'm now called Alex",
+   "statement": "my name",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "my name",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "forget my old name, my name is now Alex",
+   "statement": "my old name",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "my old name",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget my old email, my email is now jon@example.com.",
+   "statement": "my old email",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "my old email",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "forget my deadname, I'm now called Alex",
+   "statement": "my deadname",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "my deadname",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget my old address, my address is now 27 Birch Lane.",
+   "statement": "my old address",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "my old address",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget my old address, it's 27 Birch Lane now.",
+   "statement": "my old address",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "my old address",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget my old number, it's 555-0199 now.",
+   "statement": "my old number",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "my old number",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "忘掉我以前的地址，我现在住在桦树巷27号",
+   "statement": "我以前的地址",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "我以前的地址",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "忘掉我的旧地址，我现在住在银杏路6号",
+   "statement": "我的旧地址",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "我的旧地址",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "忘掉我的旧地址，我搬到杭州了",
+   "statement": "我的旧地址",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "我的旧地址",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "把我的旧地址忘掉，现在我住在杭州",
+   "statement": "我的旧地址",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "我的旧地址",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "请忘记我的旧手机号，我的新号码是123",
+   "statement": "我的旧手机号",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "我的旧手机号",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "忘掉我的手机号，我的新号码是123",
+   "statement": "我的手机号",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "我的手机号",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "忘掉我原来的手机号，新号码是123",
+   "statement": "我原来的手机号",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "我原来的手机号",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "忘掉我的猫的名字，它现在叫咪咪",
+   "statement": "我的猫的名字",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "我的猫的名字",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "忘掉我的猫的名字，它的新名字是咪咪",
+   "statement": "我的猫的名字",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "我的猫的名字",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "忘掉我的名字，我现在叫小明",
+   "statement": "我的名字",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "我的名字",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "忘掉我的旧地址，现在住在杭州",
+   "statement": "我的旧地址",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "我的旧地址",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Please forget my old number; my new number is 555-0100.",
+   "statement": "my old number",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my old number",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget that I hold a prior conviction, I'm currently on parole.",
+   "statement": "I hold a prior conviction, I'm currently on parole",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "I hold a prior conviction, I'm currently on parole",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget that I have a prior DUI, I'm now banned from driving.",
+   "statement": "I have a prior DUI, I'm now banned from driving",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "I have a prior DUI, I'm now banned from driving",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget my ex-husband abused me, I'm now in therapy.",
+   "statement": "my ex-husband abused me, I'm now in therapy",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my ex-husband abused me, I'm now in therapy",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget that my ex hit me, I'm no longer seeing him but I still have nightmares now.",
+   "statement": "my ex hit me, I'm no longer seeing him but I still have nightmares now",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my ex hit me, I'm no longer seeing him but I still have nightmares now",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget my old phone number, I currently still use it for work.",
+   "statement": "my old phone number, I currently still use it for work",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my old phone number, I currently still use it for work",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget my old address, I'm currently hiding from my ex there.",
+   "statement": "my old address, I'm currently hiding from my ex there",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my old address, I'm currently hiding from my ex there",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget that I'm scared of getting old, I'm currently in therapy for it.",
+   "statement": "I'm scared of getting old, I'm currently in therapy for it",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "I'm scared of getting old, I'm currently in therapy for it",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget my previous therapist's name, I now see her twice a week.",
+   "statement": "my previous therapist's name, I now see her twice a week",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my previous therapist's name, I now see her twice a week",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget my ex's name, I'm now with Sam.",
+   "statement": "my ex's name, I'm now with Sam",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my ex's name, I'm now with Sam",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "forget my password, I changed it to hunter2 now",
+   "statement": "my password, I changed it to hunter2 now",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my password, I changed it to hunter2 now",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget that I'm pregnant, I'm currently in my second trimester.",
+   "statement": "I'm pregnant, I'm currently in my second trimester",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "I'm pregnant, I'm currently in my second trimester",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget that I'm pregnant, my new due date is May.",
+   "statement": "I'm pregnant, my new due date is May",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "I'm pregnant, my new due date is May",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget that I have depression, I'm currently on medication for it.",
+   "statement": "I have depression, I'm currently on medication for it",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "I have depression, I'm currently on medication for it",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget my diagnosis, I'm now in chemo.",
+   "statement": "my diagnosis, I'm now in chemo",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my diagnosis, I'm now in chemo",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "forget that I live in Leeds, I moved there in 2019",
+   "statement": "I live in Leeds, I moved there in 2019",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "I live in Leeds, I moved there in 2019",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget that I lived in Leeds, I live there now",
+   "statement": "I lived in Leeds, I live there now",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "I lived in Leeds, I live there now",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget that I'm in debt, I currently owe 50k.",
+   "statement": "I'm in debt, I currently owe 50k",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "I'm in debt, I currently owe 50k",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget that I like jazz, I prefer rock these days.",
+   "statement": "I like jazz, I prefer rock these days",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "I like jazz, I prefer rock these days",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "forget that I live in Leeds, and now I live in York",
+   "statement": "I live in Leeds, and now I live in York",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "I live in Leeds, and now I live in York",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "forget my number, my new phone is a Pixel",
+   "statement": "my number, my new phone is a Pixel",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my number, my new phone is a Pixel",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "forget my address, I live alone",
+   "statement": "my address, I live alone",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my address, I live alone",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget my old address, it's a shelter now.",
+   "statement": "my old address, it's a shelter now",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my old address, it's a shelter now",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget my old number, it's disconnected now.",
+   "statement": "my old number, it's disconnected now",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my old number, it's disconnected now",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget my job, I'm a teacher now.",
+   "statement": "my job, I'm a teacher now",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my job, I'm a teacher now",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget my previous job, I'm a teacher.",
+   "statement": "my previous job, I'm a teacher",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my previous job, I'm a teacher",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "forget my name, my name is Alex",
+   "statement": "my name, my name is Alex",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my name, my name is Alex",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget my diagnosis, my diagnosis is now worse.",
+   "statement": "my diagnosis, my diagnosis is now worse",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my diagnosis, my diagnosis is now worse",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget my old job, my new job is at a bank.",
+   "statement": "my old job, my new job is at a bank",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my old job, my new job is at a bank",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget my diagnosis, my new diagnosis is worse.",
+   "statement": "my diagnosis, my new diagnosis is worse",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my diagnosis, my new diagnosis is worse",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget my number, my number is now unlisted, I'm being stalked.",
+   "statement": "my number, my number is now unlisted, I'm being stalked",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my number, my number is now unlisted, I'm being stalked",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget my email, my email is now hacked and my ex reads it.",
+   "statement": "my email, my email is now hacked and my ex reads it",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my email, my email is now hacked and my ex reads it",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget my email, my email is now compromised.",
+   "statement": "my email, my email is now compromised",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my email, my email is now compromised",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget my old address, my address is now confidential because of my stalker.",
+   "statement": "my old address, my address is now confidential because of my stalker",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my old address, my address is now confidential because of my stalker",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget my old phone number, my phone is now broken.",
+   "statement": "my old phone number, my phone is now broken",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my old phone number, my phone is now broken",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget my old name, my name is now legally changed after the abuse.",
+   "statement": "my old name, my name is now legally changed after the abuse",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my old name, my name is now legally changed after the abuse",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget my old injury, it's 3 weeks old now.",
+   "statement": "my old injury, it's 3 weeks old now",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my old injury, it's 3 weeks old now",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget my old weight, it's 90 now and I'm still ashamed.",
+   "statement": "my old weight, it's 90 now and I'm still ashamed",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my old weight, it's 90 now and I'm still ashamed",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget my old dose, it's 50mg now because the cancer came back.",
+   "statement": "my old dose, it's 50mg now because the cancer came back",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my old dose, it's 50mg now because the cancer came back",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "forget my old number, it's 5 now and I'm scared",
+   "statement": "my old number, it's 5 now and I'm scared",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my old number, it's 5 now and I'm scared",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget my old job, I'm a mess now.",
+   "statement": "my old job, I'm a mess now",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my old job, I'm a mess now",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget my old job, I'm an alcoholic now.",
+   "statement": "my old job, I'm an alcoholic now",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my old job, I'm an alcoholic now",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget my old job, I'm a sex worker now.",
+   "statement": "my old job, I'm a sex worker now",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my old job, I'm a sex worker now",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget my old role, I'm a patient now.",
+   "statement": "my old role, I'm a patient now",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my old role, I'm a patient now",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget my previous job, I'm a teacher now.",
+   "statement": "my previous job, I'm a teacher now",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my previous job, I'm a teacher now",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget my old address, I live in a shelter now.",
+   "statement": "my old address, I live in a shelter now",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my old address, I live in a shelter now",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget my old address, it's NOT 12 Oak Street now.",
+   "statement": "my old address, it's NOT 12 Oak Street now",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my old address, it's NOT 12 Oak Street now",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget my old address, it's CONFIDENTIAL now.",
+   "statement": "my old address, it's CONFIDENTIAL now",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my old address, it's CONFIDENTIAL now",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget my old number, my number is now UNLISTED.",
+   "statement": "my old number, my number is now UNLISTED",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my old number, my number is now UNLISTED",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "FORGET MY OLD ADDRESS, IT'S CONFIDENTIAL NOW",
+   "statement": "MY OLD ADDRESS, IT'S CONFIDENTIAL NOW",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "MY OLD ADDRESS, IT'S CONFIDENTIAL NOW",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "FORGET MY OLD ADDRESS, I LIVE AT 27 BIRCH LANE NOW",
+   "statement": "MY OLD ADDRESS, I LIVE AT 27 BIRCH LANE NOW",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "MY OLD ADDRESS, I LIVE AT 27 BIRCH LANE NOW",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget my old address, it's Not 12 Oak Street now.",
+   "statement": "my old address, it's Not 12 Oak Street now",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my old address, it's Not 12 Oak Street now",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget my old number, my new number is 555, the old one was 444-1234.",
+   "statement": "my old number, my new number is 555, the old one was 444-1234",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my old number, my new number is 555, the old one was 444-1234",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget my old address, I live at 27 Birch Lane now, I left 12 Oak Street because of my ex.",
+   "statement": "my old address, I live at 27 Birch Lane now, I left 12 Oak Street because of my ex",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my old address, I live at 27 Birch Lane now, I left 12 Oak Street because of my ex",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget my old address, it's 27 Birch Lane now, not 12 Oak Street.",
+   "statement": "my old address, it's 27 Birch Lane now, not 12 Oak Street",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my old address, it's 27 Birch Lane now, not 12 Oak Street",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget my old name, my name is now Alex, I used to be called Sarah.",
+   "statement": "my old name, my name is now Alex, I used to be called Sarah",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my old name, my name is now Alex, I used to be called Sarah",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget my old number, it's 5512 now and I'm scared someone saw the old one.",
+   "statement": "my old number, it's 5512 now and I'm scared someone saw the old one",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my old number, it's 5512 now and I'm scared someone saw the old one",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget my old address, I live in York now with my abuser.",
+   "statement": "my old address, I live in York now with my abuser",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my old address, I live in York now with my abuser",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "忘掉我的旧名字，我现在叫小明，以前叫小红",
+   "statement": "我的旧名字，我现在叫小明，以前叫小红",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "我的旧名字，我现在叫小明，以前叫小红",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "忘掉我的旧地址，我现在住在杭州，以前住在北京朝阳区",
+   "statement": "我的旧地址，我现在住在杭州，以前住在北京朝阳区",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "我的旧地址，我现在住在杭州，以前住在北京朝阳区",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "忘掉我的旧手机号，我的新号码是123，旧的是456",
+   "statement": "我的旧手机号，我的新号码是123，旧的是456",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "我的旧手机号，我的新号码是123，旧的是456",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "忘掉我的旧地址，我现在还住在杭州",
+   "statement": "我的旧地址，我现在还住在杭州",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "我的旧地址，我现在还住在杭州",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "忘掉我的旧地址，我现在住在杭州因为我离婚了",
+   "statement": "我的旧地址，我现在住在杭州因为我离婚了",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "我的旧地址，我现在住在杭州因为我离婚了",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "forget my cat's name, it's called Max",
+   "statement": "my cat's name, it's called Max",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my cat's name, it's called Max",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Please forget my old phone number, the one I gave you last week.",
+   "statement": "my old phone number, the one I gave you last week",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my old phone number, the one I gave you last week",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Please forget that I live in Paris, France.",
+   "statement": "I live in Paris, France",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "I live in Paris, France",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "forget that when I was young, I lived in Paris but now I live in Rome",
+   "statement": "that when I was young, I lived in Paris but now I live in Rome",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "that when I was young, I lived in Paris but now I live in Rome",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "忘掉我以前坐过牢，我现在在假释",
+   "statement": "我以前坐过牢，我现在在假释",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "我以前坐过牢，我现在在假释",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "忘掉我之前的诊断，我现在在化疗",
+   "statement": "我之前的诊断，我现在在化疗",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "我之前的诊断，我现在在化疗",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "忘掉我怀孕了，我的新孕检结果正常",
+   "statement": "我怀孕了，我的新孕检结果正常",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "我怀孕了，我的新孕检结果正常",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "忘掉我怀孕了，我现在怀孕三个月",
+   "statement": "我怀孕了，我现在怀孕三个月",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "我怀孕了，我现在怀孕三个月",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "忘掉我得了抑郁症，我目前在吃药",
+   "statement": "我得了抑郁症，我目前在吃药",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "我得了抑郁症，我目前在吃药",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "忘掉我怀孕了，我的新预产期是五月",
+   "statement": "我怀孕了，我的新预产期是五月",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "我怀孕了，我的新预产期是五月",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "忘掉我住在北京，我已经住了五年",
+   "statement": "我住在北京，我已经住了五年",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "我住在北京，我已经住了五年",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "忘掉我的旧地址，我现在住在那里",
+   "statement": "我的旧地址，我现在住在那里",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "我的旧地址，我现在住在那里",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "忘掉我的猫的名字，它叫咪咪",
+   "statement": "我的猫的名字，它叫咪咪",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "我的猫的名字，它叫咪咪",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "忘掉我住在北京，在朝阳区",
+   "statement": "我住在北京，在朝阳区",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "我住在北京，在朝阳区",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "忘掉当我小时候，我现在住的地方",
+   "statement": "当我小时候，我现在住的地方",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "当我小时候，我现在住的地方",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "把我怀孕的事忘掉，我现在怀孕三个月",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "forget Ben's name",
+   "statement": "Ben's name",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "Ben's name",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "forget the function's name",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "forget the variable's name",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "forget the file's name",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "forget the repo's name",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "forget the class's name",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "forget the server's address",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "forget the API's address",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "forget API's address",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "forget Docker's address",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "forget Kubernetes's name",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "forget main's address",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "forget the Server's address",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "忘掉Docker的地址",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "忘掉Python的名字",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "忘掉Redis的地址",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Forget the project's name.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "forget the project's name, call it Atlas",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Forget Ben's name, call him Benny",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "forget Ben's name and call him Benny",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Forget Ben's name. Call him Benny.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "forget my cat's name, call her Luna",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "忘掉小李的名字，叫他小王",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "忘掉我的猫的名字，改叫咪咪",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "忘掉我的分支名，改叫main",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Forget our fight last night, I'm over it.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "forget our little argument",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Forget that stupid argument.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "forget it",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "算了别提了",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "算了，忘了吧",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "忘掉我们昨晚吵架的事吧",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "忘掉老歌",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "忘掉阿里",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "忘掉小三",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "忘掉小爱",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "忘掉老路",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "忘掉阿姨",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "忘记公司的地址",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "忘记邮箱的地址",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "忘掉这个函数的名字",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "忘掉变量的名字",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Please forget my fight with cancer.",
+   "statement": "my fight with cancer",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my fight with cancer",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Please forget that I had a fight with my wife.",
+   "statement": "I had a fight with my wife",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "I had a fight with my wife",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget the things I told you about my ex.",
+   "statement": "the things I told you about my ex",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "the things I told you about my ex",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget the stuff about my ex.",
+   "statement": "the stuff about my ex",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "the stuff about my ex",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Please forget the stuff I said about my job.",
+   "statement": "the stuff I said about my job",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "the stuff I said about my job",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget the conversation we had about my divorce.",
+   "statement": "the conversation we had about my divorce",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "the conversation we had about my divorce",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Please forget our conversation about my health.",
+   "statement": "our conversation about my health",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "our conversation about my health",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget my question about my diagnosis.",
+   "statement": "my question about my diagnosis",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my question about my diagnosis",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Please forget my answer about where I live.",
+   "statement": "my answer about where I live",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my answer about where I live",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget my answers to the security questions.",
+   "statement": "my answers to the security questions",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my answers to the security questions",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget my messages to my ex.",
+   "statement": "my messages to my ex",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my messages to my ex",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget the chat about my salary.",
+   "statement": "the chat about my salary",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "the chat about my salary",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "forget the mistakes I made with my taxes",
+   "statement": "the mistakes I made with my taxes",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "the mistakes I made with my taxes",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "忘掉我跟你说的关于我前任的事",
+   "statement": "我跟你说的关于我前任的事",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "我跟你说的关于我前任的事",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "忘掉我们聊过的我离婚的事",
+   "statement": "我们聊过的我离婚的事",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "我们聊过的我离婚的事",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "forget all my questions",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Please forget my previous answers.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "forget my stupid mistakes",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Forget those conversations.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Forget the stuff we discussed earlier, let's start fresh.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "forget the stuff we discussed about the API, let's start over",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "forget the stuff we discussed",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "forget the things from our last session",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Forget the conversation we had.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "forget our chat yesterday",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "forget the stuff you said",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Forget the things we talked about before.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Forget the stuff about the movie, let's talk about work.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Forget the stuff about the movie. Let's talk about work.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Forget my phone number. Never mind.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Please forget my address, never mind.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "forget my implementation, let's start over",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "forget my implementation",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "forget my design, let's start over",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "forget my branch, let's start over",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "forget my function, let's start over",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "forget my query, let's start over",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "forget my script, let's start over",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "forget my schema, let's start over",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "forget my PR, let's start over",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "forget my commit, let's start over",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "forget my code, let's start over",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "forget my approach, let's start over",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "forget my plan, let's start over",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "忘掉我的代码，重新开始",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "忘掉我的方案，重新开始",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "忘掉我的分支，重新开始",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "忘掉我的代码",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "忘掉我们聊过的东西",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "忘掉我们之前说的",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "忘掉我说的那些，说点别的",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "忘掉我的地址，算了",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "忘掉我的地址。算了",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Please forget that I'm pregnant, let's move on.",
+   "statement": "I'm pregnant",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "I'm pregnant",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget that I'm pregnant. Let's move on.",
+   "statement": "I'm pregnant",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "I'm pregnant",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget my ex's name, let's move on.",
+   "statement": "my ex's name",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "my ex's name",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget my salary, let's not talk about money.",
+   "statement": "my salary",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "my salary",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Please forget my address. Let's talk about work.",
+   "statement": "my address",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my address",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Please forget my phone number. Let's continue.",
+   "statement": "my phone number",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my phone number",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget my password. Let's reset it.",
+   "statement": "my password",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my password",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Please forget my address. Moving on, what's the weather?",
+   "statement": "my address",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my address",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Please forget my address, let's move on.",
+   "statement": "my address",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "my address",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Please forget that I like jazz, moving on.",
+   "statement": "I like jazz",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "I like jazz",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "请忘掉我的地址，我们换个话题吧",
+   "statement": "我的地址",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "我的地址",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "忘掉我怀孕了，说点别的吧",
+   "statement": "我怀孕了",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "我怀孕了",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "忘掉我的地址。我们聊点别的",
+   "statement": "我的地址",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "我的地址",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "忘掉我的地址，我们重新开始",
+   "statement": "我的地址",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "我的地址",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "忘掉我的地址。换个话题",
+   "statement": "我的地址",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "我的地址",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget Ben's name, let's move on.",
+   "statement": "Ben's name",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "Ben's name",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget our wedding anniversary date, let's move on.",
+   "statement": "our wedding anniversary date",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "our wedding anniversary date",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget that I have HIV, let's move on, my partner doesn't know.",
+   "statement": "I have HIV, let's move on, my partner doesn't know",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "I have HIV, let's move on, my partner doesn't know",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget that I have HIV, let's move on because my partner doesn't know.",
+   "statement": "I have HIV, let's move on because my partner doesn't know",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "I have HIV, let's move on because my partner doesn't know",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget that I'm pregnant, let's move on, I'm not ready to talk about it.",
+   "statement": "I'm pregnant, let's move on, I'm not ready to talk about it",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "I'm pregnant, let's move on, I'm not ready to talk about it",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Please forget my diagnosis, let's talk about something else, it's still too raw.",
+   "statement": "my diagnosis, let's talk about something else, it's still too raw",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my diagnosis, let's talk about something else, it's still too raw",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget my ex's name, let's move on, he hurt me badly.",
+   "statement": "my ex's name, let's move on, he hurt me badly",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my ex's name, let's move on, he hurt me badly",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "忘掉我怀孕了，说点别的吧，我还没准备好谈这个",
+   "statement": "我怀孕了，说点别的吧，我还没准备好谈这个",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "我怀孕了，说点别的吧，我还没准备好谈这个",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "忘掉我得了艾滋病，换个话题，我男朋友还不知道",
+   "statement": "我得了艾滋病，换个话题，我男朋友还不知道",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "我得了艾滋病，换个话题，我男朋友还不知道",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget what I just said, let's start over.",
+   "previous": "My locker code hint is blue.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Forget the stuff about the movie.",
+   "statement": "the stuff about the movie",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "the stuff about the movie",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Please don't remember that I work as a nurse.",
+   "statement": "I work as a nurse",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "I work as a nurse",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Please don't remember that I'm registered as disabled.",
+   "statement": "I'm registered as disabled",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "I'm registered as disabled",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Please don't remember that I live right next to my ex.",
+   "statement": "I live right next to my ex",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "I live right next to my ex",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Please don't remember that I remember my childhood badly.",
+   "statement": "I remember my childhood badly",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "I remember my childhood badly",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "I don't want you to remember that I worked as an escort.",
+   "statement": "I worked as an escort",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "I worked as an escort",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Please don't remember my address until I'm settled.",
+   "statement": "my address until I'm settled",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my address until I'm settled",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Please don't remember that you got my name wrong.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "③ Please forget my locker code word.",
+   "statement": "my locker code word",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "my locker code word",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "❶ Please forget my bike.",
+   "statement": "my bike",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "my bike",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "1) Please forget my bike.",
+   "statement": "my bike",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "my bike",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "12. forget my old address",
+   "statement": "my old address",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my old address",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "a) Please forget my phone number.",
+   "statement": "my phone number",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "my phone number",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "iv) please forget my phone number",
+   "statement": "my phone number",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "my phone number",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "(2) Please forget my phone number.",
+   "statement": "my phone number",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "my phone number",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "• Please forget my phone number.",
+   "statement": "my phone number",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my phone number",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "（一）请忘掉我的猫叫Pixel",
+   "statement": "我的猫叫Pixel",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "我的猫叫Pixel",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "一、请忘掉我的猫叫Pixel",
+   "statement": "我的猫叫Pixel",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "我的猫叫Pixel",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "第一，请忘掉我的猫叫Pixel",
+   "statement": "我的猫叫Pixel",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "我的猫叫Pixel",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "1. Please forget my locker code word.",
+   "statement": "my locker code word",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my locker code word",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "- forget my phone number",
+   "statement": "my phone number",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my phone number",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "2 cats forget nothing.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "1.5 forget about it",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "3) Don't forget my keys.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "4. I live in Porto.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "1）请忘掉我的猫叫Pixel",
+   "statement": "我的猫叫Pixel",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "我的猫叫Pixel",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "一）请忘掉我的猫叫Pixel",
+   "statement": "我的猫叫Pixel",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "我的猫叫Pixel",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "1．请忘掉我的猫叫Pixel",
+   "statement": "我的猫叫Pixel",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "我的猫叫Pixel",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "1）Please forget my phone number.",
+   "statement": "my phone number",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "my phone number",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "a)Please forget my phone number.",
+   "statement": "my phone number",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "my phone number",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Q1) Please forget my phone number.",
+   "statement": "my phone number",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "my phone number",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "IV) Please forget my phone number.",
+   "statement": "my phone number",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "my phone number",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "xxxix) Please forget my phone number.",
+   "statement": "my phone number",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "my phone number",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Mix) forget my number",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "mix) forget my number",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Civil) forget my number",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Iv) forget my number",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Q1.5 forget my number",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "forget my branch name, use main instead",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Please forget my branch name and use main instead.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "forget my editor; I want you to use vim instead",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Forget my branch name. Use main instead.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "忘掉我的分支名。改用main",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "忘掉我的分支名，改用main",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "忘掉我的分支名，用main代替",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Please forget that I use vim instead of emacs.",
+   "statement": "I use vim instead of emacs",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "I use vim instead of emacs",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "忘掉我改用的那个密码",
+   "statement": "我改用的那个密码",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "我改用的那个密码",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Please forget my phone number. Then tell me a joke.",
+   "statement": "my phone number",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my phone number",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "1. My locker code is HERON. 2) Please forget my locker code.",
+   "statement": "my locker code",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "my locker code",
+     "inChat": false,
+     "ownTurn": true
+    }
+   ]
+  },
+  {
+   "text": "我的密码是HERON。把我的密码忘掉吧",
+   "statement": "我的密码",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "我的密码",
+     "inChat": false,
+     "ownTurn": true
+    }
+   ]
+  },
+  {
+   "text": "Write me a haiku. Please forget that I asked you for a haiku about my cat Pixel.",
+   "statement": "I asked you for a haiku about my cat Pixel",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "I asked you for a haiku about my cat Pixel",
+     "inChat": false,
+     "ownTurn": true
+    }
+   ]
+  },
+  {
+   "text": "1) Please forget my locker code. 2) My new locker code is EAGLE.",
+   "statement": "my locker code",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "my locker code",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "My locker code is HERON. Please forget my locker code.",
+   "statement": "my locker code",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my locker code",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  }
+ ]
+}

@@ -1,0 +1,277 @@
+manifest_version: 2
+coordinate: heavenbase/benchmark
+version: 0.1.2.3
+compatibility: {heavenbase: {min: 0.1.2.3, before: 0.1.3.0}}
+bundle: benchmark
+items:
+  - kind: tag
+    identifier: benchmark-suites
+    name: Benchmark suites
+    desc: Benchmark suites that include a combination.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      definition:
+        schema: {type: set, items: {type: identifier}}
+        default: []
+        subjects: [benchmark_combination]
+        subject_policy: exact
+        layers: [static]
+  - kind: benchmark_combination
+    identifier: inmem_all
+    name: In-memory benchmark
+    desc: All user fields routed to one in-memory Backend.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: {benchmark-suites: [default]}
+      dependencies: [backend_type:inmem]
+      definition:
+        combination_type: pure-inmem
+        backends:
+          main: {type: inmem}
+
+  - kind: benchmark_combination
+    identifier: sqlite_all
+    name: SQLite benchmark
+    desc: All user fields routed to SQLite, including scan-based vector near.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: {benchmark-suites: [default]}
+      dependencies: [backend_type:sqlite]
+      definition:
+        combination_type: pure-sql
+        backends:
+          main: {type: sqlite, database: "file://{tmp}/{ws_id}-main.db"}
+        resource_paths: ["{tmp}"]
+
+  - kind: benchmark_combination
+    identifier: sqlite_inmem_vec
+    name: SQLite and in-memory vector benchmark
+    desc: Scalar rows in SQLite and vectors in an in-memory route.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: {benchmark-suites: [default]}
+      dependencies: [backend_type:sqlite, backend_type:inmem]
+      definition:
+        combination_type: sql+vector
+        backends:
+          main: {type: sqlite, database: "file://{tmp}/{ws_id}-main.db"}
+          vec: {type: inmem}
+        scalar_backend: main
+        vector_backend: vec
+        resource_paths: ["{tmp}"]
+
+  - kind: benchmark_combination
+    identifier: inmem_sqlite_vec
+    name: In-memory and SQLite vector benchmark
+    desc: Scalar rows in memory and vectors in SQLite for scan-based near.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: {benchmark-suites: [default]}
+      dependencies: [backend_type:inmem, backend_type:sqlite]
+      definition:
+        combination_type: row+sql-vector
+        backends:
+          main: {type: inmem}
+          vec: {type: sqlite, database: "file://{tmp}/{ws_id}-vec.db"}
+        scalar_backend: main
+        vector_backend: vec
+        resource_paths: ["{tmp}"]
+
+  - kind: benchmark_combination
+    identifier: sqlite_lance_vec
+    name: SQLite and LanceDB benchmark
+    desc: Scalar rows in SQLite and vectors in LanceDB.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: {benchmark-suites: [optional-local]}
+      dependencies: [backend_type:sqlite, backend_type:lance]
+      definition:
+        combination_type: sql+vector
+        backends:
+          main: {type: sqlite, database: "file://{tmp}/{ws_id}-main.db"}
+          vec: {type: lance, uri: "file://{tmp}/lance"}
+        scalar_backend: main
+        vector_backend: vec
+        resource_paths: ["{tmp}"]
+
+  - kind: benchmark_combination
+    identifier: lance_all
+    name: LanceDB benchmark
+    desc: All user fields routed to LanceDB while system rows stay in memory.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: {benchmark-suites: [optional-local]}
+      dependencies: [backend_type:inmem, backend_type:lance]
+      definition:
+        combination_type: pure-vector
+        backends:
+          main: {type: inmem}
+          vec: {type: lance, uri: "file://{tmp}/lance"}
+        scalar_backend: vec
+        vector_backend: vec
+        resource_paths: ["{tmp}"]
+
+  - kind: benchmark_combination
+    identifier: sqlite_chroma_vec
+    name: SQLite and ChromaDB benchmark
+    desc: Scalar rows in SQLite and vectors in ChromaDB.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: {benchmark-suites: [optional-local]}
+      dependencies: [backend_type:sqlite, backend_type:chroma]
+      definition:
+        combination_type: sql+vector
+        backends:
+          main: {type: sqlite, database: "file://{tmp}/{ws_id}-main.db"}
+          vec: {type: chroma, path: "file://{tmp}/chroma"}
+        scalar_backend: main
+        vector_backend: vec
+        resource_paths: ["{tmp}"]
+
+  - kind: benchmark_combination
+    identifier: chroma_all
+    name: ChromaDB benchmark
+    desc: All user fields routed to ChromaDB while system rows stay in memory.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: {benchmark-suites: [optional-local]}
+      dependencies: [backend_type:inmem, backend_type:chroma]
+      definition:
+        combination_type: pure-vector
+        backends:
+          main: {type: inmem}
+          vec: {type: chroma, path: "file://{tmp}/chroma"}
+        scalar_backend: vec
+        vector_backend: vec
+        resource_paths: ["{tmp}"]
+
+  - kind: benchmark_combination
+    identifier: elasticsearch_inmem_vec
+    name: Elasticsearch and in-memory vector benchmark
+    desc: Scalar and text fields in Elasticsearch and vectors in memory.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: {benchmark-suites: [external]}
+      dependencies: [backend_type:elasticsearch, backend_type:inmem]
+      definition:
+        combination_type: search+vector
+        backends:
+          main: {type: elasticsearch}
+          vec: {type: inmem}
+        scalar_backend: main
+        vector_backend: vec
+
+  - kind: benchmark_combination
+    identifier: sqlite_milvus_vec
+    name: SQLite and Milvus benchmark
+    desc: Scalar rows in SQLite and vectors in Milvus.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: {benchmark-suites: [external]}
+      dependencies: [backend_type:sqlite, backend_type:milvus]
+      definition:
+        combination_type: sql+vector
+        backends:
+          main: {type: sqlite, database: "file://{tmp}/{ws_id}-main.db"}
+          vec: {type: milvus}
+        scalar_backend: main
+        vector_backend: vec
+        resource_paths: ["{tmp}"]
+
+  - kind: benchmark_combination
+    identifier: milvus_all
+    name: Milvus benchmark
+    desc: All user fields routed to Milvus while system rows stay in memory.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: {benchmark-suites: [external]}
+      dependencies: [backend_type:inmem, backend_type:milvus]
+      definition:
+        combination_type: pure-vector
+        backends:
+          main: {type: inmem}
+          vec: {type: milvus}
+        scalar_backend: vec
+        vector_backend: vec
+
+  - kind: benchmark_combination
+    identifier: pgvector_all
+    name: PgVector benchmark
+    desc: All user fields routed to one PgVector-enabled PostgreSQL Backend.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: {benchmark-suites: [external]}
+      dependencies: [backend_type:pgvector]
+      definition:
+        combination_type: pure-sql-vector
+        backends:
+          main: {type: pgvector}
+
+  - kind: benchmark_combination
+    identifier: mysql_all
+    name: MySQL benchmark
+    desc: All user fields routed to one MySQL Backend.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: {benchmark-suites: [external]}
+      dependencies: [backend_type:mysql]
+      definition:
+        combination_type: pure-sql
+        backends:
+          main: {type: mysql}

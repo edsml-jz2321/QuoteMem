@@ -1,0 +1,80 @@
+manifest_version: 2
+coordinate: heavenbase/backends/sql/strategies/gram
+version: 0.1.2.3
+compatibility: {heavenbase: {min: 0.1.2.3, before: 0.1.3.0}}
+bundle: sql-gram
+items:
+  - kind: tag
+    identifier: gram
+    name: GRAM
+    desc: Sparse-GRAM analysis and indexing categorization.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      definition:
+        schema: {type: boolean}
+        default: false
+        subjects: [gram_normalizer, gram_tokenizer, strategy, storage_profile]
+        subject_policy: category-open
+        layers: [static]
+  - kind: gram_normalizer
+    identifier: auto
+    aliases: [spacy]
+    name: Auto
+    desc: Select the configured sparse-GRAM text normalizer.
+    source: python-import
+    target: heavenbase.backends.sql.strategies.gram.normalizers:_auto_normalize
+    active: true
+    meta: {schema_version: 1, version: 0.1.2.1, tags: {gram: true}}
+  - kind: gram_normalizer
+    identifier: default
+    aliases: [simple]
+    name: Default
+    desc: Normalize text with the default sparse-GRAM policy.
+    source: python-import
+    target: heavenbase.backends.sql.strategies.gram.normalizers:_default_normalize
+    active: true
+    meta: {schema_version: 1, version: 0.1.2.1, tags: {gram: true}}
+  - kind: gram_normalizer
+    identifier: fast
+    name: Fast
+    desc: Normalize text with the fast sparse-GRAM policy.
+    source: python-import
+    target: heavenbase.backends.sql.strategies.gram.normalizers:_fast_normalize
+    active: true
+    meta: {schema_version: 1, version: 0.1.2.1, tags: {gram: true}}
+  - kind: gram_normalizer
+    identifier: char
+    name: Character
+    desc: Normalize text for character grams.
+    source: python-import
+    target: heavenbase.backends.sql.strategies.gram.normalizers:_char_normalize
+    active: true
+    meta: {schema_version: 1, version: 0.1.2.1, tags: {gram: true}}
+  - kind: gram_normalizer
+    identifier: none
+    name: None
+    desc: Preserve source text without normalization.
+    source: python-import
+    target: heavenbase.backends.sql.strategies.gram.normalizers:_none_normalize
+    active: true
+    meta: {schema_version: 1, version: 0.1.2.1, tags: {gram: true}}
+  - kind: gram_tokenizer
+    identifier: char
+    name: Character
+    desc: Tokenize normalized text into characters.
+    source: python-import
+    target: heavenbase.backends.sql.strategies.gram.analyzers:_char_tokenize
+    active: true
+    meta: {schema_version: 1, version: 0.1.2.1, tags: {gram: true}}
+  - kind: gram_tokenizer
+    identifier: space
+    name: Space
+    desc: Tokenize normalized text on spaces.
+    source: python-import
+    target: heavenbase.backends.sql.strategies.gram.analyzers:_space_tokenize
+    active: true
+    meta: {schema_version: 1, version: 0.1.2.1, tags: {gram: true}}

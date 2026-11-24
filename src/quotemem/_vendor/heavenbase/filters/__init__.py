@@ -1,0 +1,78 @@
+"""Filter expression and operation extension surface."""
+
+from __future__ import annotations
+
+from heavenbase._lazy import _attach_lazy_exports
+
+__all__ = [
+    "And",
+    "Expr",
+    "FieldOpNormalizer",
+    "Filter",
+    "Not",
+    "OP_ALL",
+    "OP_ARRAY_CONTAINS",
+    "OP_CONTAINED_IN",
+    "OP_CONTAINS",
+    "OP_ENDS_WITH",
+    "OP_EQ",
+    "OP_EXISTS",
+    "OP_GT",
+    "OP_GTE",
+    "OP_ILIKE",
+    "OP_IN",
+    "OP_LIKE",
+    "OP_LT",
+    "OP_LTE",
+    "OP_MATCH",
+    "OP_NE",
+    "OP_NEAR",
+    "OP_REGEX",
+    "OP_STARTS_WITH",
+    "OP_WILDCARD",
+    "Or",
+    "SpecialExprParser",
+    "expr_from_dict",
+    "normalize_op",
+    "op_aliases",
+    "register_op",
+    "registered_ops",
+]
+
+_LAZY_EXPORTS = {
+    "OP_ALL": (".ops", "OP_ALL"),
+    "OP_ARRAY_CONTAINS": (".ops", "OP_ARRAY_CONTAINS"),
+    "OP_CONTAINED_IN": (".ops", "OP_CONTAINED_IN"),
+    "OP_CONTAINS": (".ops", "OP_CONTAINS"),
+    "OP_ENDS_WITH": (".ops", "OP_ENDS_WITH"),
+    "OP_EQ": (".ops", "OP_EQ"),
+    "OP_EXISTS": (".ops", "OP_EXISTS"),
+    "OP_GT": (".ops", "OP_GT"),
+    "OP_GTE": (".ops", "OP_GTE"),
+    "OP_ILIKE": (".ops", "OP_ILIKE"),
+    "OP_IN": (".ops", "OP_IN"),
+    "OP_LIKE": (".ops", "OP_LIKE"),
+    "OP_LT": (".ops", "OP_LT"),
+    "OP_LTE": (".ops", "OP_LTE"),
+    "OP_MATCH": (".ops", "OP_MATCH"),
+    "OP_NE": (".ops", "OP_NE"),
+    "OP_NEAR": (".ops", "OP_NEAR"),
+    "OP_REGEX": (".ops", "OP_REGEX"),
+    "OP_STARTS_WITH": (".ops", "OP_STARTS_WITH"),
+    "OP_WILDCARD": (".ops", "OP_WILDCARD"),
+    "normalize_op": (".ops", "normalize_op"),
+    "op_aliases": (".ops", "op_aliases"),
+    "register_op": (".ops", "register_op"),
+    "registered_ops": (".ops", "registered_ops"),
+    "And": (".spec", "And"),
+    "Expr": (".spec", "Expr"),
+    "FieldOpNormalizer": (".spec", "FieldOpNormalizer"),
+    "Filter": (".spec", "Filter"),
+    "Not": (".spec", "Not"),
+    "Or": (".spec", "Or"),
+    "SpecialExprParser": (".spec", "SpecialExprParser"),
+    "expr_from_dict": (".spec", "expr_from_dict"),
+}
+
+
+__getattr__, __dir__ = _attach_lazy_exports(__name__, globals(), _LAZY_EXPORTS, __all__)

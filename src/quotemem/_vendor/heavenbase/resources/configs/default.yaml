@@ -1,0 +1,1474 @@
+heavenbase:
+    cli:
+        backend: typer
+        debug_errors: false
+    dashboard:
+        host: 127.0.0.1
+        port: 42777
+        open: true
+        preferences:
+            configured: false
+            theme: theme-light
+            language: en
+            font: default
+            font_scale: default
+        assistant:
+            desc: Chat model behind the dashboard AI assistant.
+            preset: chat
+            read_only: true
+            share_credentials: false
+            # Bounded defaults preserve the ordinary dashboard contract;
+            # larger context/evidence policies are explicit operator choices.
+            max_frames: 5
+            max_tool_result_chars: 6000
+            max_query_rows: 100
+            max_group_rows: 1000
+            max_tool_turns: 8
+            history_turns: 40
+            # Cross-turn evidence carry is opt-in; 0 preserves prose-only replay.
+            evidence_total: 0
+            evidence_turn_chars: 200000
+            evidence_brief_chars: 1500
+            # Set a positive assembled-request character threshold to compact
+            # old replay turns; 0 keeps ordinary bounded replay.
+            history_chars: 0
+            compact_chars: 4000
+            # In-turn compaction is dashboard policy; generic LLM calls remain
+            # behavior-neutral unless their caller opts in.
+            compact_ratio: 0.92
+            # Set a positive character count to clip each captured tool result.
+            result_capture_chars: 0
+            run_python: false
+            # External MCP servers imported through the shared FastMCP adapter.
+            # Each entry needs a name and either url or command;
+            # allowlist and read_only are optional.
+            mcp_servers: []
+            # Durable per-turn session log: agent-trace event rows (the
+            # authoritative record of every provider-bound request) plus an
+            # agent-session/agent-message projection, in a dedicated log
+            # workspace. OFF by default: a stock install never writes model
+            # traffic to disk until an operator sets `session_log: true`; the
+            # reply/history contract is the same either way.
+            session_log: false
+            session_log_workspace: assistant-log
+            # The log never trusts preset fallback (the debug preset is
+            # in-memory); its backend is declared here like llm.cache.
+            session_log_backend:
+                main:
+                    type: sqlite
+                    name: main
+                    database: "file://%/assistant/session-log.db"
+            # Whole-session cap enforced when a new conversation opens;
+            # 0 keeps every session.
+            session_log_max_sessions: 256
+            # get_config can hand raw credentials to the model when
+            # share_credentials is on; logging would persist them at rest,
+            # so the combination is refused unless explicitly accepted here.
+            session_log_allow_credentials: false
+    registry:
+        default_workspace: default
+        active:
+            workspace: null
+        workspaces: {}
+    config:
+        versioning:
+            keep_last_k: 10
+        refresh_interval: 2.0
+        cache:
+            max_snapshots: 65536
+            max_generations: 65536
+            max_resolved: 1024
+            max_applied: 1024
+    log:
+        level: INFO
+        sink: stream
+        file: null
+        suppress: false
+        format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+        stream_format: "%(levelname)s:%(name)s:%(message)s"
+    parallel:
+        max_workers: null
+        fallback_max_workers: 32
+        cpu_extra_workers: 4
+    serialize:
+        encoding: utf-8
+        indent: 4
+    rng:
+        hash_function: crc32
+        hash_modulo: 1061109589
+    auto_register: true
+    demos:
+        run_llm: "${env:HVNB_RUN_LLM_DEMO,0}"
+    extensions:
+        default:
+            - toolkit
+            - prompt
+            - agent
+    entity:
+        id:
+            hash_length: 42
+    db:
+        local_root: "file://%/database"
+        default_preset: default
+        default_provider: sqlite
+        presets:
+            default:
+                provider: sqlite
+        default_args:
+            http_proxy: null
+            https_proxy: null
+            no_proxy: null
+            sql_healing:
+                aggressiveness: balanced
+                prefer_backticks: true
+        providers:
+            sqlite:
+                dialect: sqlite
+                driver: pysqlite
+                database: default.db
+                # Vector storage form. Unset keeps JSON text, which every release
+                # reads. `float64_blob` (opt-in) packs each vector as a little-endian
+                # float64 BLOB: smaller, faster to decode, bit-exact, and still able
+                # to read JSON text rows; HeavenBase 0.1.2.2 and earlier cannot read
+                # a packed row, and nothing converts packed rows back. Only SQLite
+                # (dynamically typed columns) accepts it; other dialects refuse it.
+                # vector_packed_type: float64_blob
+                pragmas:
+                    - "PRAGMA foreign_keys = ON;"
+                    - "PRAGMA journal_mode = WAL;"
+                    - "PRAGMA synchronous = NORMAL;"
+                    - "PRAGMA busy_timeout = 6000;"
+                lock_retry:
+                    attempts: 8
+                    base_delay: 0.02
+                    max_delay: 0.25
+                pool:
+                    pool_class: queue
+                    connect_args:
+                        check_same_thread: false
+                        timeout: 6.0
+                    pool_pre_ping: true
+                    pool_size: 5
+                    max_overflow: 10
+                    pool_timeout: 30
+                    pool_recycle: 3600
+            duckdb:
+                dialect: duckdb
+                schema: main
+                pool:
+                    pool_class: queue
+                    pool_pre_ping: true
+                    pool_size: 5
+                    max_overflow: 10
+                    pool_timeout: 30
+                    pool_recycle: 3600
+            postgres:
+                aliases: [pg]
+                dialect: postgresql
+                driver: psycopg2
+                host: localhost
+                port: 5432
+                username: postgres
+                schema: public
+                params:
+                    sslmode: prefer
+                superuser:
+                    database: postgres
+                    schema: public
+                    params:
+                        sslmode: prefer
+                pool:
+                    pool_class: queue
+                    pool_pre_ping: true
+                    pool_size: 5
+                    max_overflow: 10
+                    pool_timeout: 30
+                    pool_recycle: 3600
+            supabase:
+                dialect: postgresql
+                infer_from_url: false
+                driver: psycopg2
+                host: localhost
+                port: 5432
+                username: postgres
+                database: postgres
+                schema: public
+                params:
+                    sslmode: require
+                pool:
+                    pool_class: queue
+                    pool_pre_ping: true
+                    pool_size: 5
+                    max_overflow: 10
+                    pool_timeout: 30
+                    pool_recycle: 3600
+            mysql:
+                dialect: mysql
+                driver: pymysql
+                host: localhost
+                port: 3306
+                username: root
+                params:
+                    charset: utf8mb4
+                superuser:
+                    database: mysql
+                    params:
+                        charset: utf8mb4
+                pool:
+                    pool_class: queue
+                    pool_pre_ping: true
+                    pool_size: 3
+                    max_overflow: 2
+                    pool_timeout: 30
+                    pool_recycle: 1800
+            seekdb:
+                dialect: mysql
+                driver: pymysql
+                host: localhost
+                port: 2881
+                username: root
+                params:
+                    charset: utf8mb4
+                superuser:
+                    database: mysql
+                    params:
+                        charset: utf8mb4
+                pool:
+                    pool_class: queue
+                    pool_pre_ping: true
+                    pool_size: 3
+                    max_overflow: 2
+                    pool_timeout: 30
+                    pool_recycle: 1800
+            dolt:
+                dialect: mysql
+                driver: pymysql
+                host: localhost
+                port: 3306
+                username: root
+                params:
+                    charset: utf8mb4
+                superuser:
+                    database: mysql
+                    params:
+                        charset: utf8mb4
+                pool:
+                    pool_class: queue
+                    pool_pre_ping: true
+                    pool_size: 3
+                    max_overflow: 2
+                    pool_timeout: 30
+                    pool_recycle: 1800
+            oceanbase:
+                dialect: mysql
+                driver: pymysql
+                host: localhost
+                port: 2881
+                username: root
+                params:
+                    charset: utf8mb4
+                superuser:
+                    database: mysql
+                    params:
+                        charset: utf8mb4
+                pool:
+                    pool_class: queue
+                    pool_pre_ping: true
+                    pool_size: 3
+                    max_overflow: 2
+                    pool_timeout: 30
+                    pool_recycle: 1800
+            mssql:
+                aliases: [msql, sqlserver, sql-server]
+                dialect: mssql
+                driver: pymssql
+                host: localhost
+                port: 1433
+                username: sa
+                schema: dbo
+                superuser:
+                    database: master
+                    schema: dbo
+                pool:
+                    pool_class: queue
+                    pool_pre_ping: true
+                    pool_size: 5
+                    max_overflow: 10
+                    pool_timeout: 30
+                    pool_recycle: 3600
+            oracle:
+                dialect: oracle
+                driver: oracledb
+                host: localhost
+                port: 1521
+                username: system
+                service: FREEPDB1
+                schema: "{username}"
+                superuser:
+                    service: FREEPDB1
+                    schema: system
+                pool:
+                    pool_class: queue
+                    pool_pre_ping: true
+                    pool_size: 5
+                    max_overflow: 10
+                    pool_timeout: 30
+                    pool_recycle: 3600
+            starrocks:
+                dialect: mysql
+                driver: pymysql
+                host: localhost
+                port: 9030
+                username: root
+                params:
+                    charset: utf8mb4
+                superuser:
+                    database: null
+                    params:
+                        charset: utf8mb4
+                pool:
+                    pool_class: queue
+                    pool_pre_ping: true
+                    pool_size: 3
+                    max_overflow: 2
+                    pool_timeout: 30
+                    pool_recycle: 1800
+            trino:
+                dialect: trino
+                catalog: memory
+                host: localhost
+                port: 8080
+                username: trino
+                schema: default
+                pool:
+                    pool_class: null
+                    pool_pre_ping: false
+                    pool_recycle: -1
+            clickhouse:
+                dialect: clickhousedb
+                driver: connect
+                database: default
+                host: localhost
+                port: 8123
+                username: default
+                password: ""
+                pool:
+                    pool_class: queue
+                    pool_pre_ping: true
+                    pool_size: 5
+                    max_overflow: 10
+                    pool_timeout: 30
+                    pool_recycle: 3600
+    query:
+        warn_on_python_fallback: false
+        # code_reduce evaluates a caller-supplied expression in this process
+        # with no restriction. Set this to false to refuse it engine-wide.
+        allow_code_reduce: true
+        graph:
+            max_hops: 64
+        regex:
+            # false rejects a group with + or * that is itself quantified, and
+            # a pattern whose estimated Python re backtracking on a text of
+            # max_text_chars (8192 unless set) exceeds 3e9 steps and that the
+            # linear-time matcher cannot run (backreferences, lookarounds,
+            # conditionals, atomic groups, possessive quantifiers, a (?u:...)
+            # group inside an ASCII pattern). Other costly patterns run on
+            # that matcher whatever this key says.
+            allow_nested_quantifiers: false
+        near:
+            default_top_k: 50
+            max_top_k: 1000
+            default_metric: cosine
+            # Rows per read batch in portable exact scans and ordinary Milvus Lite cosine scans.
+            scan_batch_size: 256
+            cache:
+                max_bytes: 67108864
+                max_entries: 16
+            candidate_prefilter:
+                max_ids: 4096
+    search:
+        default_limit: 20
+        max_limit: 200
+    workspace:
+        default_preset: debug
+        presets:
+            debug:
+                desc: Dependency-light local workspace for demos, smoke tests, and first-run development.
+                backends:
+                    main:
+                        type: sqlite
+                        name: main
+                        database: ":memory:"
+                    vec:
+                        type: inmem
+                        name: vec
+                    search:
+                        type: inmem
+                        name: search
+            local-lts:
+                desc: Self-hosted local stack with Postgres rows, LanceDB vectors, and Elasticsearch search.
+                backends:
+                    main:
+                        type: postgres
+                        name: main
+                        database: "${env:HVNB_LOCAL_LTS_POSTGRES_DB,rubik}"
+                        host: "${env:HVNB_LOCAL_LTS_POSTGRES_HOST,localhost}"
+                        port: "${env:HVNB_LOCAL_LTS_POSTGRES_PORT,5432}"
+                        username: "${env:HVNB_LOCAL_LTS_POSTGRES_USER,rubik}"
+                        password: "${env:HVNB_LOCAL_LTS_POSTGRES_PASSWORD,password}"
+                        superuser:
+                            username: "${env:HVNB_LOCAL_LTS_POSTGRES_SUPERUSER,rubik}"
+                            password: "${env:HVNB_LOCAL_LTS_POSTGRES_SUPERUSER_PASSWORD,password}"
+                            database: "${env:HVNB_LOCAL_LTS_POSTGRES_MAINTENANCE_DB,postgres}"
+                            schema: public
+                            params:
+                                sslmode: prefer
+                    vec:
+                        type: lance
+                        name: vec
+                        uri: "file://%/workspaces/lance"
+                    search:
+                        type: elasticsearch
+                        name: search
+                        hosts:
+                            - "${env:HVNB_LOCAL_LTS_ES_URL,http://localhost:9200}"
+            web-lts:
+                desc: Managed/cloud-shaped stack for shared development using Supabase, pgvector, and hosted search.
+                backends:
+                    main:
+                        type: supabase
+                        name: main
+                        database: "${env:HVNB_WEB_LTS_POSTGRES_DB,postgres}"
+                        host: "${env:HVNB_WEB_LTS_POSTGRES_HOST,localhost}"
+                        port: "${env:HVNB_WEB_LTS_POSTGRES_PORT,5432}"
+                        username: "${env:HVNB_WEB_LTS_POSTGRES_USER,postgres}"
+                        password: '${env:HVNB_WEB_LTS_POSTGRES_PASSWORD,""}'
+                        params:
+                            sslmode: "${env:HVNB_WEB_LTS_POSTGRES_SSLMODE,require}"
+                    vec:
+                        type: pgvector
+                        name: vec
+                        shared_database: true
+                        database: "${env:HVNB_WEB_LTS_POSTGRES_DB,postgres}"
+                        host: "${env:HVNB_WEB_LTS_POSTGRES_HOST,localhost}"
+                        port: "${env:HVNB_WEB_LTS_POSTGRES_PORT,5432}"
+                        username: "${env:HVNB_WEB_LTS_POSTGRES_USER,postgres}"
+                        password: '${env:HVNB_WEB_LTS_POSTGRES_PASSWORD,""}'
+                        params:
+                            sslmode: "${env:HVNB_WEB_LTS_POSTGRES_SSLMODE,require}"
+                    search:
+                        type: elasticsearch
+                        name: search
+                        hosts:
+                            - "${env:HVNB_WEB_LTS_ES_URL,http://localhost:9200}"
+    backends:
+        main:
+            type: sqlite
+            name: main
+            database: ":memory:"
+        vec:
+            type: inmem
+            name: vec
+    backend_defaults:
+        inmem: {}
+        sql:
+            id_lookup:
+                batch_size: 500
+        sqlite: {}
+        duckdb: {}
+        postgres: {}
+        supabase: {}
+        trino: {}
+        clickhouse: {}
+        mysql: {}
+        dolt: {}
+        oceanbase: {}
+        oracle: {}
+        elasticsearch:
+            hosts:
+                - "http://localhost:9200"
+            scan_limit: 10000  # scroll page size; Backend.scan remains exhaustive
+            filter_limit: 10000
+            timeout: 1.0
+        opensearch:
+            hosts:
+                - "${env:HVNB_OPENSEARCH_URL,http://localhost:9201}"
+            scan_limit: 10000  # scroll page size; Backend.scan remains exhaustive
+            filter_limit: 10000
+            timeout: 1.0
+        mongodb:
+            uri: "${env:HVNB_MONGODB_URI,mongodb://localhost:27017}"
+            database: heavenbase
+        tinydb:
+            database: "file://%/tinydb.json"
+        neo4j:
+            url: "${env:HVNB_NEO4J_URL,bolt://localhost:7687}"
+            user: "${env:HVNB_NEO4J_USER,neo4j}"
+            password: "${env:HVNB_NEO4J_PASSWORD,neo4j}"
+            index_timeout: "${env:HVNB_NEO4J_INDEX_TIMEOUT,60}"  # seconds ensure() waits for a vector index to come ONLINE
+        surreal:
+            url: "${env:HVNB_SURREAL_URL,ws://localhost:8000/rpc}"
+            namespace: "${env:HVNB_SURREAL_NAMESPACE,heavenbase}"
+            user: "${env:HVNB_SURREAL_USER,root}"
+            password: "${env:HVNB_SURREAL_PASSWORD,root}"
+            ef_search: "${env:HVNB_SURREAL_EF_SEARCH,64}"  # HNSW search breadth (EF >= K) for native cosine KNN
+        redis:
+            url: "${env:HVNB_REDIS_URL,redis://localhost:6379}"
+            index_hash_function: crc32
+            index_hash_length: 10
+        redisearch:
+            url: "${env:HVNB_REDIS_URL,redis://localhost:6379}"
+            vector_algorithm: HNSW
+            metric: cosine
+            filter_limit: 10000
+            index_timeout: "${env:HVNB_REDISEARCH_INDEX_TIMEOUT,5}"
+            min_prefix: 2
+        file:
+            path: "file://%/file"
+        json:
+            path: "file://%/json"
+        pickle:
+            path: "file://%/pickle"
+        lance:
+            uri: "file://%/lance"
+            id_lookup:
+                batch_size: 500
+        pgvector: {}
+        milvus:
+            uri: "http://localhost:19530"
+            index_type: AUTOINDEX  # FLAT enables native exact near; existing indexes must match
+            timeout: 1.0
+            token: ""
+            varchar:
+                max_length: 65535
+            array:
+                max_capacity: 4096
+                max_length: 65535
+            entity_id:
+                max_length: 63
+            metric: COSINE
+            # Batch sizes for Milvus and Milvus Lite: a Milvus server's query-iterator batch,
+            # capped at 16384 rows; Milvus Lite's key-fetch batch.
+            scan_limit: 10000  # Backend.scan remains exhaustive
+            filter_limit: 10000  # native filters remain exhaustive
+        milvus_lite:
+            uri: "file://%/milvus-lite.db"
+            index_type: FLAT
+        qdrant:
+            url: "${env:HVNB_QDRANT_URL,http://localhost:6333}"
+            path: null
+            api_key: null
+            timeout: 5.0
+        weaviate:
+            url: "${env:HVNB_WEAVIATE_URL,http://localhost:8080}"
+            grpc_host: null
+            grpc_port: "${env:HVNB_WEAVIATE_GRPC_PORT,50051}"
+            api_key: null
+        chroma:
+            metric: cosine
+        pinecone:
+            host: "http://localhost:5080"
+            api_key: null
+            ssl_verify: false
+            metric: cosine
+            serverless:
+                cloud: aws
+                region: us-east-1
+        mssql:
+            driver: pymssql
+        seekdb:
+            driver: pymysql
+            host: localhost
+            port: 2881
+            username: root
+            password: ""
+            params:
+                charset: utf8mb4
+        starrocks:
+            varchar:
+                max_length: 65533
+            driver: pymysql
+            host: localhost
+            port: 9030
+            username: root
+            password: ""
+            params:
+                charset: utf8mb4
+            database: heavenbase
+            entity_id:
+                max_length: 63
+            buckets: 1
+            replication_num: 1
+    strategy_defaults:
+        sparse_gram:
+            normalizer: default
+            normalizer_lang: auto
+            unicode_normalization: NFC
+            casefold: true
+            spacy_model: en_core_web_sm
+            spacy_disable:
+                - parser
+                - ner
+                - textcat
+            spacy_batch_size: 256
+            spacy_n_process: 1
+            normalize_cache_size: 100000
+            normalize_cache_persist: true
+            min_length: 2
+            gram_unit: char
+            tokenizer: char
+            tokenizer_args: {}
+            gram_width: 3
+            sparse_policy: cartesian-cover
+            sparse_max_width: 0
+            sparse_grams_per_keyword: 0
+            hash_function: crc32
+            hash_bits: 32
+            hash_salt: heavenbase.gram.v1
+            seed: 42
+            posting_page_size: 10000
+            hot_gram_threshold: 0
+    mcp:
+        log_calls: false
+        transforms: []
+        cache:
+            enabled: false
+            tools: []
+            ttl: 300
+            max_entries: 256
+        workspace_toolkit: null
+        workspace_profile: full
+        display:
+            max_rows: 50
+            max_width: 64
+        profiles:
+            full:
+                tools: [schema, read, write, delete, query]
+                entities: "*"
+                serializer: jstr
+                desc: Full workspace MCP surface with schema, CRUD, query, and explain tools.
+            agent:
+                tools:
+                    - define_entity
+                    - list_entities
+                    - describe_entity
+                    - upsert
+                    - get
+                    - set
+                    - count
+                    - query
+                    - explain
+                entities: "*"
+                skills: "*"
+                serializer: markdown
+                desc: Curated agent MCP surface with markdown-serialized reads and skill linkage.
+        memory:
+            default_source: agent
+            list_limit: 20
+            search_limit: 10
+        backend_toolkit: null
+        transport: http
+        host: "127.0.0.1"
+        port: 7001
+    database:
+        allow_write: false
+        max_query_rows: 200
+        profile:
+            max_enum_values: 50
+            top_values: 10
+    capsule:
+        namespace: default
+        registry:
+            workspace: executable-registry
+            backend:
+                main:
+                    type: sqlite
+                    name: main
+                    database: "file://%/capsule/registry.db"
+            trust:
+                local_only: true
+                allow_binary_payload: false
+                verify_source_hash: true
+                verify_cache_size: 1024
+    toolkit:
+        namespace: default
+    prompt:
+        lang: null
+        main_lang: en
+        elicit: none
+    llm:
+        default_endpoint: openai
+        default_gateway: openai
+        default_provider: openrouter
+        default_preset: system
+        model_mismatch: raise
+        default_args:
+            timeout: 120
+            max_retries: 3
+            temperature: 0
+            seed: 42
+            http_proxy: null
+            https_proxy: null
+            no_proxy: null
+            enforce_non_stream_structured: false
+            embedding_batch_size: 256
+            embedding_max_workers: 8
+        cache:
+            # ON by default. The shared cache persists plaintext messages and
+            # embedding inputs under the package home; set `enabled: false`
+            # for a deployment, or pass `hb.LLM(..., cache=False)` per client.
+            enabled: true
+            workspace: llm-cache
+            backend:
+                main:
+                    type: sqlite
+                    name: main
+                    database: "file://%/llm/cache.db"
+            policy: deterministic
+            namespaces:
+                text:
+                    enabled: true
+                    max_entries: null
+                    # Soft persistence budget for text-cache rows (bytes of compact JSON).
+                    # Multimodal inputs are digested before write; oversized rows are skipped.
+                    max_bytes: 4194304
+                    ttl_seconds: null
+                embedding:
+                    enabled: true
+                    max_entries: null
+                    max_bytes: null
+                    ttl_seconds: null
+                    touch_hits: false
+                image:
+                    enabled: true
+                    max_entries: null
+                    max_bytes: null
+                    ttl_seconds: null
+        tool_call_repair:
+            enabled: false
+            strict: false
+        image_url_timeout: 120
+        presets:
+            system:
+                desc: Default lightweight system LLM for short orchestration calls.
+                model: ds-flash
+                default_args:
+                    think: false
+            local:
+                desc: Local LM Studio chat preset for private offline work.
+                gateway: openai
+                provider: lmstudio
+                model: qwen3.6-flash
+                default_args:
+                    think: false
+            tiny:
+                desc: Tiny chat model for low-latency offline work.
+                model: gemma
+                default_args:
+                    think: false
+            chat:
+                desc: General chat preset for fast non-thinking answers.
+                model: ds-flash
+                default_args:
+                    think: false
+            chat-pro:
+                desc: Stronger chat preset that still avoids reasoning by default.
+                model: ds-pro
+                default_args:
+                    think: false
+            reason:
+                desc: Reasoning preset for harder tasks that should expose thinking when supported.
+                model: ds-pro
+                default_args:
+                    think: true
+            reason-pro:
+                desc: Higher-capability reasoning preset backed by the default GPT alias.
+                model: gpt
+                default_args:
+                    think: true
+                    reasoning_effort: max
+            worker:
+                desc: Background worker preset for deterministic non-thinking utility calls.
+                model: ds-flash
+                default_args:
+                    think: false
+            worker-local:
+                desc: Local LM Studio worker preset for deterministic offline utility calls.
+                gateway: openai
+                provider: lmstudio
+                model: qwen3.6-flash
+                default_args:
+                    think: false
+            coder:
+                desc: Coding preset with thinking enabled for multi-step implementation work.
+                model: sonnet
+                default_args:
+                    think: true
+            coder-pro:
+                desc: Highest-end coding preset for deep implementation and review work.
+                model: opus
+                default_args:
+                    think: true
+            embed:
+                desc: Default embedding preset.
+                gateway: openai
+                model: gpt-embedding-small
+            embed-local:
+                desc: Local embedding preset.
+                gateway: openai
+                provider: lmstudio
+                model: embeddinggemma
+            imagen:
+                desc: Default image-generation preset.
+                model: gpt-image-mini
+            imagen-local:
+                desc: Local Ollama image-generation preset.
+                gateway: openai
+                provider: ollama
+                model: z-image-turbo
+            ocr-local:
+                desc: Local Ollama OCR preset.
+                gateway: openai
+                provider: ollama
+                model: glm-ocr
+                default_args:
+                    think: false
+            mock:
+                desc: Non-LLM deterministic mock preset for tests and demos.
+                gateway: mock
+                provider: mock
+                model: mock
+            custom:
+                desc: Runtime-supplied OpenAI-compatible provider preset.
+                gateway: openai
+                provider: custom
+                model: custom
+        models:
+            deepseek-v4-flash:
+                aliases:
+                    - ds-flash
+                    - deepseek-flash
+                    - deepseek-chat
+                # Provider error verbatim: "This model's maximum context
+                # length is 1048576 tokens" — counted over messages+completion
+                # (unlike qwen's input-only limit).
+                context_window: 1048576
+                default_provider: openrouter
+                providers:
+                    openrouter:
+                        model_id: deepseek/deepseek-v4-flash-0731
+                    deepseek:
+                        model_id: deepseek-chat
+                default_args:
+                    think: false
+            deepseek-reasoner:
+                aliases:
+                    - ds-flash-thinking
+                    - deepseek-flash-thinking
+                default_provider: openrouter
+                providers:
+                    openrouter:
+                        model_id: deepseek/deepseek-v4-flash-0731
+                    deepseek:
+                        model_id: deepseek-reasoner
+                default_args:
+                    think: true
+            deepseek-v4-pro:
+                aliases:
+                    - ds
+                    - ds-pro
+                    - dsv4
+                    - dsv4-pro
+                    - deepseek
+                    - deepseek-v4
+                    - deepseek-pro
+                # Provider error verbatim: "This model's maximum context
+                # length is 1048576 tokens" — counted over messages+completion
+                # (unlike qwen's input-only limit).
+                context_window: 1048576
+                default_provider: openrouter
+                providers:
+                    openrouter:
+                        model_id: deepseek/deepseek-v4-pro
+                    deepseek:
+                        model_id: deepseek-v4-pro
+            gpt-5.6-luna:
+                aliases:
+                    - gpt-nano
+                    - gpt-luna
+                    - 5.6-luna
+                    - luna
+                default_provider: openrouter
+                providers:
+                    openrouter:
+                        model_id: openai/gpt-5.6-luna
+                    openai:
+                        model_id: gpt-5.6-luna
+                default_args:
+                    reasoning_effort: high
+            gpt-5.6-terra:
+                aliases:
+                    - gpt-mini
+                    - gpt-terra
+                    - 5.6-terra
+                    - terra
+                default_provider: openrouter
+                providers:
+                    openrouter:
+                        model_id: openai/gpt-5.6-terra
+                    openai:
+                        model_id: gpt-5.6-terra
+                default_args:
+                    reasoning_effort: high
+            gpt-5.6-sol:
+                aliases:
+                    - gpt
+                    - gpt-sol
+                    - 5.6
+                    - 5.6-sol
+                    - sol
+                default_provider: openrouter
+                providers:
+                    openrouter:
+                        model_id: openai/gpt-5.6-sol
+                    openai:
+                        model_id: gpt-5.6-sol
+                default_args:
+                    reasoning_effort: medium
+            claude-haiku-4-5:
+                aliases:
+                    - haiku
+                    - haiku-4.5
+                default_provider: openrouter
+                providers:
+                    openrouter:
+                        model_id: anthropic/claude-haiku-4.5
+                    anthropic:
+                        model_id: claude-haiku-4-5
+            claude-sonnet-5:
+                aliases:
+                    - sonnet
+                    - sonnet-5
+                default_provider: openrouter
+                providers:
+                    openrouter:
+                        model_id: anthropic/claude-sonnet-5
+                    anthropic:
+                        model_id: claude-sonnet-5
+                default_args:
+                    temperature: null
+                    seed: null
+            claude-sonnet-4-6:
+                aliases:
+                    - sonnet-4.6
+                default_provider: openrouter
+                providers:
+                    openrouter:
+                        model_id: anthropic/claude-sonnet-4.6
+                    anthropic:
+                        model_id: claude-sonnet-4-6
+            claude-opus-5:
+                aliases:
+                    - opus
+                    - opus-5
+                default_provider: openrouter
+                providers:
+                    openrouter:
+                        model_id: anthropic/claude-opus-5
+                    anthropic:
+                        model_id: claude-opus-5
+                default_args:
+                    temperature: null
+                    seed: null
+            claude-fable-5:
+                aliases:
+                    - fable
+                    - fable-5
+                default_provider: openrouter
+                providers:
+                    openrouter:
+                        model_id: anthropic/claude-fable-5
+                    anthropic:
+                        model_id: claude-fable-5
+                default_args:
+                    temperature: null
+                    seed: null
+            grok-4.5:
+                aliases:
+                    - grok
+                default_provider: openrouter
+                providers:
+                    openrouter:
+                        model_id: x-ai/grok-4.5
+                    grok:
+                        model_id: grok-4.5
+            gemini-3.5-flash-lite:
+                aliases:
+                    - gemini-flash-lite
+                    - gemini-lite
+                default_provider: openrouter
+                providers:
+                    openrouter:
+                        model_id: google/gemini-3.5-flash-lite
+                    gemini:
+                        model_id: gemini-3.5-flash-lite
+                default_args:
+                    temperature: null
+                    seed: null
+            gemini-3.6-flash:
+                aliases:
+                    - gemini-flash
+                default_provider: openrouter
+                providers:
+                    openrouter:
+                        model_id: google/gemini-3.6-flash
+                    gemini:
+                        model_id: gemini-3.6-flash
+                default_args:
+                    temperature: null
+                    seed: null
+            gemini-3.1-pro-preview:
+                aliases:
+                    - gemini-pro
+                default_provider: openrouter
+                providers:
+                    openrouter:
+                        model_id: google/gemini-3.1-pro-preview
+                    gemini:
+                        model_id: gemini-3.1-pro-preview
+                default_args:
+                    temperature: null
+                    seed: null
+            kimi-k2.6:
+                aliases:
+                    - kimi
+                    - k2.6
+                default_provider: openrouter
+                providers:
+                    openrouter:
+                        model_id: moonshotai/kimi-k2.6
+                    moonshot:
+                        model_id: kimi-k2.6
+                default_args:
+                    structured_stream: false
+            kimi-k3:
+                aliases:
+                    - k3
+                default_provider: openrouter
+                providers:
+                    openrouter:
+                        model_id: moonshotai/kimi-k3
+                    moonshot:
+                        model_id: kimi-k3
+                default_args:
+                    structured_stream: false
+            glm-5.2:
+                aliases:
+                    - glm
+                default_provider: openrouter
+                providers:
+                    openrouter:
+                        model_id: z-ai/glm-5.2
+                    zai:
+                        model_id: glm-5.2
+                    zai-zh:
+                        model_id: glm-5.2
+            glm-4.7-flash:
+                aliases:
+                    - glm-flash
+                    - glm-4.7
+                default_provider: openrouter
+                providers:
+                    openrouter:
+                        model_id: z-ai/glm-4.7-flash
+                    zai:
+                        model_id: glm-4.7-flash
+                    zai-zh:
+                        model_id: glm-4.7-flash
+            gemma-4-26b-a4b-it:
+                aliases:
+                    - gemma4
+                    - gemma4-26b
+                    - gemma4-26b-a4b
+                    - gemma4-26b-a4b-it
+                    - gemma
+                    - gemma-26b
+                    - gemma-26b-a4b
+                    - gemma-26b-a4b-it
+                default_provider: openrouter
+                providers:
+                    openrouter:
+                        model_id: google/gemma-4-26b-a4b-it
+                    lmstudio:
+                        model_id: gemma-4-26b-a4b
+                    ollama:
+                        model_id: gemma4:26b
+                capabilities:
+                    reasoning_efforts: false
+            qwen3.6-flash:
+                aliases:
+                    - qwen3.6
+                    - qwen3.6-flash
+                    - qwen3.6-35b
+                    - qwen3.6-35b-a3b
+                    - qwen
+                    - qwen-flash
+                    - qwen-35b
+                    - qwen-35b-a3b
+                default_provider: openrouter
+                providers:
+                    openrouter:
+                        model_id: qwen/qwen3.6-flash
+                    lmstudio:
+                        model_id: qwen3.6-35b-a3b
+                    ollama:
+                        model_id: qwen3.6
+                    omlx:
+                        model_id: qwen3.6-flash
+                    vllm:
+                        model_id: Qwen/Qwen3.6-35B-A3B
+            qwen3.7-max:
+                aliases:
+                    - qwen-max
+                    - qwen3.7max
+                default_provider: dashscope
+                providers:
+                    dashscope:
+                        model_id: qwen3.7-max
+            qwen3.7-plus:
+                aliases:
+                    - qwen-plus
+                    - qwen3.7plus
+                default_provider: dashscope
+                providers:
+                    dashscope:
+                        model_id: qwen3.7-plus
+            embeddinggemma:
+                aliases:
+                    - embeddinggemma-300m
+                default_provider: lmstudio
+                providers:
+                    lmstudio:
+                        model_id: text-embedding-embeddinggemma-300m
+                    ollama:
+                        model_id: embeddinggemma
+                    omlx:
+                        model_id: embeddinggemma
+                default_args:
+                    dim: 768
+            text-embedding-3-small:
+                aliases:
+                    - gpt-embedding
+                    - gpt-embedding-small
+                    - text-embedding-small
+                default_provider: openrouter
+                providers:
+                    openrouter:
+                        model_id: openai/text-embedding-3-small
+                    openai:
+                        model_id: text-embedding-3-small
+                default_args:
+                    dim: 1536
+            embed-v4.0:
+                aliases:
+                    - cohere
+                    - cohere-embedding
+                    - cohere-embedding-v4
+                    - embed-v4
+                default_provider: cohere
+                providers:
+                    cohere:
+                        model_id: embed-v4.0
+                default_args:
+                    dim: 1536
+            voyage-4-lite:
+                aliases:
+                    - voyage
+                    - voyage-lite
+                default_provider: voyage
+                providers:
+                    voyage:
+                        model_id: voyage-4-lite
+                default_args:
+                    dim: 1024
+            gpt-5-image-mini:
+                aliases:
+                    - gpt-image-mini
+                    - image-mini
+                default_provider: openrouter
+                providers:
+                    openrouter:
+                        model_id: openai/gpt-5-image-mini
+                    openai:
+                        model_id: gpt-5-image-mini
+                default_args:
+                    max_tokens: 1024
+                    temperature: null
+                    seed: null
+            gpt-5.4-image-2:
+                aliases:
+                    - gpt-image
+                    - gpt-image-2
+                    - image-2
+                default_provider: openrouter
+                providers:
+                    openrouter:
+                        model_id: openai/gpt-5.4-image-2
+                    openai:
+                        model_id: gpt-5.4-image-2
+                default_args:
+                    max_tokens: 1024
+                    temperature: null
+                    seed: null
+            z-image-turbo:
+                aliases:
+                    - z-image
+                    - image-local
+                    - imagen-local
+                default_provider: ollama
+                providers:
+                    ollama:
+                        model_id: x/z-image-turbo
+                default_args:
+                    max_tokens: null
+                    temperature: null
+                    seed: null
+            glm-ocr:
+                aliases:
+                    - ocr
+                default_provider: ollama
+                providers:
+                    ollama:
+                        model_id: glm-ocr
+                    omlx:
+                        model_id: glm-ocr
+            mock:
+                default_provider: mock
+                providers:
+                    mock:
+                        model_id: mock
+                default_args:
+                    mock:
+                        text: mock response
+                        think: ""
+                        pause:
+                            - 0.001
+                            - 0.005
+                        chunk_chars: 16
+                        embed_dim: 3
+            custom:
+                default_provider: custom
+                providers:
+                    custom:
+                        model_id: custom
+        endpoints:
+            openai:
+                args: {}
+            anthropic:
+                args: {}
+        providers:
+            openrouter:
+                api_key: '${env:OPENROUTER_API_KEY,""}'
+                base_url: "${env:OPENROUTER_BASE_URL,https://openrouter.ai/api/v1}"
+                backend: openrouter
+            openai:
+                api_key: '${env:OPENAI_API_KEY,""}'
+                base_url: "${env:OPENAI_BASE_URL,https://api.openai.com/v1}"
+                backend: openai
+            anthropic:
+                api_key: '${env:ANTHROPIC_API_KEY,""}'
+                base_url: "${env:ANTHROPIC_BASE_URL,https://api.anthropic.com/v1}"
+                backend: anthropic
+                thinking_control:
+                    openai: anthropic_compat_thinking
+                    portkey: extra_body_native_thinking
+                    bifrost: bifrost_claude_reasoning
+                    litellm: native_thinking
+            grok:
+                api_key: '${env:XAI_API_KEY,""}'
+                base_url: "${env:XAI_BASE_URL,https://api.x.ai/v1}"
+                allow_unknown_models: true
+                backend:
+                    default: xai
+                    portkey: xai
+                    litellm: xai
+                    bifrost: xai
+            gemini:
+                api_key: '${env:GEMINI_API_KEY,""}'
+                base_url: "${env:GEMINI_BASE_URL,https://generativelanguage.googleapis.com/v1beta/openai}"
+                backend:
+                    default: gemini
+                    portkey: google
+                    litellm: gemini
+                    bifrost: gemini
+            deepseek:
+                api_key: '${env:DEEPSEEK_API_KEY,""}'
+                base_url: "${env:DEEPSEEK_BASE_URL,https://api.deepseek.com/v1}"
+                backend: deepseek
+            moonshot:
+                api_key: '${env:MOONSHOT_API_KEY,""}'
+                base_url: "${env:MOONSHOT_BASE_URL,https://api.moonshot.ai/v1}"
+                backend: moonshot
+            moonshot-zh:
+                api_key: '${env:MOONSHOT_API_KEY,""}'
+                base_url: "${env:MOONSHOT_ZH_BASE_URL,https://api.moonshot.cn/v1}"
+                backend: moonshot
+            zai:
+                api_key: '${env:ZAI_API_KEY,""}'
+                base_url:
+                    default: "${env:ZAI_BASE_URL,https://api.z.ai/api/paas/v4}"
+                    anthropic: "${env:ZAI_ANTHROPIC_BASE_URL,https://api.z.ai/api/anthropic}"
+                auth_mode:
+                    anthropic: bearer
+                portkey_custom_host: true
+                thinking_control:
+                    openai: extra_body_thinking_type
+                    portkey: extra_body_thinking_type
+                    litellm: extra_body_thinking_type
+                    bifrost: extra_body_thinking_type
+                backend:
+                    default: zai
+                    anthropic: zai
+                    portkey: zhipu
+                    litellm: zai
+                    bifrost: zai
+            zai-zh:
+                api_key: '${env:ZAI_API_KEY,""}'
+                base_url: "${env:ZAI_ZH_BASE_URL,https://open.bigmodel.cn/api/paas/v4}"
+                portkey_custom_host: true
+                thinking_control:
+                    openai: extra_body_thinking_type
+                    portkey: extra_body_thinking_type
+                    litellm: extra_body_thinking_type
+                    bifrost: extra_body_thinking_type
+                backend:
+                    default: zai
+                    portkey: zhipu
+                    litellm: zai
+                    bifrost: zai
+            minimax:
+                api_key: '${env:MINIMAX_API_KEY,""}'
+                base_url: "${env:MINIMAX_BASE_URL,https://api.minimax.io/v1}"
+                allow_unknown_models: true
+                backend: minimax
+            cohere:
+                api_key: '${env:COHERE_API_KEY,""}'
+                base_url:
+                    default: "${env:COHERE_BASE_URL,https://api.cohere.ai/compatibility/v1}"
+                    openai: "${env:COHERE_BASE_URL,https://api.cohere.ai/compatibility/v1}"
+                    litellm: "${env:COHERE_LITELLM_BASE_URL,https://api.cohere.ai/v2/embed}"
+                backend: cohere
+            voyage:
+                api_key: '${env:VOYAGE_API_KEY,""}'
+                base_url: "${env:VOYAGE_BASE_URL,https://api.voyageai.com/v1}"
+                backend: voyage
+            dashscope:
+                api_key: '${env:DASHSCOPE_API_KEY,""}'
+                base_url: "${env:DASHSCOPE_BASE_URL,https://dashscope.aliyuncs.com/compatible-mode/v1}"
+                allow_unknown_models: true
+                backend: dashscope
+                default_args:
+                    embedding_batch_size: 10
+            ollama:
+                api_key: '${env:OLLAMA_API_KEY,""}'
+                base_url: "${env:OLLAMA_BASE_URL,http://localhost:11434/v1}"
+                allow_unknown_models: true
+                backend: ollama
+                default_args:
+                    http_proxy: ""
+                    https_proxy: ""
+            lmstudio:
+                api_key: '${env:LM_STUDIO_API_KEY,""}'
+                base_url: "${env:LM_STUDIO_BASE_URL,http://localhost:1234/v1}"
+                allow_unknown_models: true
+                backend:
+                    default: openai
+                    litellm: lm_studio
+                default_args:
+                    http_proxy: ""
+                    https_proxy: ""
+            omlx:
+                api_key: '${env:OMLX_API_KEY,""}'
+                base_url: "${env:OMLX_BASE_URL,http://localhost:8000/v1}"
+                allow_unknown_models: true
+                backend:
+                    default: openai
+                    portkey: openai
+                    litellm: openai
+                    bifrost: openai
+                portkey_custom_host: true
+                default_args:
+                    http_proxy: ""
+                    https_proxy: ""
+            vllm:
+                api_key: '${env:VLLM_API_KEY,""}'
+                base_url: "${env:VLLM_BASE_URL,http://localhost:8000/v1}"
+                allow_unknown_models: true
+                backend:
+                    default: openai
+                    portkey: openai
+                    litellm: hosted_vllm
+                    bifrost: openai
+            mock:
+                backend: mock
+                gateway: mock
+                default_args:
+                    mock:
+                        text: mock response
+                        pause:
+                            - 0.001
+                            - 0.005
+                        chunk_chars: 16
+                        embed_dim: 3
+            custom:
+                backend: openai
+                gateway: openai
+                allow_unknown_models: true
+                require_base_url: true
+                require_model_override: true
+                placeholder_model: custom
+        gateways:
+            portkey:
+                endpoint: openai
+                base_url: "${env:PORTKEY_BASE_URL,https://api.portkey.ai/v1}"
+                api_key: '${env:PORTKEY_API_KEY,""}'
+                thinking_control: extra_body_reasoning
+                headers: {}
+            openai:
+                endpoint: openai
+                base_url: "${env:OPENAI_BASE_URL,https://api.openai.com/v1}"
+                api_key: '${env:OPENAI_API_KEY,""}'
+                thinking_control: extra_body_reasoning
+                headers: {}
+            anthropic:
+                endpoint: anthropic
+                base_url: "${env:ANTHROPIC_BASE_URL,https://api.anthropic.com}"
+                api_key: '${env:ANTHROPIC_API_KEY,""}'
+                thinking_control: native_thinking
+                headers: {}
+            bifrost:
+                endpoint: openai
+                base_url: "${env:BIFROST_BASE_URL,http://localhost:8080/v1}"
+                api_key: '${env:BIFROST_API_KEY,""}'
+                thinking_control: extra_body_reasoning
+                headers: {}
+            litellm:
+                endpoint: openai
+                thinking_control: extra_body_reasoning
+                headers: {}
+                env_defaults:
+                    LITELLM_LOCAL_MODEL_COST_MAP: "True"
+                    DISABLE_SCHEMA_UPDATE: "True"
+                    LITELLM_MODE: PRODUCTION
+                    LITELLM_LOG: ERROR
+            mock:
+                endpoint: openai
+                headers: {}
+    benchmark:
+        scales:
+            - 1
+            - 10
+            - 100
+        repeats: 5
+        vector_dim: 1024
+        seed: 42

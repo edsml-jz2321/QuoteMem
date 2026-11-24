@@ -1,0 +1,36 @@
+{
+  "id": "quotemem",
+  "name": "QuoteMem",
+  "description": "Auditable long-term memory: saves the conversation in the background, adds relevant memories with their source quotes before the model call, and forgets what the user asks to forget.",
+  "categories": ["memory"],
+  "activation": {
+    "onStartup": true
+  },
+  "mcpServers": {
+    "quotemem": {
+      "transport": "stdio",
+      "command": "node",
+      "args": ["./mcp.mjs"]
+    }
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "captureEvery": { "type": ["integer", "string"], "description": "User turns per saved batch (default 3); \"off\" disables capture." },
+      "recall": { "type": "string", "enum": ["gated", "always", "off"], "description": "When to search before the model call (default gated)." },
+      "recallGate": { "type": "string", "enum": ["questions", "broad"], "description": "questions (default): plain statements about the user do not search." },
+      "topK": { "type": "integer", "minimum": 1, "maximum": 20 },
+      "maxInjectChars": { "type": "integer", "minimum": 500, "maximum": 50000 },
+      "recallTimeoutMs": { "type": "integer", "minimum": 100, "maximum": 15000 },
+      "recallMinScore": { "type": "number" },
+      "forget": { "type": "string", "enum": ["auto", "off"], "description": "auto (default): forget requests in chat are carried out silently." },
+      "forgetTimeoutMs": { "type": "integer", "minimum": 200, "maximum": 60000 },
+      "idleFlushMs": { "type": ["integer", "string"] },
+      "includeSubagents": { "type": "boolean" },
+      "stateDir": { "type": "string" },
+      "userScope": { "type": "string", "enum": ["owner", "sender"], "description": "owner (default): one memory, QUOTEMEM_USER_ID, used only by the owner. sender: one memory per channel sender." },
+      "ownerSenders": { "type": "array", "items": { "type": "string" }, "description": "With userScope owner: the channel sender ids that are the owner (\"<sender id>\" or \"<channel>:<sender id>\"). Messages from other senders get no memory." }
+    }
+  }
+}

@@ -1,0 +1,118 @@
+manifest_version: 2
+coordinate: heavenbase/database
+version: 0.1.2.3
+compatibility: {heavenbase: {min: 0.1.2.3, before: 0.1.3.0}}
+bundle: database
+items:
+  - kind: tag
+    identifier: database
+    name: Database
+    desc: Broad external-database domain categorization.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      definition:
+        schema: {type: boolean}
+        default: false
+        subjects: [entity, extension, toolkit_family, mcp_profile, database_dialect]
+        subject_policy: category-open
+        layers: [static]
+  - kind: tag
+    identifier: database-json-native
+    name: Native database JSON
+    desc: Database dialect stores JSON natively.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      definition:
+        schema: {type: boolean}
+        default: false
+        subjects: [database_dialect]
+        subject_policy: exact
+        layers: [static]
+  - kind: tag
+    identifier: database-blob-native
+    name: Native database blobs
+    desc: Database dialect stores binary blobs natively.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      definition:
+        schema: {type: boolean}
+        default: false
+        subjects: [database_dialect]
+        subject_policy: exact
+        layers: [static]
+  - kind: tag
+    identifier: database-dynamic-typing
+    name: Dynamic database column typing
+    desc: Database dialect columns hold any value class whatever their declared type, so a column created as text also stores BLOBs.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.3
+      definition:
+        schema: {type: boolean}
+        default: false
+        subjects: [database_dialect]
+        subject_policy: exact
+        layers: [static]
+  - kind: tag
+    identifier: database-local-path
+    name: Local database path
+    desc: Database dialect is addressed by a local path.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      definition:
+        schema: {type: boolean}
+        default: false
+        subjects: [database_dialect]
+        subject_policy: exact
+        layers: [static]
+  - kind: tag
+    identifier: database-create
+    name: Database creation
+    desc: Database dialect implementation supports database creation.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      definition:
+        schema: {type: boolean}
+        default: false
+        subjects: [database_dialect]
+        subject_policy: exact
+        layers: [static]
+  - kind: tag
+    identifier: database-drop
+    name: Database removal
+    desc: Database dialect implementation supports database removal.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      definition:
+        schema: {type: boolean}
+        default: false
+        subjects: [database_dialect]
+        subject_policy: exact
+        layers: [static]

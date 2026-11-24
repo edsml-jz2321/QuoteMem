@@ -1,0 +1,29 @@
+manifest_version: 2
+coordinate: heavenbase/llm/gateways/portkey
+version: 0.1.2.3
+compatibility: {heavenbase: {min: 0.1.2.3, before: 0.1.3.0}}
+bundle: llm-gateway-portkey
+items:
+  - kind: llm_gateway
+    identifier: portkey
+    name: Portkey LLM Gateway
+    desc: Portkey transport for OpenAI-compatible and Anthropic-native endpoints.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: {llm: true}
+      definition:
+        compiler: semantic/v1
+        endpoints: [openai, anthropic]
+        compile: {kind: heavenbase.executable, version: 1, source: python-import, target: heavenbase.llm.gateways.portkey.runtime:compile}
+        available: {kind: heavenbase.executable, version: 1, source: python-import, target: heavenbase.llm.gateways.portkey.runtime:available}
+        chat: {kind: heavenbase.executable, version: 1, source: python-import, target: heavenbase.llm.gateways.portkey.runtime:chat}
+        achat: {kind: heavenbase.executable, version: 1, source: python-import, target: heavenbase.llm.gateways.portkey.runtime:achat}
+        embed: {kind: heavenbase.executable, version: 1, source: python-import, target: heavenbase.llm.gateways.portkey.runtime:embed}
+        aembed: {kind: heavenbase.executable, version: 1, source: python-import, target: heavenbase.llm.gateways.portkey.runtime:aembed}
+        imagen: {kind: heavenbase.executable, version: 1, source: python-import, target: heavenbase.llm.gateways.portkey.runtime:imagen}
+        aimagen: {kind: heavenbase.executable, version: 1, source: python-import, target: heavenbase.llm.gateways.portkey.runtime:aimagen}
+        client: {kind: heavenbase.executable, version: 1, source: python-import, target: heavenbase.llm.gateways.portkey.runtime:client}

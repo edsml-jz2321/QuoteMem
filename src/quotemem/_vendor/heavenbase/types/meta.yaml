@@ -1,0 +1,228 @@
+manifest_version: 2
+coordinate: heavenbase/types
+version: 0.1.2.3
+compatibility: {heavenbase: {min: 0.1.2.3, before: 0.1.3.0}}
+bundle: logical-types
+items:
+  - kind: logical_type
+    identifier: artifact
+    aliases: [Artifact]
+    name: Artifact
+    desc: External artifact reference logical type.
+    source: python-import
+    target: heavenbase.types.artifact:Artifact
+    active: true
+    meta:
+      <<: &logical_type_meta {schema_version: 1, version: 0.1.2.1}
+      capability_probe: {descriptor: artifact}
+  - kind: logical_type
+    identifier: array
+    aliases: [Array]
+    name: Array
+    desc: Homogeneous array logical type.
+    source: python-import
+    target: heavenbase.types.array:Array
+    active: true
+    meta:
+      <<: *logical_type_meta
+      tags: {filter: true, filter-domains: [array], side: true}
+      capability_probe:
+        descriptor: array[short-text]
+        values: {eq: [alpha], ne: [beta], in: [[alpha], [beta]], array_contains: alpha}
+  - kind: logical_type
+    identifier: boolean
+    aliases: [Boolean]
+    name: Boolean
+    desc: Boolean logical type.
+    source: python-import
+    target: heavenbase.types.boolean:Boolean
+    active: true
+    meta:
+      <<: *logical_type_meta
+      tags: {filter: true, filter-domains: [boolean], aggregate-modes: [group]}
+      capability_probe:
+        descriptor: boolean
+        values: {eq: true, ne: false, in: [true, false]}
+  - kind: logical_type
+    identifier: categorical
+    aliases: [Categorical]
+    name: Categorical
+    desc: Categorical logical type.
+    source: python-import
+    target: heavenbase.types.categorical:Categorical
+    active: true
+    meta:
+      <<: *logical_type_meta
+      tags: {filter: true, filter-domains: [order, text], aggregate-modes: [group, order]}
+      capability_probe:
+        descriptor: {type: categorical, values: [todo, doing, done]}
+        descriptors:
+          lt: {type: categorical, values: [1, 2, 3], base: integer}
+          lte: {type: categorical, values: [1, 2, 3], base: integer}
+          gt: {type: categorical, values: [1, 2, 3], base: integer}
+          gte: {type: categorical, values: [1, 2, 3], base: integer}
+        values:
+          {eq: todo, ne: doing, lt: 3, lte: 3, gt: 1, gte: 1, match: to, like: "%do%", ilike: "%DO%", wildcard: "do*", regex: ^do, contains: do, in: [todo, done]}
+  - kind: logical_type
+    identifier: date
+    aliases: [Date]
+    name: Date
+    desc: Calendar date logical type.
+    source: python-import
+    target: heavenbase.types.date:Date
+    active: true
+    meta:
+      <<: *logical_type_meta
+      tags: {filter: true, filter-domains: [order, text], aggregate-modes: [group, order]}
+      capability_probe:
+        descriptor: date
+        values:
+          {eq: "2026-05-14", ne: "2026-05-15", lt: "2026-06-01", lte: "2026-06-01", gt: "2026-05-01", gte: "2026-05-01", match: 2026-05, like: "%2026-05%", ilike: "%2026-05%", wildcard: "2026-05-*", regex: ^2026-05, contains: 2026-05, in: ["2026-05-14", "2026-05-15"]}
+  - kind: logical_type
+    identifier: duration
+    aliases: [Duration, interval]
+    name: Duration
+    desc: Signed duration logical type.
+    source: python-import
+    target: heavenbase.types.duration:Duration
+    active: true
+    meta:
+      <<: *logical_type_meta
+      tags: {filter: true, filter-domains: [order], aggregate-modes: [group, numeric, order]}
+      capability_probe:
+        descriptor: duration
+        values: {eq: 1, ne: 2, lt: 3, lte: 3, gt: 0, gte: 0, in: [1, 2]}
+  - kind: logical_type
+    identifier: float
+    aliases: [Float]
+    name: Float
+    desc: Floating-point logical type.
+    source: python-import
+    target: heavenbase.types.float:Float
+    active: true
+    meta:
+      <<: *logical_type_meta
+      tags: {filter: true, filter-domains: [order], aggregate-modes: [group, numeric, order]}
+      capability_probe:
+        descriptor: float
+        values: {eq: 1.5, ne: 2.5, lt: 3.5, lte: 3.5, gt: 0.5, gte: 0.5, in: [1.5, 2.5]}
+  - kind: logical_type
+    identifier: hyper-g
+    aliases: [HyperG]
+    name: HyperG
+    desc: Hypergraph relation logical type.
+    source: python-import
+    target: heavenbase.types.hyperg:HyperG
+    active: true
+    meta:
+      <<: *logical_type_meta
+      tags: {filter: true, filter-domains: [struct], nested-filter: true, side: true, graph: true}
+      capability_probe: {descriptor: "hyper-g[slot,value,topic]"}
+  - kind: logical_type
+    identifier: identifier
+    aliases: [Identifier]
+    name: Identifier
+    desc: Stable entity identifier logical type.
+    source: python-import
+    target: heavenbase.types.identifier:Identifier
+    active: true
+    meta:
+      <<: *logical_type_meta
+      tags: {filter: true, filter-domains: [text], aggregate-modes: [group, order]}
+      capability_probe: {descriptor: identifier}
+  - kind: logical_type
+    identifier: integer
+    aliases: [Integer]
+    name: Integer
+    desc: Integer logical type.
+    source: python-import
+    target: heavenbase.types.integer:Integer
+    active: true
+    meta:
+      <<: *logical_type_meta
+      tags: {filter: true, filter-domains: [order], aggregate-modes: [group, numeric, order]}
+      capability_probe:
+        descriptor: integer
+        values: {eq: 1, ne: 2, lt: 3, lte: 3, gt: 0, gte: 0, in: [1, 2]}
+  - kind: logical_type
+    identifier: json
+    aliases: [Json]
+    name: Json
+    desc: JSON-compatible structured logical type.
+    source: python-import
+    target: heavenbase.types.json:Json
+    active: true
+    meta:
+      <<: *logical_type_meta
+      tags: {filter: true, filter-domains: [json]}
+      capability_probe:
+        descriptor: json
+        values:
+          eq: {value: alpha}
+          ne: {value: beta}
+          in: [{value: alpha}, {value: beta}]
+          get: {path: value, eq: alpha}
+  - kind: logical_type
+    identifier: long-text
+    aliases: [LongText]
+    name: LongText
+    desc: Long text logical type.
+    source: python-import
+    target: heavenbase.types.long_text:LongText
+    active: true
+    meta:
+      <<: *logical_type_meta
+      tags: {filter: true, filter-domains: [text], aggregate-modes: [group, order], search: true}
+      capability_probe: {descriptor: long-text}
+  - kind: logical_type
+    identifier: medium-text
+    aliases: [MediumText]
+    name: MediumText
+    desc: Medium text logical type.
+    source: python-import
+    target: heavenbase.types.medium_text:MediumText
+    active: true
+    meta:
+      <<: *logical_type_meta
+      tags: {filter: true, filter-domains: [text], aggregate-modes: [group, order]}
+      capability_probe: {descriptor: medium-text}
+  - kind: logical_type
+    identifier: short-text
+    aliases: [ShortText]
+    name: ShortText
+    desc: Short text logical type.
+    source: python-import
+    target: heavenbase.types.short_text:ShortText
+    active: true
+    meta:
+      <<: *logical_type_meta
+      tags: {filter: true, filter-domains: [text], aggregate-modes: [group, order]}
+      capability_probe: {descriptor: short-text}
+  - kind: logical_type
+    identifier: timestamp
+    aliases: [Timestamp]
+    name: Timestamp
+    desc: Time-zone-aware timestamp logical type.
+    source: python-import
+    target: heavenbase.types.timestamp:Timestamp
+    active: true
+    meta:
+      <<: *logical_type_meta
+      tags: {filter: true, filter-domains: [order], aggregate-modes: [group, order]}
+      capability_probe:
+        descriptor: timestamp
+        values: {eq: 1, ne: 2, lt: 3, lte: 3, gt: 0, gte: 0, in: [1, 2]}
+  - kind: logical_type
+    identifier: vector
+    aliases: [Vector]
+    name: Vector
+    desc: Numeric vector logical type.
+    source: python-import
+    target: heavenbase.types.vector:Vector
+    active: true
+    meta:
+      <<: *logical_type_meta
+      tags: {filter: true, near: true, vector: true}
+      capability_probe:
+        descriptor: vector[2]
+        values: {eq: [1.0, 0.0], near: [1.0, 0.0]}

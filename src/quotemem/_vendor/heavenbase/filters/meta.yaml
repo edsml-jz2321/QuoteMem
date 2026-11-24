@@ -1,0 +1,266 @@
+manifest_version: 2
+coordinate: heavenbase/filters
+version: 0.1.2.3
+compatibility: {heavenbase: {min: 0.1.2.3, before: 0.1.3.0}}
+bundle: filter-operations
+items:
+  - kind: tag
+    identifier: filter
+    name: Filter
+    desc: Broad filter-domain categorization.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      definition:
+        schema: {type: boolean}
+        default: false
+        subjects: [logical_type, operation, strategy]
+        subject_policy: category-open
+        layers: [static]
+  - kind: tag
+    identifier: filter-domains
+    name: Filter domains
+    desc: Filter domains supported by a logical type or operation.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      definition:
+        schema: {type: set, items: {type: identifier}}
+        default: []
+        subjects: [logical_type, operation]
+        subject_policy: exact
+        layers: [static]
+  - kind: tag
+    identifier: nested-filter
+    name: Nested filter
+    desc: Nested-filter capability for logical types, operations, and strategies.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      definition:
+        schema: {type: boolean}
+        default: false
+        subjects: [logical_type, operation, strategy]
+        subject_policy: exact
+        layers: [static]
+  - kind: tag
+    identifier: near
+    name: Near
+    desc: Vector-near capability for logical types, operations, and strategies.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      definition:
+        schema: {type: boolean}
+        default: false
+        subjects: [logical_type, operation, strategy]
+        subject_policy: exact
+        layers: [static]
+  - kind: operation
+    identifier: eq
+    aliases: [$eq]
+    name: Equals
+    desc: Equality predicate operation.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      <<: &operation_meta {schema_version: 1, version: 0.1.2.1, priority: 0, definition: {kind: operation}}
+      tags: {filter: true, filter-domains: [array, boolean, json, order, struct, text], vector: true}
+      capability_probe: {value: alpha}
+  - kind: operation
+    identifier: ne
+    aliases: [$ne]
+    name: Not equals
+    desc: Inequality predicate operation.
+    source: inline
+    target: definition
+    active: true
+    meta: {<<: *operation_meta, priority: 10, tags: {filter: true, filter-domains: [array, boolean, json, order, struct, text]}, capability_probe: {value: beta}}
+  - kind: operation
+    identifier: lt
+    aliases: [$lt]
+    name: Less than
+    desc: Strict less-than predicate operation.
+    source: inline
+    target: definition
+    active: true
+    meta: {<<: *operation_meta, priority: 20, tags: {filter: true, filter-domains: [order, text]}, capability_probe: {value: 5}}
+  - kind: operation
+    identifier: lte
+    aliases: [$lte]
+    name: Less than or equal
+    desc: Inclusive less-than predicate operation.
+    source: inline
+    target: definition
+    active: true
+    meta: {<<: *operation_meta, priority: 30, tags: {filter: true, filter-domains: [order, text]}, capability_probe: {value: 5}}
+  - kind: operation
+    identifier: gt
+    aliases: [$gt]
+    name: Greater than
+    desc: Strict greater-than predicate operation.
+    source: inline
+    target: definition
+    active: true
+    meta: {<<: *operation_meta, priority: 40, tags: {filter: true, filter-domains: [order, text]}, capability_probe: {value: 5}}
+  - kind: operation
+    identifier: gte
+    aliases: [$gte]
+    name: Greater than or equal
+    desc: Inclusive greater-than predicate operation.
+    source: inline
+    target: definition
+    active: true
+    meta: {<<: *operation_meta, priority: 50, tags: {filter: true, filter-domains: [order, text]}, capability_probe: {value: 5}}
+  - kind: operation
+    identifier: in
+    aliases: [$in]
+    name: In
+    desc: Membership predicate operation.
+    source: inline
+    target: definition
+    active: true
+    meta: {<<: *operation_meta, priority: 60, tags: {filter: true, filter-domains: [array, boolean, json, order, struct, text]}, capability_probe: {value: [alpha, beta]}}
+  - kind: operation
+    identifier: match
+    aliases: [$match]
+    name: Match
+    desc: Structured or textual match operation.
+    source: inline
+    target: definition
+    active: true
+    meta: {<<: *operation_meta, priority: 70, tags: {filter: true, filter-domains: [struct, text]}, capability_probe: {value: alpha}}
+  - kind: operation
+    identifier: like
+    aliases: [$like]
+    name: Like
+    desc: Case-sensitive SQL-like text predicate.
+    source: inline
+    target: definition
+    active: true
+    meta: {<<: *operation_meta, priority: 80, tags: {filter: true, filter-domains: [text]}, capability_probe: {value: "%alp%"}}
+  - kind: operation
+    identifier: ilike
+    aliases: [$ilike]
+    name: Case-insensitive like
+    desc: Case-insensitive SQL-like text predicate.
+    source: inline
+    target: definition
+    active: true
+    meta: {<<: *operation_meta, priority: 90, tags: {filter: true, filter-domains: [text]}, capability_probe: {value: "%ALP%"}}
+  - kind: operation
+    identifier: wildcard
+    aliases: [$wildcard]
+    name: Wildcard
+    desc: Wildcard text predicate operation.
+    source: inline
+    target: definition
+    active: true
+    meta: {<<: *operation_meta, priority: 100, tags: {filter: true, filter-domains: [text]}, capability_probe: {value: "alp*"}}
+  - kind: operation
+    identifier: regex
+    aliases: [$regex]
+    name: Regular expression
+    desc: Regular-expression text predicate operation.
+    source: inline
+    target: definition
+    active: true
+    meta: {<<: *operation_meta, priority: 110, tags: {filter: true, filter-domains: [text]}, capability_probe: {value: ^alp}}
+  - kind: operation
+    identifier: contains
+    aliases: [$contains]
+    name: Contains
+    desc: Text containment predicate operation.
+    source: inline
+    target: definition
+    active: true
+    meta: {<<: *operation_meta, priority: 120, tags: {filter: true, filter-domains: [text]}, capability_probe: {value: alp}}
+  - kind: operation
+    identifier: starts_with
+    aliases: [$starts_with]
+    name: Starts with
+    desc: Text prefix predicate operation.
+    source: inline
+    target: definition
+    active: true
+    meta: {<<: *operation_meta, priority: 130, tags: {filter: true, filter-domains: [text]}, capability_probe: {value: alp}}
+  - kind: operation
+    identifier: ends_with
+    aliases: [$ends_with]
+    name: Ends with
+    desc: Text suffix predicate operation.
+    source: inline
+    target: definition
+    active: true
+    meta: {<<: *operation_meta, priority: 140, tags: {filter: true, filter-domains: [text]}, capability_probe: {value: alp}}
+  - kind: operation
+    identifier: array_contains
+    aliases: [$array_contains]
+    name: Array contains
+    desc: Array membership predicate operation.
+    source: inline
+    target: definition
+    active: true
+    meta: {<<: *operation_meta, priority: 150, tags: {filter: true, filter-domains: [array]}, capability_probe: {value: alpha}}
+  - kind: operation
+    identifier: contained_in
+    aliases: [$contained_in]
+    name: Contained in
+    desc: Array or text containment predicate operation.
+    source: inline
+    target: definition
+    active: true
+    meta: {<<: *operation_meta, priority: 160, tags: {filter: true, filter-domains: [array, text]}, capability_probe: {value: alpha}}
+  - kind: operation
+    identifier: exists
+    aliases: [$exists, $any, any]
+    name: Exists
+    desc: Existence predicate operation.
+    source: inline
+    target: definition
+    active: true
+    meta: {<<: *operation_meta, priority: 170, tags: {filter: true, nested-filter: true}, capability_probe: {value: {slot: intent}}}
+  - kind: operation
+    identifier: all
+    aliases: [$all]
+    name: All
+    desc: Universal predicate operation.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      <<: *operation_meta
+      priority: 180
+      tags: {filter: true, nested-filter: true}
+      capability_probe: {value: {where: {slot: intent}, then: {value: {$in: [refund, return]}}}}
+  - kind: operation
+    identifier: get
+    aliases: [$get]
+    name: Get
+    desc: JSON field access operation.
+    source: inline
+    target: definition
+    active: true
+    meta: {<<: *operation_meta, priority: 190, tags: {filter: true, filter-domains: [json]}, capability_probe: {value: {path: value, eq: alpha}}}
+  - kind: operation
+    identifier: near
+    aliases: [$near]
+    name: Near
+    desc: Similarity search operation.
+    source: inline
+    target: definition
+    active: true
+    meta: {<<: *operation_meta, priority: 200, tags: {filter: true, near: true, vector: true}, capability_probe: {value: [1.0, 0.0]}}

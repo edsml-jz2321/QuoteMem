@@ -1,0 +1,196 @@
+manifest_version: 2
+coordinate: heavenbase/schema
+version: 0.1.2.3
+compatibility: {heavenbase: {min: 0.1.2.3, before: 0.1.3.0}}
+bundle: schema
+items:
+  - kind: tag
+    identifier: schema
+    name: Schema
+    desc: Broad schema-rendering and schema-extension categorization.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      definition:
+        schema: {type: boolean}
+        default: false
+        subjects: [extension, schema_text]
+        subject_policy: category-open
+        layers: [static]
+  - kind: storage_profile
+    identifier: default
+    name: Default storage profile
+    desc: Default inline row-storage policy.
+    source: inline
+    target: profile
+    dtype: "*"
+    strategy: inline
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      dependencies: [strategy:inline]
+      profile:
+        backend_preferences:
+          - {tag: storage-roles, contains: row}
+        strategy_rules: []
+        default_strategy: inline
+        reason: builtin-inline
+  - kind: storage_profile
+    identifier: vector
+    name: Vector storage profile
+    desc: Built-in vector storage policy.
+    source: inline
+    target: profile
+    dtype: vector
+    strategy: vector
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: {vector: true}
+      dependencies: [logical_type:vector, strategy:vector]
+      profile:
+        backend_preferences:
+          - {tag: storage-roles, contains: vector}
+        strategy_rules: []
+        default_strategy: vector
+        reason: builtin-vector
+  - kind: storage_profile
+    identifier: json
+    name: Json storage profile
+    desc: Built-in JSON storage policy.
+    source: inline
+    target: profile
+    dtype: json
+    strategy: json
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      dependencies: [logical_type:json, strategy:json]
+      profile:
+        backend_preferences:
+          - {tag: storage-roles, contains: row}
+        strategy_rules: []
+        default_strategy: json
+        reason: builtin-json
+  - kind: storage_profile
+    identifier: array
+    name: Array storage profile
+    desc: Built-in generic array storage policy.
+    source: inline
+    target: profile
+    dtype: array
+    strategy: inline
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: {side: true}
+      dependencies: [logical_type:array, strategy:inline, strategy:side]
+      profile:
+        backend_preferences:
+          - {tag: storage-roles, contains: row}
+        strategy_rules:
+          - when:
+              all:
+                - {tag: sql, equals: true}
+                - {tag: storage-roles, contains: row}
+            strategy: side
+        default_strategy: inline
+        reason: builtin-array
+  - kind: storage_profile
+    identifier: array-short-text
+    name: Short-text array storage profile
+    desc: Built-in sparse keyword storage policy.
+    source: inline
+    target: profile
+    dtype: array[short-text]
+    strategy: sparse-gram
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: {sql: true, gram: true}
+      dependencies: [logical_type:array, logical_type:short-text, strategy:sparse-gram, strategy:inline]
+      profile:
+        backend_preferences:
+          - all:
+              - {tag: sql, equals: true}
+              - {tag: storage-roles, contains: row}
+          - {tag: storage-roles, contains: row}
+        strategy_rules:
+          - when:
+              all:
+                - {tag: sql, equals: true}
+                - {tag: storage-roles, contains: row}
+            strategy: sparse-gram
+          - when: {tag: storage-roles, contains: row}
+            strategy: inline
+        default_strategy: sparse-gram
+        reason: builtin-array-short-text-keyword
+  - kind: storage_profile
+    identifier: hyper-g
+    name: HyperG storage profile
+    desc: Built-in hypergraph storage policy.
+    source: inline
+    target: profile
+    dtype: hyper-g
+    strategy: inline
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: {side: true, graph: true}
+      dependencies: [logical_type:hyper-g, strategy:inline, strategy:side]
+      profile:
+        backend_preferences:
+          - {tag: storage-roles, contains: row}
+        strategy_rules:
+          - when:
+              all:
+                - {tag: sql, equals: true}
+                - {tag: storage-roles, contains: row}
+            strategy: side
+        default_strategy: inline
+        reason: builtin-hyperg
+  - kind: storage_profile
+    identifier: long-text
+    name: Long-text storage profile
+    desc: Built-in searchable long-text policy.
+    source: inline
+    target: profile
+    dtype: long-text
+    strategy: inline
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: {search: true}
+      dependencies: [logical_type:long-text, strategy:inline, strategy:inverted]
+      profile:
+        backend_preferences:
+          - all:
+              - {tag: search, equals: true}
+              - {tag: storage-roles, contains: text}
+          - {tag: storage-roles, contains: row}
+        strategy_rules:
+          - when:
+              all:
+                - {tag: search, equals: true}
+                - {tag: storage-roles, contains: text}
+            strategy: inverted
+        default_strategy: inline
+        reason: builtin-longtext
+  - kind: schema_text
+    identifier: llm
+    name: LLM
+    desc: Default LLM-friendly Entity schema renderer.
+    source: python-import
+    target: heavenbase.schema.text:llm_schema_text
+    active: true
+    meta: {schema_version: 1, version: 0.1.2.1, tags: {schema: true, llm: true}}

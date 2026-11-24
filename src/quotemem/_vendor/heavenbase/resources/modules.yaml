@@ -1,0 +1,3 @@
+schema: heaven.modules/v1
+roots:
+  - .

@@ -1,0 +1,30 @@
+manifest_version: 2
+coordinate: heavenbase/llm/gateways/openai
+version: 0.1.2.3
+compatibility: {heavenbase: {min: 0.1.2.3, before: 0.1.3.0}}
+bundle: llm-gateway-openai
+items:
+  - kind: llm_gateway
+    identifier: openai
+    aliases: [openai-compatible]
+    name: OpenAI-compatible LLM Gateway
+    desc: OpenAI SDK transport for OpenAI-compatible endpoints.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: {llm: true}
+      definition:
+        compiler: semantic/v1
+        endpoints: [openai]
+        compile: {kind: heavenbase.executable, version: 1, source: python-import, target: heavenbase.llm.gateways.openai.runtime:compile}
+        available: {kind: heavenbase.executable, version: 1, source: python-import, target: heavenbase.llm.gateways.openai.runtime:available}
+        chat: {kind: heavenbase.executable, version: 1, source: python-import, target: heavenbase.llm.gateways.openai.runtime:chat}
+        achat: {kind: heavenbase.executable, version: 1, source: python-import, target: heavenbase.llm.gateways.openai.runtime:achat}
+        embed: {kind: heavenbase.executable, version: 1, source: python-import, target: heavenbase.llm.gateways.openai.runtime:embed}
+        aembed: {kind: heavenbase.executable, version: 1, source: python-import, target: heavenbase.llm.gateways.openai.runtime:aembed}
+        imagen: {kind: heavenbase.executable, version: 1, source: python-import, target: heavenbase.llm.gateways.openai.runtime:imagen}
+        aimagen: {kind: heavenbase.executable, version: 1, source: python-import, target: heavenbase.llm.gateways.openai.runtime:aimagen}
+        client: {kind: heavenbase.executable, version: 1, source: python-import, target: heavenbase.llm.gateways.openai.runtime:client}

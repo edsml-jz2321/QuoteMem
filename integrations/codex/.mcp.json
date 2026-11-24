@@ -1,0 +1,23 @@
+{
+  "mcpServers": {
+    "quotemem": {
+      "command": "node",
+      "args": ["./server.mjs"],
+      "cwd": ".",
+      "env": { "QUOTEMEM_AUTO": "1" },
+      "env_vars": [
+        "QUOTEMEM_URL",
+        "QUOTEMEM_TOKEN_FILE",
+        "QUOTEMEM_DATA_DIR",
+        "XDG_DATA_HOME",
+        "QUOTEMEM_HTTP_AUTH_MODE",
+        "QUOTEMEM_USER_ID",
+        "QUOTEMEM_TIMEOUT_MS",
+        "QUOTEMEM_CAPTURE_EVERY",
+        "QUOTEMEM_TOKEN",
+        "QUOTEMEM_HTTP_AUTH_SECRET"
+      ],
+      "tool_timeout_sec": 600
+    }
+  }
+}

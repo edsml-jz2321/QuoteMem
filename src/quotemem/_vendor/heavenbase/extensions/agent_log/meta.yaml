@@ -1,0 +1,39 @@
+manifest_version: 2
+coordinate: heavenbase/extensions/agent_log
+version: 0.1.2.3
+compatibility: {heavenbase: {min: 0.1.2.3, before: 0.1.3.0}}
+bundle: agent-log-extension
+items:
+  - kind: entity
+    identifier: agent-trace
+    aliases: [AgentTrace]
+    name: AgentTrace
+    desc: Immutable provider-call event of a logged assistant conversation.
+    source: path
+    target: {module: trace, qualname: AgentTrace}
+    active: true
+    meta: {schema_version: 1, version: 0.1.2.3, tags: {agent: true, session: true}}
+  - kind: extension
+    identifier: agent-log
+    name: Agent log
+    desc: Optional assistant session-log event rows; enabled by the dashboard assistant session log, never by default.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.3
+      tags: {agent: true, llm: true, session: true}
+      dependencies: [entity:agent-trace, extension:agent]
+      definition:
+        identifier: agent-log
+        name: Agent log
+        version: 0.1.2.3
+        desc: Optional assistant session-log event rows; enabled by the dashboard assistant session log, never by default.
+        required: false
+        requires: [agent]
+        entities: [agent-trace]
+        meta: {}
+        setup: null
+        api: null
+        api_name: null

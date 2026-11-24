@@ -2,17 +2,33 @@ QuoteMem
 Copyright (c) 2026 Quei
 Licensed under the MIT License (see LICENSE).
 
-This repository contains only QuoteMem's own source code and two benchmark
-source manifests. It does not bundle third-party code or benchmark data.
+This repository contains QuoteMem's own source code: the Python memory service
+(src/quotemem), the agent adapters and MCP server of the npm package quotemem
+(integrations/), and two benchmark source manifests. It includes HeavenBase
+(below) and no other third-party code or benchmark data.
+
+The npm package has no runtime dependencies. Its DSH bundle declares
+@deepseek-ai/dsh-llm, @deepseek-ai/dsh-session and @deepseek-ai/schemastery as
+optional peer dependencies, which DSH itself provides; they are not bundled.
 
 Runtime dependencies
 --------------------
 QuoteMem installs its dependencies from the Python Package Index; each keeps
-its own licence. The direct dependencies are anyio, heavenbase, httpx, numpy,
-pydantic, pyyaml, sqlalchemy, starlette and uvicorn (plus pywin32 on Windows,
-and pyarrow and tiktoken for the optional "bench" extra).
+its own licence. The direct dependencies are anyio, cryptography, httpx,
+numpy, pydantic, pyyaml, sqlalchemy, starlette and uvicorn (plus pywin32 on
+Windows, and pyarrow and tiktoken for the optional "bench" extra), and those
+of HeavenBase: anthropic, click, cloudpickle, fastmcp, omegaconf, openai,
+pandas, prompt_toolkit and typer.
 
-  HeavenBase - MIT License, installed from PyPI at version 0.1.2.3.
+Included software
+-----------------
+src/quotemem/_vendor holds a pre-release build of HeavenBase 0.1.2.3 (the
+project: https://pypi.org/project/heavenbase/) - MIT License. The package
+folder is unmodified, from heavenbase-0.1.2.3-py3-none-any.whl with SHA-256
+3fcbeacfeb1446900db06582e28512b9d98540204c7b45c587849ad9b44bf4e4; its
+dist-info folder holds only the metadata headers and the licence. The
+copyright and permission notice are in
+src/quotemem/_vendor/heavenbase-0.1.2.3.dist-info/licenses/LICENSE.
 
 Benchmark sources (not redistributed)
 -------------------------------------

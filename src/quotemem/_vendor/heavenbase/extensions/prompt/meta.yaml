@@ -1,0 +1,80 @@
+manifest_version: 2
+coordinate: heavenbase/extensions/prompt
+version: 0.1.2.3
+compatibility: {heavenbase: {min: 0.1.2.3, before: 0.1.3.0}}
+bundle: prompt-extension
+items:
+  - kind: tag
+    identifier: prompt
+    name: Prompt
+    desc: Broad persisted-prompt domain categorization.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      definition:
+        schema: {type: boolean}
+        default: false
+        subjects: [entity, extension]
+        subject_policy: category-open
+        layers: [static]
+  - kind: tag
+    identifier: translation
+    name: Translation
+    desc: Broad persisted-translation domain categorization.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      definition:
+        schema: {type: boolean}
+        default: false
+        subjects: [entity, extension]
+        subject_policy: category-open
+        layers: [static]
+  - kind: entity
+    identifier: sys-prompt
+    aliases: [Prompt]
+    name: Prompt
+    desc: Persisted prompt recipe entity.
+    source: path
+    target: {module: prompt, qualname: Prompt}
+    active: true
+    meta: {schema_version: 1, version: 0.1.2.1, tags: {prompt: true}}
+  - kind: entity
+    identifier: sys-translation
+    aliases: [Translation]
+    name: Translation
+    desc: Persisted prompt translation entity.
+    source: path
+    target: {module: translation, qualname: Translation}
+    active: true
+    meta: {schema_version: 1, version: 0.1.2.1, tags: {prompt: true, translation: true}}
+  - kind: extension
+    identifier: prompt
+    name: Prompt
+    desc: Default-loaded prompt and translation entities.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: {prompt: true, translation: true}
+      dependencies: [entity:sys-prompt, entity:sys-translation, extension:capsule]
+      definition:
+        identifier: prompt
+        name: Prompt
+        version: 0.1.2.1
+        desc: Default-loaded prompt and translation entities.
+        required: false
+        requires: [capsule]
+        entities: [sys-prompt, sys-translation]
+        meta: {hide_from_list_entities: true}
+        setup: null
+        api: null
+        api_name: null

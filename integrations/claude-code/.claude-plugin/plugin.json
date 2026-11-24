@@ -1,0 +1,31 @@
+{
+  "name": "quotemem",
+  "displayName": "QuoteMem",
+  "version": "0.3.0",
+  "description": "Auditable long-term memory: saves the conversation every few turns, recalls memories with their source quotes when you ask about the past, and forgets on request, all without extra steps.",
+  "author": {
+    "name": "Quei"
+  },
+  "homepage": "https://github.com/edsml-jz2321/QuoteMem#readme",
+  "repository": "https://github.com/edsml-jz2321/QuoteMem",
+  "license": "MIT",
+  "keywords": ["memory", "long-term-memory", "agent-memory", "mcp"],
+  "userConfig": {
+    "url": {
+      "type": "string",
+      "title": "QuoteMem URL",
+      "description": "Root URL of your QuoteMem service. Leave empty to use QUOTEMEM_URL, or http://127.0.0.1:8765."
+    },
+    "token": {
+      "type": "string",
+      "title": "QuoteMem token",
+      "description": "The service's token, for a service on another computer. Leave empty for the service on this computer (its own token is read), or to use the file QUOTEMEM_TOKEN_FILE names.",
+      "sensitive": true
+    },
+    "user_id": {
+      "type": "string",
+      "title": "Memory owner",
+      "description": "Whose memory to use. Leave empty to use QUOTEMEM_USER_ID, or your OS user name; use the same value in every tool to share one memory."
+    }
+  }
+}

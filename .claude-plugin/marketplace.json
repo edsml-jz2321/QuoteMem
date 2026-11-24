@@ -1,0 +1,14 @@
+{
+  "name": "quotemem",
+  "owner": {
+    "name": "Quei"
+  },
+  "description": "QuoteMem: auditable long-term memory for coding agents.",
+  "plugins": [
+    {
+      "name": "quotemem",
+      "source": "./integrations/claude-code",
+      "description": "Automatic long-term memory with source quotes: silent capture, recall and forget, plus explicit MCP tools."
+    }
+  ]
+}

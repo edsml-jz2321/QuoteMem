@@ -1,0 +1,78 @@
+manifest_version: 2
+coordinate: heavenbase/strategies
+version: 0.1.2.3
+compatibility: {heavenbase: {min: 0.1.2.3, before: 0.1.3.0}}
+bundle: storage-strategies
+items:
+  - kind: strategy
+    identifier: external
+    aliases: [ExternalRef]
+    name: ExternalRef
+    desc: External-reference storage strategy.
+    source: python-import
+    target: heavenbase.strategies.external_ref:ExternalRef
+    active: true
+    meta: &strategy_meta {schema_version: 1, version: 0.1.2.1}
+  - kind: strategy
+    identifier: graph
+    aliases: [GraphEdge]
+    name: GraphEdge
+    desc: Graph-edge storage strategy.
+    source: python-import
+    target: heavenbase.strategies.graph_edge:GraphEdge
+    active: true
+    meta: {<<: *strategy_meta, tags: {filter: true, nested-filter: true, graph: true}}
+  - kind: strategy
+    identifier: inline
+    aliases: [InlineColumn]
+    name: InlineColumn
+    desc: Inline-column storage strategy.
+    source: python-import
+    target: heavenbase.strategies.inline_column:InlineColumn
+    active: true
+    meta: {<<: *strategy_meta, tags: {filter: true, portable: true, nested-filter: true}}
+  - kind: strategy
+    identifier: inverted
+    aliases: [InvertedIndex]
+    name: InvertedIndex
+    desc: Inverted-index storage strategy.
+    source: python-import
+    target: heavenbase.strategies.inverted_index:InvertedIndex
+    active: true
+    meta: {<<: *strategy_meta, tags: {filter: true, portable: true, nested-filter: true, search: true}}
+  - kind: strategy
+    identifier: json
+    aliases: [JsonField]
+    name: JsonField
+    desc: JSON-field storage strategy.
+    source: python-import
+    target: heavenbase.strategies.json_field:JsonField
+    active: true
+    meta: {<<: *strategy_meta, tags: {filter: true, portable: true, nested-filter: true}}
+  - kind: strategy
+    identifier: side
+    aliases: [SideTable]
+    name: SideTable
+    desc: Side-table storage strategy.
+    source: python-import
+    target: heavenbase.strategies.side_table:SideTable
+    active: true
+    meta: {<<: *strategy_meta, tags: {filter: true, nested-filter: true, side: true}}
+  - kind: strategy
+    identifier: sparse-gram
+    aliases: [SparseGramIndex]
+    name: SparseGramIndex
+    desc: Sparse gram index strategy.
+    source: python-import
+    target: heavenbase.strategies.sparse_gram:SparseGramIndex
+    active: true
+    meta: {<<: *strategy_meta, tags: {filter: true, gram: true}}
+  - kind: strategy
+    identifier: vector
+    aliases: [VectorIndex]
+    name: VectorIndex
+    desc: Vector-index storage strategy.
+    source: python-import
+    target: heavenbase.strategies.vector_index:VectorIndex
+    active: true
+    meta: {<<: *strategy_meta, tags: {filter: true, near: true, vector: true}}

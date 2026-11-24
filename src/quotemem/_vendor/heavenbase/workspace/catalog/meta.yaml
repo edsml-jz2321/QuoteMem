@@ -1,0 +1,15 @@
+manifest_version: 2
+coordinate: heavenbase/workspace-catalog
+version: 0.1.2.3
+compatibility: {heavenbase: {min: 0.1.2.3, before: 0.1.3.0}}
+bundle: workspace-kernel
+items:
+  - kind: entity
+    identifier: sys-catalog
+    aliases: [Catalog]
+    name: Catalog
+    desc: Fixed concrete workspace object directory.
+    source: python-import
+    target: heavenbase.workspace.catalog.entity:Catalog
+    active: true
+    meta: {schema_version: 1, version: 0.1.2.1, fixed_workspace_contract: true}

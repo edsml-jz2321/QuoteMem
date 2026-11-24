@@ -1,0 +1,65 @@
+version: 1
+root: ~/.heavenbase
+workspace: default
+backend:
+    type: sqlite
+    module: heavenbase.backends.sql.sqlite
+    name: system
+    database: file://%/system.db
+    tags:
+        workspace-database-namespace: false
+    _override:
+        local_root: file://%/database
+        default_provider: sqlite
+        default_args:
+            http_proxy: null
+            https_proxy: null
+            no_proxy: null
+        dialects:
+            default: {}
+            sqlite:
+                tags:
+                    database-blob-native: true
+                    database-dynamic-typing: true
+                    database-local-path: true
+                    database-create: true
+                    database-drop: true
+                requires_host: false
+                supports_memory: true
+                file_uri_query: true
+                memory_pool_class: static
+                memory_connect_args: {check_same_thread: false}
+                json_text_type: text
+                name_warning_dialect_factory: [sqlalchemy.dialects.sqlite, dialect]
+                retryable_error_messages:
+                    - database is locked
+                    - database table is locked
+                    - database schema is locked
+                current_database_sql: PRAGMA database_list
+                static_database_names: [main]
+        providers:
+            sqlite:
+                dialect: sqlite
+                pragmas:
+                    - "PRAGMA foreign_keys = ON;"
+                    - "PRAGMA journal_mode = WAL;"
+                    - "PRAGMA synchronous = NORMAL;"
+                    - "PRAGMA busy_timeout = 6000;"
+                lock_retry:
+                    attempts: 8
+                    base_delay: 0.02
+                    max_delay: 0.25
+                pool:
+                    pool_class: queue
+                    connect_args:
+                        check_same_thread: false
+                        timeout: 6.0
+                    pool_pre_ping: true
+                    pool_size: 5
+                    max_overflow: 10
+                    pool_timeout: 30
+                    pool_recycle: 3600
+registry:
+    hash: sha256
+    max_items: 65536
+    max_bytes: 4194304

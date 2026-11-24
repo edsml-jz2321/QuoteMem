@@ -1,0 +1,277 @@
+manifest_version: 2
+coordinate: heavenbase/backends/capabilities
+version: 0.1.2.3
+compatibility: {heavenbase: {min: 0.1.2.3, before: 0.1.3.0}}
+bundle: backend-capabilities
+items:
+  - kind: tag
+    identifier: near-filter-modes
+    name: Near filter modes
+    desc: Native ways a Backend can combine near search and filtering.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      definition:
+        schema:
+          type: set
+          items:
+            type: enum
+            values: [combined_native, metadata_prefilter, candidate_id_prefilter]
+        default: []
+        subjects: [backend_type]
+        layers: [static]
+  - kind: tag
+    identifier: row-lookup
+    name: Row lookup
+    desc: Implementation mode for exact object-ID lookup operations.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      definition:
+        schema:
+          type: object
+          additional_properties: false
+          properties:
+            get_many: {type: enum, values: [scan, native]}
+            exists_many: {type: enum, values: [scan, native]}
+            count: {type: enum, values: [scan, native]}
+          required: [get_many, exists_many, count]
+        default: {get_many: scan, exists_many: scan, count: scan}
+        subjects: [backend_type]
+        layers: [static]
+  - kind: tag
+    identifier: backend-availability
+    name: Backend availability
+    desc: Best-effort current connection or provider readiness.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      definition:
+        schema: {type: enum, values: [unknown, ready, unavailable]}
+        default: unknown
+        subjects: [backend_type]
+        layers: [live]
+  - kind: tag
+    identifier: binary-storage
+    name: Binary storage
+    desc: Physical representation used for Artifact bytes.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      definition:
+        schema: {type: enum, values: [bytes, base64]}
+        default: bytes
+        subjects: [backend_type]
+        layers: [static, construction]
+  - kind: tag
+    identifier: graph-traversal-native
+    name: Native graph traversal
+    desc: Backend implementation can be a candidate for complete native graph traversal.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      definition:
+        schema: {type: boolean}
+        default: false
+        subjects: [backend_type]
+        layers: [static]
+  - kind: tag
+    identifier: graph-endpoint-pushdown
+    name: Graph endpoint pushdown
+    desc: Native traversal can fuse endpoint predicates.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      definition:
+        schema: {type: boolean}
+        default: false
+        subjects: [backend_type]
+        layers: [static]
+  - kind: tag
+    identifier: graph-endpoint-materialization
+    name: Graph endpoint materialization
+    desc: Physical projection used for graph endpoints.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      definition:
+        schema: {type: enum, values: [none, identity_anchor]}
+        default: none
+        subjects: [backend_type]
+        layers: [static]
+  - kind: tag
+    identifier: graph-incoming-lookup-native
+    name: Native graph incoming lookup
+    desc: Native state can provide a complete incoming-source candidate superset.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      definition:
+        schema: {type: boolean}
+        default: false
+        subjects: [backend_type]
+        layers: [static]
+  - kind: tag
+    identifier: workspace-database-namespace
+    name: Workspace database namespace
+    desc: Backend type interprets a workspace binding as a provider database namespace.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      definition:
+        schema: {type: boolean}
+        default: false
+        subjects: [backend_type]
+        layers: [static]
+  - kind: tag
+    identifier: unsupported-storage-types
+    name: Unsupported storage types
+    desc: Logical types this Backend must not own.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      definition:
+        schema:
+          type: set
+          items: {type: reference, kind: logical_type}
+        default: []
+        subjects: [backend_type]
+        layers: [static]
+  - kind: tag
+    identifier: indexable-types
+    name: Indexable types
+    desc: Types representable by the Backend default value or property index policy.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      definition:
+        schema:
+          type: set
+          items: {type: reference, kind: logical_type}
+        default: [boolean, categorical, date, duration, float, identifier, integer, long-text, medium-text, short-text, timestamp]
+        subjects: [backend_type]
+        layers: [static]
+  - kind: tag
+    identifier: scalar-index
+    name: Scalar index
+    desc: Physical scalar-index policy and lifecycle support.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      definition:
+        schema:
+          type: object
+          additional_properties: false
+          properties:
+            value: {type: boolean}
+            unique: {type: boolean}
+            composite: {type: boolean}
+            composite_unique: {type: boolean}
+            opt_out: {type: boolean}
+            supported_types:
+              type: set
+              items: {type: reference, kind: logical_type}
+            default_types:
+              type: set
+              items: {type: reference, kind: logical_type}
+          required: [value, unique, composite, composite_unique, opt_out, supported_types, default_types]
+          constraints:
+            - {kind: subset, field: default_types, of: supported_types}
+        default: {value: false, unique: false, composite: false, composite_unique: false, opt_out: false, supported_types: [], default_types: []}
+        subjects: [backend_type]
+        layers: [static]
+  - kind: tag
+    identifier: compare-upsert
+    name: Compare upsert
+    desc: Atomic compare-and-set upsert scope.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      definition:
+        schema: {type: enum, values: [unsupported, process, provider]}
+        default: unsupported
+        subjects: [backend_type]
+        layers: [static]
+  - kind: tag
+    identifier: atomic-upsert
+    name: Atomic upsert
+    desc: A failed upsert call applies none of its row mutations.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.3
+      definition:
+        schema: {type: boolean}
+        default: false
+        subjects: [backend_type]
+        layers: [static, construction]
+  - kind: tag
+    identifier: strategy-adapters
+    name: Strategy adapters
+    desc: Strategy adapters installed on a concrete Backend instance.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      definition:
+        schema:
+          type: list
+          unique_keys:
+            - [strategy]
+            - [identifier]
+          items:
+            type: object
+            additional_properties: false
+            properties:
+              identifier: {type: identifier}
+              strategy: {type: reference, kind: strategy, state: active}
+              metadata:
+                type: mapping
+                values: {type: json}
+            required: [identifier, strategy, metadata]
+        default: []
+        subjects: [backend_type]
+        layers: [live]

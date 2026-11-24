@@ -1,0 +1,28 @@
+manifest_version: 2
+coordinate: heavenbase/llm/gateways/mock
+version: 0.1.2.3
+compatibility: {heavenbase: {min: 0.1.2.3, before: 0.1.3.0}}
+bundle: llm-gateway-mock
+items:
+  - kind: llm_gateway
+    identifier: mock
+    name: Mock LLM Gateway
+    desc: Deterministic local LLM transport for tests and offline workflows.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: {llm: true}
+      definition:
+        compiler: semantic/v1
+        endpoints: [openai]
+        compile: {kind: heavenbase.executable, version: 1, source: python-import, target: heavenbase.llm.gateways.mock.runtime:compile}
+        available: {kind: heavenbase.executable, version: 1, source: python-import, target: heavenbase.llm.gateways.mock.runtime:available}
+        chat: {kind: heavenbase.executable, version: 1, source: python-import, target: heavenbase.llm.gateways.mock.runtime:chat}
+        achat: {kind: heavenbase.executable, version: 1, source: python-import, target: heavenbase.llm.gateways.mock.runtime:achat}
+        embed: {kind: heavenbase.executable, version: 1, source: python-import, target: heavenbase.llm.gateways.mock.runtime:embed}
+        aembed: {kind: heavenbase.executable, version: 1, source: python-import, target: heavenbase.llm.gateways.mock.runtime:aembed}
+        imagen: {kind: heavenbase.executable, version: 1, source: python-import, target: heavenbase.llm.gateways.mock.runtime:imagen}
+        aimagen: {kind: heavenbase.executable, version: 1, source: python-import, target: heavenbase.llm.gateways.mock.runtime:aimagen}

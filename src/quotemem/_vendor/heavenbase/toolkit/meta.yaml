@@ -1,0 +1,262 @@
+manifest_version: 2
+coordinate: heavenbase/toolkit
+version: 0.1.2.3
+compatibility: {heavenbase: {min: 0.1.2.3, before: 0.1.3.0}}
+bundle: toolkit-extension
+items:
+  - kind: tag
+    identifier: toolkit
+    name: Toolkit
+    desc: Broad Toolkit and tool-composition categorization.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      definition:
+        schema: {type: boolean}
+        default: false
+        subjects: [entity, extension, toolkit_family, toolkit_function, serializer, mcp_profile, mcp_transform]
+        subject_policy: category-open
+        layers: [static]
+  - kind: tag
+    identifier: mcp
+    name: MCP
+    desc: Broad Model Context Protocol categorization.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      definition:
+        schema: {type: boolean}
+        default: false
+        subjects: [extension, toolkit_family, toolkit_function, serializer, mcp_profile, mcp_call_logger, mcp_transform]
+        subject_policy: category-open
+        layers: [static]
+  - kind: entity
+    identifier: sys-toolkit
+    aliases: [Toolkit]
+    name: Toolkit
+    desc: Persisted Toolkit manifest entity.
+    source: path
+    target: {module: toolkit, qualname: Toolkit}
+    active: true
+    meta: {schema_version: 1, version: 0.1.2.1, tags: {toolkit: true}}
+  - kind: extension
+    identifier: toolkit
+    name: Toolkit
+    desc: Optional Toolkit persistence, serializers, profiles, and MCP composition.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: {toolkit: true, mcp: true}
+      dependencies: [entity:sys-toolkit, extension:capsule]
+      definition:
+        identifier: toolkit
+        name: Toolkit
+        version: 0.1.2.1
+        desc: Optional Toolkit persistence, serializers, profiles, and MCP composition.
+        required: false
+        requires: [capsule]
+        entities: [sys-toolkit]
+        meta: {hide_from_list_entities: true}
+        setup: null
+        api: null
+        api_name: null
+  - kind: toolkit_function
+    identifier: workspace_toolkit
+    name: Workspace Toolkit factory
+    desc: Build a Toolkit for one live workspace through the installed extension artifact.
+    source: path
+    target: {module: workspace_tools, qualname: workspace_toolkit}
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: {toolkit: true, mcp: true}
+      dependencies: [extension:toolkit]
+      workspace_requires: [toolkit]
+  - kind: toolkit_function
+    identifier: sync_workspace_mcp_registry_metadata
+    name: Workspace MCP Registry projection
+    desc: Project eligible Toolkit records and workspace overlays into MetaSchema.
+    source: path
+    target: {module: registry_metadata, qualname: sync_workspace_mcp_registry_metadata}
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: {toolkit: true, mcp: true}
+      dependencies: [extension:toolkit]
+      workspace_requires: [toolkit]
+  - kind: toolkit_function
+    identifier: resolve_workspace_mcp_profile
+    name: Workspace MCP profile resolver
+    desc: Resolve one MCP profile with the workspace's own profile and serializer rows.
+    source: path
+    target: {module: registry_metadata, qualname: resolve_workspace_mcp_profile}
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: {toolkit: true, mcp: true}
+      dependencies: [extension:toolkit]
+      workspace_requires: [toolkit]
+  - kind: toolkit_function
+    identifier: workspace_query_tool
+    name: Workspace query tool
+    desc: Build the canonical bounded query callable used by workspace interfaces.
+    source: path
+    target: {module: families.workspace.factory, qualname: workspace_query_tool}
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: {toolkit: true, mcp: true}
+      dependencies: [extension:toolkit, toolkit_family:workspace]
+      workspace_requires: [toolkit]
+  - kind: toolkit_function
+    identifier: workspace_explain_tool
+    name: Workspace explain tool
+    desc: Build the canonical routing-plan callable used by workspace interfaces.
+    source: path
+    target: {module: families.workspace.factory, qualname: workspace_explain_tool}
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: {toolkit: true, mcp: true}
+      dependencies: [extension:toolkit, toolkit_family:workspace]
+      workspace_requires: [toolkit]
+  - kind: toolkit_function
+    identifier: backend_toolkit
+    name: Backend Toolkit factory
+    desc: Build a runtime Toolkit for one live Backend.
+    source: path
+    target: {module: backend_tools, qualname: backend_toolkit}
+    active: true
+    meta: {schema_version: 1, version: 0.1.2.1, tags: {toolkit: true, mcp: true}, dependencies: [extension:toolkit]}
+  - kind: toolkit_function
+    identifier: mcp_transport
+    name: MCP transport policy
+    desc: Resolve one MCP transport value from explicit input or configuration.
+    source: path
+    target: {module: server, qualname: mcp_transport}
+    active: true
+    meta: {schema_version: 1, version: 0.1.2.1, tags: {toolkit: true, mcp: true}, dependencies: [extension:toolkit]}
+  - kind: toolkit_function
+    identifier: mcp_host
+    name: MCP host policy
+    desc: Resolve one MCP host from explicit input or configuration.
+    source: path
+    target: {module: server, qualname: mcp_host}
+    active: true
+    meta: {schema_version: 1, version: 0.1.2.1, tags: {toolkit: true, mcp: true}, dependencies: [extension:toolkit]}
+  - kind: toolkit_function
+    identifier: mcp_port
+    name: MCP port policy
+    desc: Resolve one MCP port from explicit input or configuration.
+    source: path
+    target: {module: server, qualname: mcp_port}
+    active: true
+    meta: {schema_version: 1, version: 0.1.2.1, tags: {toolkit: true, mcp: true}, dependencies: [extension:toolkit]}
+  - kind: mcp_transform
+    identifier: namespace
+    name: MCP namespace transform
+    desc: Prefix exposed FastMCP component names through a config-resolved transform builder.
+    source: path
+    target: {module: transforms, qualname: namespace_transform}
+    active: true
+    meta: {schema_version: 1, version: 0.1.2.1, tags: {toolkit: true, mcp: true}, dependencies: [extension:toolkit]}
+  - kind: serializer
+    identifier: jstr
+    name: JSTR
+    desc: Compact JSON-compatible MCP tool output serializer.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: {toolkit: true, mcp: true}
+      workspace_requires: [toolkit]
+      definition:
+        serialize: {kind: heavenbase.executable, version: 1, source: path, target: {module: serializers, qualname: jstr_serializer}}
+  - kind: serializer
+    identifier: markdown
+    name: Markdown
+    desc: Capped Markdown-table MCP tool output serializer.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: {toolkit: true, mcp: true}
+      workspace_requires: [toolkit]
+      definition:
+        serialize: {kind: heavenbase.executable, version: 1, source: path, target: {module: serializers, qualname: markdown_serializer}}
+  - kind: toolkit_family
+    identifier: workspace
+    name: Workspace
+    desc: Core HeavenBase workspace entity and query tools.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: {toolkit: true, mcp: true}
+      workspace_requires: [toolkit]
+      definition:
+        tool_names: [define_entity, list_entities, describe_entity, upsert, upsert_many, get, get_many, set, set_many, delete, delete_many, exists, exists_many, count, query, explain]
+        builder: {kind: heavenbase.executable, version: 1, source: path, target: {module: families.workspace, qualname: workspace_core_tool_functions}}
+        meta: {builder_context: workspace_tool_context}
+  - kind: mcp_profile
+    identifier: full
+    name: Full
+    desc: Full workspace MCP surface for trusted administrative flows.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: {toolkit: true, mcp: true}
+      workspace_requires: [toolkit]
+      dependencies: [serializer:jstr, toolkit_family:workspace]
+      definition:
+        extends: []
+        tools: [schema, read, write, delete, query]
+        entities: "*"
+        skills: []
+        serializer: jstr
+        desc: Full workspace MCP surface for trusted administrative flows.
+        meta: {}
+  - kind: mcp_profile
+    identifier: agent
+    name: Agent
+    desc: Curated first-agent MCP surface with markdown-framed reads and skill linkage.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: {toolkit: true, mcp: true}
+      workspace_requires: [toolkit]
+      dependencies: [serializer:markdown, toolkit_family:workspace]
+      definition:
+        extends: []
+        tools: [define_entity, list_entities, describe_entity, upsert, get, set, count, query, explain]
+        entities: "*"
+        skills: "*"
+        serializer: markdown
+        desc: Curated first-agent MCP surface with markdown-framed reads and skill linkage.
+        meta: {}

@@ -1,0 +1,31 @@
+{
+  "name": "quotemem",
+  "version": "0.3.0",
+  "description": "QuoteMem long-term memory: saves the conversation, recalls memories with their source quotes, and forgets on request, without any extra step.",
+  "contextFileName": "GEMINI.md",
+  "mcpServers": {
+    "quotemem": {
+      "command": "node",
+      "args": ["${extensionPath}${/}mcp.mjs"],
+      "cwd": "${extensionPath}"
+    }
+  },
+  "settings": [
+    {
+      "name": "QuoteMem URL",
+      "description": "Root URL of the QuoteMem service, e.g. http://127.0.0.1:8765. Leave empty to use ~/.quotemem/env or the default.",
+      "envVar": "QUOTEMEM_URL"
+    },
+    {
+      "name": "QuoteMem token",
+      "description": "The service's token, for a service on another computer. Leave empty for a service on this computer (its own token file is read), or to use QUOTEMEM_TOKEN_FILE from ~/.quotemem/env.",
+      "envVar": "QUOTEMEM_TOKEN",
+      "sensitive": true
+    },
+    {
+      "name": "QuoteMem user id",
+      "description": "Whose memory to use. Leave empty for the OS user name, the default of every QuoteMem adapter.",
+      "envVar": "QUOTEMEM_USER_ID"
+    }
+  ]
+}

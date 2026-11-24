@@ -1,0 +1,43 @@
+{
+  "hooks": {
+    "BeforeAgent": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "name": "quotemem-recall",
+            "description": "QuoteMem: silent recall and forget",
+            "command": "node \"${extensionPath}${/}quotemem-hook.mjs\" gemini BeforeAgent",
+            "timeout": 15000
+          }
+        ]
+      }
+    ],
+    "AfterAgent": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "name": "quotemem-capture",
+            "description": "QuoteMem: silent capture every few turns",
+            "command": "node \"${extensionPath}${/}quotemem-hook.mjs\" gemini AfterAgent",
+            "timeout": 5000
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "name": "quotemem-flush",
+            "description": "QuoteMem: save the rest of the session",
+            "command": "node \"${extensionPath}${/}quotemem-hook.mjs\" gemini SessionEnd",
+            "timeout": 5000
+          }
+        ]
+      }
+    ]
+  }
+}

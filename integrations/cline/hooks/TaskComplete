@@ -1,0 +1,9 @@
+#!/bin/sh
+# QuoteMem hook for Cline (TaskComplete). Runs quotemem-hook from PATH, or the
+# program named by QUOTEMEM_HOOK. Without it, the hook lets the turn go on.
+hook="${QUOTEMEM_HOOK:-quotemem-hook}"
+if command -v "$hook" >/dev/null 2>&1; then
+  exec "$hook" cline TaskComplete
+fi
+cat >/dev/null
+printf '{"cancel":false}\n'

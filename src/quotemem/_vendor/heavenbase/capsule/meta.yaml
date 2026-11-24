@@ -1,0 +1,120 @@
+manifest_version: 2
+coordinate: heavenbase/capsule
+version: 0.1.2.3
+compatibility: {heavenbase: {min: 0.1.2.3, before: 0.1.3.0}}
+bundle: capsule-extension
+items:
+  - kind: tag
+    identifier: capsule
+    name: Capsule
+    desc: Broad executable-capsule domain categorization.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      definition:
+        schema: {type: boolean}
+        default: false
+        subjects: [entity, extension, capsule_layer]
+        subject_policy: category-open
+        layers: [static]
+  - kind: tag
+    identifier: executable
+    name: Executable
+    desc: Broad executable-artifact categorization.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      definition:
+        schema: {type: boolean}
+        default: false
+        subjects: [extension, capsule_layer]
+        subject_policy: category-open
+        layers: [static]
+  - kind: entity
+    identifier: sys-capsule
+    aliases: [Capsule]
+    name: Capsule
+    desc: Universal persisted executable Capsule manifest entity.
+    source: python-import
+    target: heavenbase.capsule.runtime:Capsule
+    active: true
+    meta: {schema_version: 1, version: 0.1.2.1, tags: {capsule: true}}
+  - kind: extension
+    identifier: capsule
+    groups: {scope: [system]}
+    name: Capsule
+    desc: Universal executable manifest Entity and restoration-layer domain.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: {capsule: true, executable: true}
+      dependencies: [entity:sys-capsule]
+      definition:
+        identifier: capsule
+        name: Capsule
+        version: 0.1.2.1
+        desc: Universal executable manifest Entity and restoration-layer domain.
+        required: true
+        requires: []
+        entities: [sys-capsule]
+        meta: {hide_from_list_entities: true}
+        setup: null
+        api: null
+        api_name: null
+  - kind: capsule_layer
+    identifier: source
+    name: Source
+    desc: Restore Python callables from captured source.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: {capsule: true, executable: true}
+      definition:
+        builder: {kind: heavenbase.executable, version: 1, source: python-import, target: heavenbase.capsule.capture:_source_layer_builder}
+        restorer: {kind: heavenbase.executable, version: 1, source: python-import, target: heavenbase.capsule.restore:_restore_source}
+        verifier: {kind: heavenbase.executable, version: 1, source: python-import, target: heavenbase.capsule.restore:_verify_source_layer}
+        priority: 10
+  - kind: capsule_layer
+    identifier: import
+    name: Import
+    desc: Restore Python callables from durable import paths.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: {capsule: true, executable: true}
+      definition:
+        builder: {kind: heavenbase.executable, version: 1, source: python-import, target: heavenbase.capsule.capture:_import_layer_builder}
+        restorer: {kind: heavenbase.executable, version: 1, source: python-import, target: heavenbase.capsule.restore:_restore_import}
+        verifier: null
+        priority: 20
+  - kind: capsule_layer
+    identifier: cloudpickle
+    name: Cloudpickle
+    desc: Restore trusted-local binary Python callable payloads.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      tags: {capsule: true, executable: true}
+      definition:
+        builder: {kind: heavenbase.executable, version: 1, source: python-import, target: heavenbase.capsule.capture:_cloudpickle_layer_builder}
+        restorer: {kind: heavenbase.executable, version: 1, source: python-import, target: heavenbase.capsule.restore:_restore_cloudpickle}
+        verifier: {kind: heavenbase.executable, version: 1, source: python-import, target: heavenbase.capsule.restore:_verify_cloudpickle_layer}
+        priority: 90

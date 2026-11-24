@@ -1,0 +1,150 @@
+manifest_version: 2
+coordinate: heavenbase/extensions/database
+version: 0.1.2.3
+compatibility: {heavenbase: {min: 0.1.2.3, before: 0.1.3.0}}
+bundle: database-extension
+items:
+  - kind: entity
+    identifier: db-database
+    aliases: [DbDatabase]
+    name: DbDatabase
+    desc: External database metadata entity.
+    source: path
+    target: {module: entities, qualname: DbDatabase}
+    active: true
+    meta: {schema_version: 1, version: 0.1.2.2, tags: {database: true}}
+  - kind: entity
+    identifier: db-table
+    aliases: [DbTable]
+    name: DbTable
+    desc: External table metadata entity.
+    source: path
+    target: {module: entities, qualname: DbTable}
+    active: true
+    meta: {schema_version: 1, version: 0.1.2.2, tags: {database: true}}
+  - kind: entity
+    identifier: db-column
+    aliases: [DbColumn]
+    name: DbColumn
+    desc: External column metadata entity.
+    source: path
+    target: {module: entities, qualname: DbColumn}
+    active: true
+    meta: {schema_version: 1, version: 0.1.2.2, tags: {database: true}}
+  - kind: entity
+    identifier: db-enum
+    aliases: [DbEnum]
+    name: DbEnum
+    desc: External enum metadata entity.
+    source: path
+    target: {module: entities, qualname: DbEnum}
+    active: true
+    meta: {schema_version: 1, version: 0.1.2.2, tags: {database: true}}
+  - kind: entity
+    identifier: db-snippet
+    aliases: [DbSnippet]
+    name: DbSnippet
+    desc: Saved SQL snippet entity.
+    source: path
+    target: {module: entities, qualname: DbSnippet}
+    active: true
+    meta: {schema_version: 1, version: 0.1.2.2, tags: {database: true}}
+  - kind: entity
+    identifier: db-predicate
+    aliases: [DbPredicate]
+    name: DbPredicate
+    desc: Saved SQL predicate entity.
+    source: path
+    target: {module: entities, qualname: DbPredicate}
+    active: true
+    meta: {schema_version: 1, version: 0.1.2.2, tags: {database: true}}
+  - kind: entity
+    identifier: db-rule
+    aliases: [DbRule]
+    name: DbRule
+    desc: Database-scoped natural-language SQL and business rule entity.
+    source: path
+    target: {module: entities, qualname: DbRule}
+    active: true
+    meta: {schema_version: 1, version: 0.1.2.2, tags: {database: true}}
+  - kind: extension
+    identifier: database
+    name: Database
+    desc: Optional schema entities and MCP tools for browsing and analyzing external databases.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.2
+      tags: {database: true, sql: true, schema: true, mcp: true}
+      dependencies: [entity:db-database, entity:db-table, entity:db-column, entity:db-enum, entity:db-snippet, entity:db-predicate, entity:db-rule]
+      definition:
+        identifier: database
+        name: Database
+        version: 0.1.2.2
+        desc: Optional schema entities and MCP tools for browsing and analyzing external databases.
+        required: false
+        requires: []
+        entities: [db-database, db-table, db-column, db-enum, db-snippet, db-predicate, db-rule]
+        meta: {hide_from_list_entities: true}
+        setup: null
+        api: {kind: heavenbase.executable, version: 1, source: path, target: {module: api, qualname: DatabaseAPI}}
+        api_name: database
+  - kind: toolkit_family
+    identifier: database
+    name: Database
+    desc: Database schema browsing and readonly SQL tools.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.2
+      tags: {database: true, mcp: true}
+      dependencies: [extension:database]
+      workspace_requires: [database, toolkit]
+      definition:
+        tool_names: [list_sources, ingest_database, run_sql, run_snippet, save_snippet, suggest_sql]
+        builder: {kind: heavenbase.executable, version: 1, source: path, target: {module: toolkit.factory, qualname: database_tool_functions}}
+        meta: {tool_layout: one_tool_per_file}
+  - kind: mcp_profile
+    identifier: database
+    name: Database
+    desc: Browse and edit ingested schema context, run readonly SQL, and save successful queries.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.2
+      tags: {database: true, mcp: true}
+      workspace_requires: [database, toolkit]
+      dependencies: [serializer:jstr, toolkit_family:database]
+      definition:
+        extends: []
+        tools: [list_entities, describe_entity, read, write, query, list_sources, ingest_database, run_sql, run_snippet, save_snippet, suggest_sql]
+        entities: [db-database, db-table, db-column, db-enum, db-snippet, db-predicate, db-rule]
+        skills: []
+        serializer: jstr
+        desc: Set up named SQL sources, browse and edit database context, run readonly SQL, and save successful queries.
+        meta:
+          dashboard_assistant:
+            read_only_tools: [list_sources, run_sql, suggest_sql]
+            interactive_tools: [list_sources, ingest_database, upsert, set, run_sql, run_snippet, save_snippet, suggest_sql]
+            evidence_frames:
+              run_sql: {kind: sql, statement_arg: sql, source_arg: database_id, params_arg: params}
+            instructions:
+              - For a database question, call suggest_sql with the user's wording first and apply relevant enabled DbRule and verified DbSnippet context.
+              - If schema context is absent, call list_sources and then ingest_database with a configured backend_ref; never ask for or pass connection credentials through model tools.
+              - Learn the real schema from db-database, db-table, db-column, and db-enum rows before authoring SQL, then use run_sql for actual source data rather than answering data questions from metadata.
+              - When the user asks to retain a successful query, call save_snippet only after it executes successfully. Create or edit DbRule with upsert or set only when the user asks to remember a durable SQL or business rule.
+              - Treat descriptions and synonyms as editable semantic context; summarize user corrections faithfully instead of copying verbose instructions into a field.
+          workspace_skill:
+            instructions:
+              - For a database question, call suggest_sql with the user's wording first and apply relevant enabled DbRule and verified DbSnippet context.
+              - If schema context is absent, call list_sources and then ingest_database with a configured backend_ref; never ask for or pass connection credentials through model tools.
+              - Learn the real schema from db-database, db-table, db-column, and db-enum rows before authoring SQL, then use run_sql for actual source data rather than answering data questions from metadata.
+              - Return the executed SQL, its actual result rows, and the analytical conclusion together; if the source is incomplete or the result is truncated, say so explicitly.
+              - Save a successful reusable query as DbSnippet when the user asks to retain it. Create or edit DbRule with upsert or set when the user asks to remember durable SQL or business guidance.
+              - Treat descriptions and synonyms as editable semantic context; summarize user corrections faithfully instead of copying verbose instructions into a field.

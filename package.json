@@ -1,0 +1,132 @@
+{
+  "name": "quotemem",
+  "version": "0.3.0",
+  "description": "Auditable long-term memory for agents: every memory keeps its exact source quote, updates are versioned, and forgetting is confirmed.",
+  "main": "integrations/dsh/index.cjs",
+  "exports": {
+    ".": "./integrations/dsh/index.cjs",
+    "./dsh": "./integrations/dsh/index.cjs",
+    "./core": "./integrations/core/index.mjs",
+    "./opencode": "./integrations/opencode/index.js",
+    "./openclaw": "./integrations/openclaw/index.mjs",
+    "./package.json": "./package.json"
+  },
+  "bin": {
+    "quotemem": "integrations/cli/quotemem.mjs",
+    "quotemem-mcp": "integrations/dsh/server.mjs",
+    "quotemem-hook": "integrations/hooks/quotemem-hook.mjs"
+  },
+  "files": [
+    "integrations/cli/quotemem.mjs",
+    "integrations/cli/install.mjs",
+    "integrations/cli/service.mjs",
+    "integrations/core/*.mjs",
+    "!integrations/core/sync.mjs",
+    "integrations/core/README.md",
+    "integrations/dsh/index.cjs",
+    "integrations/dsh/automem.mjs",
+    "integrations/dsh/server.mjs",
+    "integrations/dsh/cordis.patch.yml",
+    "integrations/dsh/skills",
+    "integrations/dsh/README.md",
+    "integrations/hooks/quotemem-hook.mjs",
+    "integrations/hooks/hosts.mjs",
+    "integrations/hooks/env.mjs",
+    "integrations/hooks/mcp.mjs",
+    "integrations/hooks/core",
+    "integrations/hooks/README.md",
+    "integrations/claude-code/.claude-plugin",
+    "integrations/claude-code/.mcp.json",
+    "integrations/claude-code/hooks",
+    "integrations/claude-code/scripts",
+    "integrations/claude-code/core",
+    "integrations/claude-code/server.mjs",
+    "integrations/claude-code/README.md",
+    "integrations/codex/.codex-plugin",
+    "integrations/codex/.mcp.json",
+    "integrations/codex/hooks",
+    "integrations/codex/core",
+    "integrations/codex/hook.mjs",
+    "integrations/codex/install.mjs",
+    "integrations/codex/server.mjs",
+    "integrations/codex/AGENTS.snippet.md",
+    "integrations/codex/README.md",
+    "integrations/opencode/package.json",
+    "integrations/opencode/index.js",
+    "integrations/opencode/adapter.js",
+    "integrations/opencode/env.js",
+    "integrations/opencode/mcp.js",
+    "integrations/opencode/core",
+    "integrations/opencode/install",
+    "integrations/opencode/README.md",
+    "integrations/openclaw",
+    "integrations/gemini-cli",
+    "integrations/cursor",
+    "integrations/cline",
+    "integrations/goose",
+    "integrations/devin",
+    "integrations/continue",
+    "plugin.json",
+    "mcp.json",
+    "NOTICE"
+  ],
+  "scripts": {
+    "test": "node integrations/check_package.mjs && node --test",
+    "check": "node integrations/check_package.mjs --pack --install",
+    "prepublishOnly": "node -e \"console.error('quotemem is published only by .github/workflows/release.yml (npm publish ./<tarball>) after a v* tag; refusing npm publish from a checkout.');process.exit(1)\""
+  },
+  "engines": {
+    "dsh": ">=0.1.2-rc.1",
+    "node": ">=20.3"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-llm": ">=0.1.2-rc.1",
+    "@deepseek-ai/dsh-session": ">=0.1.2-rc.1",
+    "@deepseek-ai/schemastery": ">=3.18.1"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/dsh-llm": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-session": {
+      "optional": true
+    },
+    "@deepseek-ai/schemastery": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@deepseek-ai/dsh-llm": "0.2.2-rc.5",
+    "@deepseek-ai/dsh-session": "0.2.2-rc.5",
+    "@deepseek-ai/schemastery": "3.19.0"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./integrations/dsh/cordis.patch.yml"
+    }
+  },
+  "license": "MIT",
+  "author": "Quei",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/edsml-jz2321/QuoteMem.git"
+  },
+  "homepage": "https://github.com/edsml-jz2321/QuoteMem#readme",
+  "bugs": {
+    "url": "https://github.com/edsml-jz2321/QuoteMem/issues"
+  },
+  "keywords": [
+    "dsh-plugin",
+    "mcp",
+    "agent-memory",
+    "memory",
+    "long-term-memory",
+    "claude-code",
+    "codex",
+    "opencode",
+    "opencode-plugin",
+    "gemini-cli",
+    "cursor",
+    "openclaw"
+  ]
+}

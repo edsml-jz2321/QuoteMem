@@ -1,0 +1,311 @@
+manifest_version: 2
+coordinate: heavenbase/backends/vector
+version: 0.1.2.3
+compatibility: {heavenbase: {min: 0.1.2.3, before: 0.1.3.0}}
+bundle: backend-vector
+items:
+  - kind: backend_type
+    identifier: pgvector
+    aliases: [PgVectorBackend]
+    name: PgVector Backend
+    desc: PostgreSQL vector Backend.
+    source: python-import
+    target: heavenbase.backends.vector.pgvector:PgVectorBackend
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      factory: null
+      tags:
+        portable: true
+        storage-roles: [row, vector]
+        sql: true
+        vector: true
+        near-filter-modes: [combined_native, metadata_prefilter]
+        row-lookup: {get_many: native, exists_many: native, count: native}
+        workspace-database-namespace: true
+        atomic-upsert: true
+        scalar-index:
+          value: true
+          unique: true
+          composite: true
+          composite_unique: true
+          opt_out: true
+          supported_types: [boolean, categorical, date, duration, float, identifier, integer, short-text, timestamp]
+          default_types: [identifier, short-text, integer, float]
+  - kind: backend_type
+    identifier: lance
+    aliases: [lancedb, LanceBackend]
+    name: Lance Backend
+    desc: Lance vector Backend.
+    source: python-import
+    target: heavenbase.backends.vector.lance:LanceBackend
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      factory: null
+      tags:
+        portable: true
+        storage-roles: [vector]
+        vector: true
+        near-filter-modes: [combined_native, metadata_prefilter, candidate_id_prefilter]
+        row-lookup: {get_many: native, exists_many: native, count: native}
+        unsupported-storage-types: [hyper-g]
+  - kind: backend_type
+    identifier: milvus
+    aliases: [MilvusBackend]
+    name: Milvus Backend
+    desc: Milvus vector Backend.
+    source: python-import
+    target: heavenbase.backends.vector.milvus:MilvusBackend
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      factory: null
+      tags:
+        portable: true
+        storage-roles: [vector]
+        vector: true
+        near-filter-modes: [combined_native, metadata_prefilter, candidate_id_prefilter]
+        row-lookup: {get_many: native, exists_many: native, count: native}
+        binary-storage: base64
+  - kind: backend_type
+    identifier: milvus-lite
+    aliases: [milvus_lite, MilvusLiteBackend]
+    name: Milvus Lite Backend
+    desc: Embedded local-file Milvus vector Backend.
+    source: python-import
+    target: heavenbase.backends.vector.milvus:MilvusLiteBackend
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      factory: null
+      tags:
+        portable: true
+        storage-roles: [vector]
+        vector: true
+        near-filter-modes: [combined_native, metadata_prefilter, candidate_id_prefilter]
+        row-lookup: {get_many: native, exists_many: native, count: native}
+        binary-storage: base64
+  - kind: backend_type
+    identifier: chroma
+    aliases: [ChromaBackend]
+    name: Chroma Backend
+    desc: Chroma vector Backend.
+    source: python-import
+    target: heavenbase.backends.vector.chroma:ChromaBackend
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      factory: null
+      tags:
+        portable: true
+        storage-roles: [vector]
+        vector: true
+        near-filter-modes: [combined_native, metadata_prefilter]
+        row-lookup: {get_many: native, exists_many: native, count: native}
+        binary-storage: base64
+        unsupported-storage-types: [hyper-g]
+  - kind: backend_type
+    identifier: pinecone
+    aliases: [PineconeBackend]
+    name: Pinecone Backend
+    desc: Pinecone vector Backend.
+    source: python-import
+    target: heavenbase.backends.vector.pinecone:PineconeBackend
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      factory: null
+      tags:
+        portable: true
+        storage-roles: [vector]
+        vector: true
+        near-filter-modes: [combined_native, metadata_prefilter]
+        row-lookup: {get_many: native, exists_many: native, count: native}
+        binary-storage: base64
+        unsupported-storage-types: [hyper-g]
+  - kind: backend_type
+    identifier: qdrant
+    aliases: [QdrantBackend]
+    name: Qdrant Backend
+    desc: Qdrant vector and payload Backend.
+    source: python-import
+    target: heavenbase.backends.vector.qdrant:QdrantBackend
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      factory: null
+      tags:
+        portable: true
+        storage-roles: [vector]
+        vector: true
+        near-filter-modes: [combined_native, metadata_prefilter, candidate_id_prefilter]
+        row-lookup: {get_many: native, exists_many: native, count: native}
+        binary-storage: base64
+        unsupported-storage-types: [hyper-g]
+  - kind: backend_type
+    identifier: weaviate
+    aliases: [WeaviateBackend]
+    name: Weaviate Backend
+    desc: Weaviate self-provided vector Backend.
+    source: python-import
+    target: heavenbase.backends.vector.weaviate:WeaviateBackend
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      factory: null
+      tags:
+        portable: true
+        storage-roles: [vector]
+        vector: true
+        near-filter-modes: [combined_native, metadata_prefilter, candidate_id_prefilter]
+        row-lookup: {get_many: native, exists_many: native, count: native}
+        binary-storage: base64
+        unsupported-storage-types: [array, json, hyper-g]
+  - kind: backend_type
+    identifier: redisearch
+    aliases: [redis_query_engine, RediSearchBackend]
+    name: RediSearch Backend
+    desc: Redis query-engine Backend.
+    source: python-import
+    target: heavenbase.backends.vector.redisearch:RediSearchBackend
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      factory: null
+      tags:
+        portable: true
+        storage-roles: [row, text, vector]
+        search: true
+        vector: true
+        near-filter-modes: [combined_native]
+        row-lookup: {get_many: native, exists_many: native, count: native}
+  - kind: handler
+    identifier: chroma
+    groups: {backend: [chroma]}
+    name: Chroma handlers
+    desc: Chroma vector compilers and routing reasons.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      dependencies: [backend_type:chroma]
+      definition:
+        seed: {kind: heavenbase.executable, version: 1, source: python-import, target: "heavenbase.backends.vector.handler.chroma:register_handlers"}
+        reasons: {kind: heavenbase.executable, version: 1, source: python-import, target: "heavenbase.backends.vector.handler.chroma:register_reasons"}
+  - kind: handler
+    identifier: lance
+    groups: {backend: [lance]}
+    name: Lance handlers
+    desc: Lance vector compilers and routing reasons.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      dependencies: [backend_type:lance]
+      definition:
+        seed: {kind: heavenbase.executable, version: 1, source: python-import, target: "heavenbase.backends.vector.handler.lance:register_handlers"}
+        reasons: {kind: heavenbase.executable, version: 1, source: python-import, target: "heavenbase.backends.vector.handler.lance:register_reasons"}
+  - kind: handler
+    identifier: milvus
+    groups: {backend: [milvus, milvus-lite]}
+    name: Milvus handlers
+    desc: Milvus vector compilers and routing reasons.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      dependencies: [backend_type:milvus, backend_type:milvus-lite]
+      definition:
+        seed: {kind: heavenbase.executable, version: 1, source: python-import, target: "heavenbase.backends.vector.handler.milvus:register_handlers"}
+        reasons: {kind: heavenbase.executable, version: 1, source: python-import, target: "heavenbase.backends.vector.handler.milvus:register_reasons"}
+  - kind: handler
+    identifier: qdrant
+    groups: {backend: [qdrant]}
+    name: Qdrant handlers
+    desc: Qdrant vector and exact payload filter compilers.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      dependencies: [backend_type:qdrant]
+      definition:
+        seed: {kind: heavenbase.executable, version: 1, source: python-import, target: "heavenbase.backends.vector.handler.qdrant:register_handlers"}
+        reasons: {kind: heavenbase.executable, version: 1, source: python-import, target: "heavenbase.backends.vector.handler.qdrant:register_reasons"}
+  - kind: handler
+    identifier: weaviate
+    groups: {backend: [weaviate]}
+    name: Weaviate handlers
+    desc: Weaviate vector and exact property filter compilers.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      dependencies: [backend_type:weaviate]
+      definition:
+        seed: {kind: heavenbase.executable, version: 1, source: python-import, target: "heavenbase.backends.vector.handler.weaviate:register_handlers"}
+        reasons: {kind: heavenbase.executable, version: 1, source: python-import, target: "heavenbase.backends.vector.handler.weaviate:register_reasons"}
+  - kind: handler
+    identifier: pgvector
+    groups: {backend: [pgvector]}
+    name: PgVector handlers
+    desc: PgVector native vector compilers and routing reasons.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      dependencies: [backend_type:pgvector]
+      definition:
+        seed: {kind: heavenbase.executable, version: 1, source: python-import, target: "heavenbase.backends.vector.handler.pgvector:register_handlers"}
+        reasons: {kind: heavenbase.executable, version: 1, source: python-import, target: "heavenbase.backends.vector.handler.pgvector:register_reasons"}
+  - kind: handler
+    identifier: pinecone
+    groups: {backend: [pinecone]}
+    name: Pinecone handlers
+    desc: Pinecone vector compilers and routing reasons.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      dependencies: [backend_type:pinecone]
+      definition:
+        seed: {kind: heavenbase.executable, version: 1, source: python-import, target: "heavenbase.backends.vector.handler.pinecone:register_handlers"}
+        reasons: {kind: heavenbase.executable, version: 1, source: python-import, target: "heavenbase.backends.vector.handler.pinecone:register_reasons"}
+  - kind: handler
+    identifier: redisearch
+    groups: {backend: [redisearch]}
+    name: RediSearch handlers
+    desc: RediSearch vector and text compilers with routing reasons.
+    source: inline
+    target: definition
+    active: true
+    meta:
+      schema_version: 1
+      version: 0.1.2.1
+      dependencies: [backend_type:redisearch]
+      definition:
+        seed: {kind: heavenbase.executable, version: 1, source: python-import, target: "heavenbase.backends.vector.handler.redisearch:register_handlers"}
+        reasons: {kind: heavenbase.executable, version: 1, source: python-import, target: "heavenbase.backends.vector.handler.redisearch:register_reasons"}

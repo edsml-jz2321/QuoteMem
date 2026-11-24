@@ -1,0 +1,12 @@
+{
+  "name": "quotemem",
+  "interface": { "displayName": "QuoteMem" },
+  "plugins": [
+    {
+      "name": "quotemem",
+      "source": { "source": "local", "path": "./integrations/codex" },
+      "category": "Productivity",
+      "description": "Automatic long-term memory with source quotes: silent capture, recall and forget, plus explicit MCP tools."
+    }
+  ]
+}

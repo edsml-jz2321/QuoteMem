@@ -1,0 +1,117 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  server:
+    name: Server (lint, type check, smoke)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up uv and Python 3.12
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.11.21"
+          python-version: "3.12"
+          enable-cache: false
+
+      # There is no uv.lock yet. Install the project from pyproject.toml, with the
+      # transitive versions it was tested with held by .github/ci/constraints.txt.
+      - name: Install from pyproject.toml
+        run: |
+          uv venv .venv
+          uv pip install --constraints .github/ci/constraints.txt --editable ".[dev,bench]"
+
+      - name: Lint (ruff)
+        run: uv run --no-sync ruff check src .github/ci
+
+      - name: Type check (pyright, strict)
+        run: uv run --no-sync pyright
+
+      - name: Byte-compile
+        run: uv run --no-sync python -m compileall -q src
+
+      - name: Import every module
+        run: |
+          uv run --no-sync python - <<'PY'
+          import importlib
+          import pkgutil
+          import sys
+
+          import quotemem
+
+          failed = []
+          names = [info.name for info in pkgutil.walk_packages(quotemem.__path__, "quotemem.")]
+          for name in names:
+              try:
+                  importlib.import_module(name)
+              except Exception as error:  # report every module that fails
+                  failed.append(f"{name}: {type(error).__name__}: {error}")
+          print(f"imported {len(names) - len(failed)} of {len(names)} modules")
+          if failed:
+              print("\n".join(failed))
+              sys.exit(1)
+          PY
+
+      - name: Benchmark tool help
+        run: uv run --no-sync python -m quotemem.bench.cli --help
+
+      - name: Server smoke (stub provider, no network)
+        run: uv run --no-sync python .github/ci/server_smoke.py
+
+      # Build from this checkout, list what the sdist ships, and check that every file
+      # in it is a tracked file of the repository, byte for byte.
+      - name: Build the sdist and wheel
+        run: uv build --out-dir dist
+
+      - name: List the sdist contents
+        run: tar tzf dist/*.tar.gz
+
+      # check_dist.py compares the sdist with `git ls-files` and reads the files by
+      # their repository paths, so it runs at the root of this git checkout.
+      - name: Check the package contents
+        working-directory: ${{ github.workspace }}
+        run: uv run --no-sync python .github/ci/check_dist.py dist
+
+  plugins:
+    name: Agent plugins (Node ${{ matrix.node }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ["20", "24"]
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ matrix.node }}
+          package-manager-cache: false
+
+      # The package has no runtime dependencies and the tests need no install.
+      - name: Tests
+        run: npm test
+
+      - name: Package check (pack, install the tarball, run every bin)
+        run: npm run check

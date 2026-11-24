@@ -1,0 +1,383 @@
+name: Release
+
+# Pushing a tag vX.Y.Z builds the release files once from the tagged checkout,
+# then publishes those same files to PyPI and npm and attaches them, with
+# SHA256SUMS, to a GitHub Release. No token is stored anywhere: PyPI and npm
+# trust this workflow file through OpenID Connect (Trusted Publishing), and only
+# in the `pypi` and `npm` environments, which are limited to v* tags.
+#
+# Nothing is published until the `verify` and `node-tests` jobs pass: the npm
+# tests on Node 20 and 24, the package contents, the server smoke test, and the
+# built wheel installed in a fresh environment with every dependency resolved
+# from PyPI alone, so a dependency that is not on PyPI yet stops the release
+# before anything is uploaded.
+#
+# Every job can be rerun safely. A registry that already holds this version is
+# compared by checksum: PyPI files and the npm tarball that match this build are
+# skipped, and any difference fails the job, because a published version can
+# never be replaced. An existing GitHub Release is updated in place.
+
+on:
+  push:
+    tags: ['v*']
+
+permissions: {}
+
+# `shell: bash` makes every run step `bash --noprofile --norc -eo pipefail {0}`.
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      # SHA256SUMS travels in the same workflow artifact as the files it lists, so
+      # its own digest goes through the job outputs and every later job checks it.
+      sums: ${{ steps.build.outputs.sums }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: '0.11.21'
+          python-version: '3.12'
+          enable-cache: false
+      - name: Check that the tag, pyproject.toml and package.json name one version
+        id: version
+        run: |
+          uv run --no-project --python 3.12 -- python -I - <<'PY'
+          import json
+          import os
+          import re
+          import tomllib
+          from pathlib import Path
+
+          ref = os.environ["GITHUB_REF"]
+          tag = os.environ["GITHUB_REF_NAME"]
+          problems = []
+          if not ref.startswith("refs/tags/"):
+              problems.append(f"{ref} is not a tag")
+          match = re.fullmatch(r"v(\d+\.\d+\.\d+)", tag)
+          if match is None:
+              problems.append(f"tag {tag!r} is not vMAJOR.MINOR.PATCH")
+          version = match.group(1) if match else None
+          project = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))["project"]
+          package = json.loads(Path("package.json").read_text(encoding="utf-8"))
+          expected = {
+              "pyproject.toml project.name": (project.get("name"), "quotemem"),
+              "package.json name": (package.get("name"), "quotemem"),
+              "pyproject.toml project.version": (project.get("version"), version),
+              "package.json version": (package.get("version"), version),
+          }
+          for field, (found, wanted) in expected.items():
+              if found != wanted and (version is not None or field.endswith(".name")):
+                  problems.append(f"{field} is {found!r}, expected {wanted!r} (tag {tag})")
+          if problems:
+              for problem in problems:
+                  print(f"::error::{problem}")
+              raise SystemExit(1)
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"version={version}\n")
+          print(f"tag {tag}: quotemem {version} on PyPI and npm")
+          PY
+      - name: Check the npm package manifest and file list
+        run: node integrations/check_package.mjs --pack
+      - name: Build the wheel, the sdist and the npm tarball
+        id: build
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          rm -rf dist
+          # Hash-pinned build dependencies, so a rebuild of the same commit makes the same files.
+          uv build --no-sources --build-constraints .github/release/build-constraints.txt --require-hashes --out-dir dist
+          npm pack --ignore-scripts --pack-destination dist
+          cd dist
+          expected="$(printf '%s\n' "quotemem-${VERSION}-py3-none-any.whl" "quotemem-${VERSION}.tar.gz" "quotemem-${VERSION}.tgz" | sort)"
+          # uv build also writes a hidden .gitignore here; upload-artifact skips hidden files.
+          found="$(find . -mindepth 1 -maxdepth 1 ! -name '.*' -printf '%f\n' | sort)"
+          if [ "$found" != "$expected" ]; then
+            echo "::error::dist holds unexpected files"
+            printf 'expected:\n%s\nfound:\n%s\n' "$expected" "$found"
+            exit 1
+          fi
+          sha256sum "quotemem-${VERSION}-py3-none-any.whl" "quotemem-${VERSION}.tar.gz" "quotemem-${VERSION}.tgz" > SHA256SUMS
+          sha256sum --check SHA256SUMS
+          echo "sums=$(sha256sum SHA256SUMS | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
+          ls -l
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-${{ github.ref_name }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 30
+
+  node-tests:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: true
+      matrix:
+        node: ['20', '24']
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ matrix.node }}
+          package-manager-cache: false
+      - name: The adapters' tests
+        run: npm test
+
+  verify:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: '0.11.21'
+          python-version: '3.12'
+          enable-cache: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-${{ github.ref_name }}
+          path: ${{ runner.temp }}/dist
+      - name: Verify the files
+        working-directory: ${{ runner.temp }}/dist
+        env:
+          SUMS: ${{ needs.build.outputs.sums }}
+        run: |
+          [ -n "$SUMS" ] || { echo "::error::the build job gave no digest of SHA256SUMS"; exit 1; }
+          printf '%s  SHA256SUMS\n' "$SUMS" | sha256sum --check --strict
+          sha256sum --check SHA256SUMS
+          mkdir ../pydist
+          cp ./*.whl ./*.tar.gz ../pydist/
+      - name: Install the built wheel with its dependencies from PyPI alone
+        working-directory: ${{ runner.temp }}
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          # --no-config: no uv.toml or pyproject.toml setting (sources, indexes,
+          # constraints) of any folder applies; only PyPI is asked.
+          uv venv --no-config --python 3.12 wheel-venv
+          uv pip install --no-config --default-index https://pypi.org/simple \
+            --python wheel-venv/bin/python "pydist/quotemem-${VERSION}-py3-none-any.whl"
+          reported="$(wheel-venv/bin/quotemem --version)"
+          echo "$reported"
+          case "$reported" in
+            *"$VERSION"*) ;;
+            *) echo "::error::quotemem --version printed '$reported', expected $VERSION"; exit 1 ;;
+          esac
+          wheel-venv/bin/python -I -c 'import quotemem'
+      # check_dist.py compares the sdist with `git ls-files`, so it runs at the
+      # root of the checkout.
+      - name: Check the package contents
+        run: uv run --no-config --no-project --python 3.12 -- python -I .github/ci/check_dist.py "$RUNNER_TEMP/pydist"
+      - name: Server smoke test against the installed wheel (stub provider, no network)
+        run: PATH="$RUNNER_TEMP/wheel-venv/bin:$PATH" "$RUNNER_TEMP/wheel-venv/bin/python" -I .github/ci/server_smoke.py
+
+  publish-pypi:
+    # PyPI Trusted Publishing: PyPI trusts this workflow file (release.yml) in
+    # this repository, running in the `pypi` environment.
+    needs: [build, verify, node-tests]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment:
+      name: pypi
+      url: https://pypi.org/project/quotemem/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-${{ github.ref_name }}
+          path: dist
+      - name: Verify the files and keep only the Python distributions
+        env:
+          SUMS: ${{ needs.build.outputs.sums }}
+        run: |
+          cd dist
+          [ -n "$SUMS" ] || { echo "::error::the build job gave no digest of SHA256SUMS"; exit 1; }
+          printf '%s  SHA256SUMS\n' "$SUMS" | sha256sum --check --strict
+          sha256sum --check SHA256SUMS
+          find . -type f ! -name '*.whl' ! -name '*.tar.gz' -delete
+          ls -l
+      - name: Compare with the files PyPI already holds for this version
+        id: pypi
+        working-directory: dist
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          python3 -I - <<'PY'
+          import hashlib
+          import json
+          import os
+          import sys
+          import time
+          import urllib.error
+          import urllib.request
+          from pathlib import Path
+
+          version = os.environ["VERSION"]
+          url = f"https://pypi.org/pypi/quotemem/{version}/json"
+          local = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(Path().iterdir()) if p.is_file()}
+          remote = None
+          for attempt in range(1, 4):
+              try:
+                  request = urllib.request.Request(url, headers={"Accept": "application/json"})
+                  with urllib.request.urlopen(request, timeout=30) as response:
+                      remote = {f["filename"]: f["digests"]["sha256"] for f in json.load(response)["urls"]}
+                  break
+              except urllib.error.HTTPError as error:
+                  if error.code == 404:
+                      remote = {}
+                      break
+                  reason = f"HTTP {error.code}"
+              except OSError as error:
+                  reason = str(error)
+              print(f"attempt {attempt}: {url}: {reason}")
+              time.sleep(10 * attempt)
+          if remote is None:
+              print(f"::error::cannot read {url}; not uploading without comparing")
+              sys.exit(1)
+          problems = []
+          for name, digest in sorted(remote.items()):
+              if name not in local:
+                  problems.append(f"PyPI holds {name}, which this build did not make")
+              elif digest != local[name]:
+                  problems.append(f"PyPI holds {name} with sha256 {digest}; this build made {local[name]}")
+          if problems:
+              for problem in problems:
+                  print(f"::error::{problem}")
+              print(f"::error::quotemem {version} is already on PyPI with other files and cannot be replaced; release a new version.")
+              sys.exit(1)
+          for name in sorted(remote):
+              print(f"{name} is already on PyPI with the same sha256; not uploading it again.")
+              Path(name).unlink()
+          upload = sorted(set(local) - set(remote))
+          print(f"to upload: {', '.join(upload) or 'nothing'}")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"upload={'true' if upload else 'false'}\n")
+          PY
+      # skip-existing stays off: twine would skip by filename alone. If PyPI got a
+      # file after the check above (its JSON can lag an upload by a few minutes),
+      # the upload fails instead and a rerun compares again.
+      - if: steps.pypi.outputs.upload == 'true'
+        uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3 (release/v1)
+        with:
+          skip-existing: false
+
+  publish-npm:
+    # npm Trusted Publishing (OIDC): no token and no NODE_AUTH_TOKEN secret. npm
+    # trusts this workflow file (release.yml) in this repository, running in
+    # the `npm` environment, and attaches provenance itself for a public
+    # repository. No checkout: the tarball's own package.json is the manifest.
+    needs: [build, verify, node-tests]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment:
+      name: npm
+      url: https://www.npmjs.com/package/quotemem
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-${{ github.ref_name }}
+          path: dist
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - name: Use npm 11.5.1 or later (required for trusted publishing)
+        run: |
+          if ! node -e "const [a,b,c]=process.argv[1].split('.').map(Number); process.exit(a>11||(a===11&&(b>5||(b===5&&c>=1)))?0:1)" "$(npm --version)"; then
+            npm install --global npm@11.21.1
+          fi
+          npm --version
+      - name: Publish the built tarball
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+          SUMS: ${{ needs.build.outputs.sums }}
+        run: |
+          tarball="dist/quotemem-${VERSION}.tgz"
+          test -f "$tarball"
+          cd dist
+          [ -n "$SUMS" ] || { echo "::error::the build job gave no digest of SHA256SUMS"; exit 1; }
+          printf '%s  SHA256SUMS\n' "$SUMS" | sha256sum --check --strict
+          sha256sum --check SHA256SUMS
+          cd ..
+          local_integrity="sha512-$(openssl dgst -sha512 -binary "$tarball" | base64 -w0)"
+          published="$(npm view "quotemem@${VERSION}" dist.integrity 2>/dev/null || true)"
+          if [ -n "$published" ]; then
+            if [ "$published" = "$local_integrity" ]; then
+              echo "quotemem@${VERSION} is already published with this tarball; skipping."
+              exit 0
+            fi
+            echo "::error::quotemem@${VERSION} is already published with a different tarball."
+            exit 1
+          fi
+          # The leading ./ matters: without it npm reads dist/... as a GitHub repository.
+          npm publish "./${tarball}" --access public
+
+  github-release:
+    needs: [build, publish-pypi, publish-npm]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-${{ github.ref_name }}
+          path: dist
+      - name: Create or update the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ needs.build.outputs.version }}
+          SUMS: ${{ needs.build.outputs.sums }}
+        run: |
+          cd dist
+          [ -n "$SUMS" ] || { echo "::error::the build job gave no digest of SHA256SUMS"; exit 1; }
+          printf '%s  SHA256SUMS\n' "$SUMS" | sha256sum --check --strict
+          sha256sum --check SHA256SUMS
+          cd ..
+          files=("dist/quotemem-${VERSION}-py3-none-any.whl" "dist/quotemem-${VERSION}.tar.gz" "dist/quotemem-${VERSION}.tgz" dist/SHA256SUMS)
+          ls -l "${files[@]}"
+          notes="QuoteMem ${VERSION}: \`pip install quotemem==${VERSION}\` (PyPI) and \`npm install quotemem@${VERSION}\` (npm). SHA256SUMS lists the checksums of the attached files, which are the files published to PyPI and npm."
+          # Only the highest vX.Y.Z tag becomes Latest, so a backport or a rerun of an old tag does not.
+          highest="$(gh api --paginate "repos/${GH_REPO}/git/matching-refs/tags/v" --jq '.[].ref | ltrimstr("refs/tags/")' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1)"
+          latest=false
+          if [ "$highest" = "$GITHUB_REF_NAME" ]; then latest=true; fi
+          echo "highest release tag: ${highest}; ${GITHUB_REF_NAME} latest=${latest}"
+          if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "${files[@]}" --clobber
+            gh release edit "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --draft=false --latest="$latest"
+          else
+            gh release create "$GITHUB_REF_NAME" "${files[@]}" --verify-tag --title "$GITHUB_REF_NAME" --notes "$notes" --latest="$latest"
+          fi

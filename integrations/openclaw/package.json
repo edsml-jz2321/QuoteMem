@@ -1,0 +1,19 @@
+{
+  "name": "quotemem-openclaw",
+  "version": "0.3.0",
+  "private": true,
+  "description": "QuoteMem long-term memory for OpenClaw: silent capture, recall and forget.",
+  "type": "module",
+  "main": "index.mjs",
+  "openclaw": {
+    "extensions": ["./index.mjs"],
+    "compat": {
+      "pluginApi": ">=2026.3.24-beta.2"
+    }
+  },
+  "engines": {
+    "node": ">=20.3"
+  },
+  "license": "MIT",
+  "author": "Quei"
+}

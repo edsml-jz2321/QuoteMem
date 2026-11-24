@@ -1,0 +1,22 @@
+// OpenCode 1.x (npm `opencode-ai`, 1.18.29 or later).
+// Merge into ~/.config/opencode/opencode.jsonc (all projects) or a project's
+// opencode.jsonc; an opencode.json takes the same keys without the comments.
+// Replace /path/to/QuoteMem with the absolute path of your QuoteMem checkout.
+// No token is set here or in the environment: for a service on this computer
+// the plugin and the MCP server read its own <data-dir>/token; for one
+// elsewhere, QUOTEMEM_URL and QUOTEMEM_TOKEN_FILE (a file holding the token)
+// come from ~/.quotemem/env or the environment OpenCode starts in, as does
+// QUOTEMEM_USER_ID (optional).
+{
+  "$schema": "https://opencode.ai/config.json",
+  // Automatic memory: silent capture, recall and forget.
+  "plugin": ["/path/to/QuoteMem/integrations/opencode"],
+  // Explicit memory tools: search, history, provenance, list (quotemem_memories), forget (prepare, then confirm).
+  "mcp": {
+    "quotemem": {
+      "type": "local",
+      "command": ["node", "/path/to/QuoteMem/integrations/opencode/mcp.js"],
+      "enabled": true
+    }
+  }
+}

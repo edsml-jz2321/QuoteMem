@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [{ "command": "quotemem-hook cursor sessionStart", "timeout": 5 }],
+    "beforeSubmitPrompt": [{ "command": "quotemem-hook cursor beforeSubmitPrompt", "timeout": 15 }],
+    "afterAgentResponse": [{ "command": "quotemem-hook cursor afterAgentResponse", "timeout": 5 }],
+    "stop": [{ "command": "quotemem-hook cursor stop", "timeout": 5 }],
+    "sessionEnd": [{ "command": "quotemem-hook cursor sessionEnd", "timeout": 5 }]
+  }
+}
