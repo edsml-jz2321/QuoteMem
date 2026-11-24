@@ -54,8 +54,8 @@ against a stub service and a simulated DSH context
 dsh plugin --profile quotemem add quotemem
 ```
 
-Until the package is published to npm, install it from a packed tarball of a
-clone instead (`npm pack` in the clone's root writes `quotemem-<version>.tgz`):
+Or install it from a packed tarball of a clone (`npm pack` in the clone's root
+writes `quotemem-<version>.tgz`):
 
 ```console
 dsh plugin --profile quotemem add file:/path/to/quotemem-0.3.0.tgz

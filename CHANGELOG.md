@@ -2,7 +2,7 @@
 
 All notable changes to QuoteMem are listed here. Dates are UTC.
 
-## 0.3.0 - Unreleased
+## 0.3.0 - 2026-11-24
 
 Version 0.2.0 was not released.
 

@@ -54,8 +54,7 @@ service and a port of their own). They use the same memory by default:
 `QUOTEMEM_USER_ID`, which defaults to your OS user name.
 
 1. Set up your tool. The `quotemem install` rows need the npm package once:
-   `npm install -g quotemem` (after the first release; until then see
-   [Install](#install)).
+   `npm install -g quotemem`.
 
    | Tool | Set it up |
    |---|---|
@@ -78,8 +77,8 @@ service and a port of their own). They use the same memory by default:
 More tools, other ways to install, and what each tool can do:
 [Use with your agents](#use-with-your-agents), the
 [install matrix](#install-matrix) and
-[agent support at a glance](#agent-support-at-a-glance). To try it before the
-packages are published, install from a clone (see [Install](#install)).
+[agent support at a glance](#agent-support-at-a-glance). You can also install
+from a clone (see [Install](#install)).
 
 ## Status
 
@@ -113,7 +112,7 @@ uvx quotemem serve       # run it straight from PyPI
 pip install quotemem     # or install it, then run `quotemem serve`
 ```
 
-Until the `quotemem` package is on PyPI, install from a clone:
+Or install from a clone:
 
 ```bash
 git clone https://github.com/edsml-jz2321/QuoteMem.git
@@ -559,8 +558,7 @@ plugins share one memory service (`quotemem serve`, on `127.0.0.1:8765`), so a
 fact learned in one agent is recalled in the others. Every adapter uses the
 same memory by default: `QUOTEMEM_USER_ID`, which defaults to your OS user name.
 
-Quick start (until the npm and PyPI packages are published, follow
-"From a clone, before the packages are published" below instead):
+Quick start (to run a clone instead, follow "From a clone" below):
 
 1. Install the plugin for your agent (see the [install matrix](#install-matrix)).
 2. Run this once:
@@ -655,11 +653,10 @@ in `$XDG_DATA_HOME/quotemem` when that is set (`QUOTEMEM_DATA_DIR` moves it),
 and the agents read its `<data-dir>/token` the same way, so they need no token
 setting either.
 
-**From a clone, before the packages are published.** The automatic start and
-setup's check run `uvx --from quotemem==<plugin version>`, which needs the
-`quotemem` package on PyPI. From a clone (after `uv sync`), write the settings
-without the check, then check and start the service from the clone with the
-same file:
+**From a clone.** The automatic start and setup's check run
+`uvx --from quotemem==<plugin version>`, the published package. To run a clone
+instead (after `uv sync`), write the settings without the check, then check and
+start the service from the clone with the same file:
 
 ```bash
 node integrations/cli/quotemem.mjs setup --no-check
@@ -809,7 +806,7 @@ folder. The `--write` paths ran in unit tests against a temp home. The
 agents' own commands in the table (`dsh plugin add`, `claude plugin`,
 `codex plugin`, `gemini extensions install`, `openclaw plugins install`) follow each agent's
 documentation; the next table says which agents ran the adapter for real.
-Until the package is on npm, use the "from a clone" line.
+To install from a clone instead, use the "from a clone" line.
 
 ### Agent support at a glance
 
