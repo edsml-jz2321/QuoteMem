@@ -64,6 +64,8 @@ function env(server, home, extra = {}) {
     QUOTEMEM_CAPTURE_EVERY: '2',
     QUOTEMEM_CAPTURE_RETRY_BASE_MS: '50',
     QUOTEMEM_FLUSHER_MAX_WAIT_MS: '2000',
+    // No flusher waits for idle chats beyond a test, unless the test sets a time.
+    QUOTEMEM_IDLE_FLUSH_MS: '0',
     ...extra,
   };
 }
@@ -148,7 +150,7 @@ test('Gemini CLI extension: capture, recall, forget and session end through the 
   // and its redaction strips QUOTEMEM_TOKEN; the token comes from ~/.quotemem/env.
   fs.mkdirSync(path.join(home, '.quotemem'), { mode: 0o700 });
   fs.writeFileSync(path.join(home, '.quotemem', 'env'), `# QuoteMem\nexport QUOTEMEM_TOKEN="${TOKEN}"\nQUOTEMEM_CAPTURE_EVERY=2\nQUOTEMEM_CAPTURE_RETRY_BASE_MS=50\nIGNORED=1\n`, { mode: 0o600 });
-  const childEnv = { PATH: process.env.PATH, HOME: home, USERPROFILE: home, QUOTEMEM_URL: server.url, QUOTEMEM_USER_ID: 'quei' };
+  const childEnv = { PATH: process.env.PATH, HOME: home, USERPROFILE: home, QUOTEMEM_URL: server.url, QUOTEMEM_USER_ID: 'quei', QUOTEMEM_IDLE_FLUSH_MS: '0' };
   const base = { session_id: 'g-sess-1', transcript_path: path.join(home, 't.json'), cwd: home, timestamp: '2026-11-20T10:00:00Z' };
   const turn = async (prompt, reply) => {
     const before = output(await sh(cmd('BeforeAgent'), { ...base, hook_event_name: 'BeforeAgent', prompt }, childEnv));
@@ -207,10 +209,10 @@ test('Gemini CLI: the token can also come from GEMINI_CLI_QUOTEMEM_TOKEN or QUOT
   const home = newHome();
   const cmd = `node "${path.join(INTEGRATIONS, 'gemini-cli', 'quotemem-hook.mjs')}" gemini BeforeAgent`;
   const payload = { session_id: 's', hook_event_name: 'BeforeAgent', prompt: 'Do you remember my dog?' };
-  const a = output(await sh(cmd, payload, { PATH: process.env.PATH, HOME: home, USERPROFILE: home, QUOTEMEM_URL: server.url, GEMINI_CLI_QUOTEMEM_TOKEN: TOKEN }));
+  const a = output(await sh(cmd, payload, { PATH: process.env.PATH, HOME: home, USERPROFILE: home, QUOTEMEM_URL: server.url, GEMINI_CLI_QUOTEMEM_TOKEN: TOKEN, QUOTEMEM_IDLE_FLUSH_MS: '0' }));
   assert.match(a.hookSpecificOutput.additionalContext, /retrieved long-term memory/);
   fs.writeFileSync(path.join(home, 'qm-token'), `${TOKEN}\n`, { mode: 0o600 });
-  const b = output(await sh(cmd, { ...payload, session_id: 's2' }, { PATH: process.env.PATH, HOME: home, USERPROFILE: home, QUOTEMEM_URL: server.url, QUOTEMEM_TOKEN_FILE: '~/qm-token' }));
+  const b = output(await sh(cmd, { ...payload, session_id: 's2' }, { PATH: process.env.PATH, HOME: home, USERPROFILE: home, QUOTEMEM_URL: server.url, QUOTEMEM_TOKEN_FILE: '~/qm-token', QUOTEMEM_IDLE_FLUSH_MS: '0' }));
   assert.match(b.hookSpecificOutput.additionalContext, /retrieved long-term memory/);
   assert.equal(server.of('/memory/search').every((r) => r.headers.authorization === `Bearer ${TOKEN}`), true);
 });
@@ -1473,7 +1475,8 @@ test('a run given its own QUOTEMEM_STATE_DIR and QUOTEMEM_ENV_FILE writes nothin
   const devinHooks = config('devin/hooks.v1.json');
   const devin = (extra) => (event, fields) => sh(commandOf(devinHooks, event), { hook_event_name: event, cwd: '/work/project', ...fields }, env(server, home, extra));
   // The profile's own state from before, of another user: a Devin turn still pending (a batch every 2).
-  const before = devin({ QUOTEMEM_USER_ID: 'someone-else' });
+  // Its idle time is off, so no background flusher waits for that turn during the test.
+  const before = devin({ QUOTEMEM_USER_ID: 'someone-else', QUOTEMEM_IDLE_FLUSH_MS: '0' });
   output(await before('UserPromptSubmit', { session_id: 'd-home', prompt_id: 'p1', prompt: 'My locker code is HERON.' }), { empty: true });
   output(await before('Stop', { session_id: 'd-home', prompt_id: 'p1', stop_hook_active: false, last_assistant_message: 'Noted.' }), { empty: true });
   // A run with its own state folder and env file, outside the home.

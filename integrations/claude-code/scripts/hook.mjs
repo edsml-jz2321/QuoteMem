@@ -10,7 +10,7 @@
 // service never blocks or changes a prompt. Diagnostics go to
 // <state>/quotemem.log, never to stdout or stderr, and never the token.
 import { settleLaunches } from '../core/index.mjs';
-import { runHook } from './adapter.mjs';
+import { armIdle, runHook } from './adapter.mjs';
 
 const MAX_INPUT_BYTES = 16 * 1024 * 1024;
 const INPUT_WAIT_MS = 5000;
@@ -60,8 +60,12 @@ try {
 } catch {
   output = '';
 }
-// The answer first; then the background sender's start (on Windows it waits
-// for PowerShell), within the hard stop.
-const done = () => settleLaunches(HARD_STOP_MS - (Date.now() - STARTED) - 300).finally(() => process.exit(0));
+// The answer first; then the start of the flusher that waits for idle chats
+// (armIdle) and the background sender's start (on Windows it waits for
+// PowerShell), within the hard stop.
+const done = () => {
+  armIdle();
+  return settleLaunches(HARD_STOP_MS - (Date.now() - STARTED) - 300).finally(() => process.exit(0));
+};
 if (output) process.stdout.write(output, done);
 else done();

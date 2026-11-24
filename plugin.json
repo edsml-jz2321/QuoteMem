@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "quotemem",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Auditable long-term memory for agents: quoted evidence, versioned updates and confirmed forgetting",
   "keywords": [
     "memory",

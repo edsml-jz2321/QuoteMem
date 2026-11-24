@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="970" height="264" viewBox="0 0 970 264" role="img" aria-labelledby="t d">
+<title id="t">How QuoteMem works</title>
+<desc id="d">A conversation goes to extraction, which writes short statements with their exact quote. A review checks each one against the nearby memories. Memories keep their old versions. Recall answers with the quote; forget is prepared, confirmed and kept by a tombstone.</desc>
+<style>.box{fill:#f6f8fa;stroke:#57606a;stroke-width:1.5}.key{stroke:#0969da;stroke-width:2}.title{font:bold 16px "DejaVu Sans",Verdana,Arial,Helvetica,sans-serif;fill:#1f2328}.body{font:13px "DejaVu Sans",Verdana,Arial,Helvetica,sans-serif;fill:#424a53}.arrow{stroke:#8c959f;stroke-width:2;fill:none}.head{fill:#8c959f}@media (prefers-color-scheme:dark){.box{fill:#161b22;stroke:#8b949e}.key{stroke:#4493f8}.title{fill:#f0f6fc}.body{fill:#d1d9e0}}</style>
+<defs><marker id="h" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="head" d="M0 0L10 5L0 10z"/></marker></defs>
+<rect class="box" x="8" y="70" width="168" height="124" rx="10"/>
+<text class="title" x="92.0" y="109" text-anchor="middle">Conversation</text>
+<text class="body" x="92.0" y="131" text-anchor="middle">Chat turns from</text>
+<text class="body" x="92.0" y="149" text-anchor="middle">any of your tools:</text>
+<text class="body" x="92.0" y="167" text-anchor="middle">“I live in Beijing.”</text>
+<rect class="box" x="204" y="70" width="168" height="124" rx="10"/>
+<text class="title" x="288.0" y="109" text-anchor="middle">Extraction</text>
+<text class="body" x="288.0" y="131" text-anchor="middle">Short statements,</text>
+<text class="body" x="288.0" y="149" text-anchor="middle">each with its exact</text>
+<text class="body" x="288.0" y="167" text-anchor="middle">quote (byte range)</text>
+<rect class="box" x="400" y="70" width="168" height="124" rx="10"/>
+<text class="title" x="484.0" y="109" text-anchor="middle">Review</text>
+<text class="body" x="484.0" y="131" text-anchor="middle">Checked against</text>
+<text class="body" x="484.0" y="149" text-anchor="middle">the nearby memories:</text>
+<text class="body" x="484.0" y="167" text-anchor="middle">new, same or update</text>
+<rect class="box key" x="596" y="70" width="168" height="124" rx="10"/>
+<text class="title" x="680.0" y="109" text-anchor="middle">Memory</text>
+<text class="body" x="680.0" y="131" text-anchor="middle">Versions are kept:</text>
+<text class="body" x="680.0" y="149" text-anchor="middle">Beijing: past</text>
+<text class="body" x="680.0" y="167" text-anchor="middle">Shanghai: current</text>
+<rect class="box" x="794" y="8" width="168" height="112" rx="10"/>
+<text class="title" x="878.0" y="50" text-anchor="middle">Recall</text>
+<text class="body" x="878.0" y="72" text-anchor="middle">The answer comes</text>
+<text class="body" x="878.0" y="90" text-anchor="middle">with its quote</text>
+<rect class="box" x="794" y="144" width="168" height="112" rx="10"/>
+<text class="title" x="878.0" y="177" text-anchor="middle">Forget</text>
+<text class="body" x="878.0" y="199" text-anchor="middle">Prepare, confirm;</text>
+<text class="body" x="878.0" y="217" text-anchor="middle">a tombstone keeps</text>
+<text class="body" x="878.0" y="235" text-anchor="middle">it forgotten</text>
+<path class="arrow" d="M176 132L200 132" marker-end="url(#h)"/>
+<path class="arrow" d="M372 132L396 132" marker-end="url(#h)"/>
+<path class="arrow" d="M568 132L592 132" marker-end="url(#h)"/>
+<path class="arrow" d="M764 112L790 70" marker-end="url(#h)"/>
+<path class="arrow" d="M764 152L790 194" marker-end="url(#h)"/>
+</svg>

@@ -82,6 +82,13 @@ bench profile itself is unchanged):
 - Every request except ``/agent/ready`` writes one JSON line to stdout (`RequestLog`):
   method, route, a keyed hash of the user, status, duration and counts. Never content,
   ids or credentials.
+
+Every Add body is normalized first (``quotemem.agent.ingest.normalize_add``). In a store
+whose Add mode is ``agent`` (the default; self-identity rule ``user-role-v1``) a user
+message there is the authenticated user's own words: its ``speaker`` and
+``source_participant`` are dropped and counted (``dropped_user_speakers`` in the request
+line's counts and in ``/agent/status`` ``ingest``), so "I" in it is the user. A ``full``
+or ``lean-local`` store receives the speaker metadata of every message as sent.
 """
 
 from __future__ import annotations
@@ -106,6 +113,7 @@ from quotemem.adapters.http.errors import public_error
 from quotemem.agent.ingest import IngestNotes, normalize_add, normalize_search
 from quotemem.agent.routing import ProviderHealth
 from quotemem.core.errors import QuoteMemError
+from quotemem.core.extraction_policy import SelfIdentityRule
 
 if TYPE_CHECKING:
     from quotemem.agent.admin import AgentStore
@@ -247,8 +255,9 @@ class AgentState:
         "add": RequestCounters(), "search": RequestCounters(),
     })
     ingest: dict[str, int] = field(default_factory=lambda: {
-        "redacted_spans": 0, "dropped_messages": 0, "scaled_timestamps": 0,
-        "parsed_timestamps": 0, "derived_request_ids": 0, "defaulted_fields": 0,
+        "redacted_spans": 0, "dropped_messages": 0, "dropped_user_speakers": 0,
+        "scaled_timestamps": 0, "parsed_timestamps": 0, "derived_request_ids": 0,
+        "defaulted_fields": 0,
     })
     adds_in_flight: int = 0
     adds_background: dict[tuple[str, str, str], None] = field(
@@ -295,6 +304,7 @@ class AgentState:
         with self._lock:
             self.ingest["redacted_spans"] += notes.redacted_spans
             self.ingest["dropped_messages"] += notes.dropped_messages
+            self.ingest["dropped_user_speakers"] += notes.dropped_user_speakers
             self.ingest["scaled_timestamps"] += notes.scaled_timestamps
             self.ingest["parsed_timestamps"] += notes.parsed_timestamps
             self.ingest["derived_request_ids"] += int(notes.derived_request_id)
@@ -607,18 +617,22 @@ class AgentGateway:
         state: The shared status record.
         default_user_id: The user of requests that name none.
         default_top_k: The Search result count when a request names none.
+        self_identity: The store's self-identity rule (``ProviderConfig.self_identity``),
+            which every Add's normalization applies; None keeps a user message's speaker.
         log: Where request lines go (stdout by default).
     """
 
     def __init__(
         self, credentials: HTTPCredentials, state: AgentState, *, default_user_id: str,
         default_top_k: int, store: AgentStore | None = None, spend: SpendGuard | None = None,
+        self_identity: SelfIdentityRule | None = None,
         log: Callable[[dict[str, object]], None] = write_line,
     ) -> None:
         self.credentials = credentials
         self.state = state
         self.default_user_id = default_user_id
         self.default_top_k = default_top_k
+        self.self_identity: SelfIdentityRule | None = self_identity
         self.store = store
         self.spend = spend
         self.log = log
@@ -931,10 +945,12 @@ class AgentGateway:
     def _normalized(self, path: str, body: bytes, record: RequestLog) -> bytes:
         """Normalize an Add or Search body and note its user and counts."""
         if path == "/add":
-            body, notes = normalize_add(body, default_user_id=self.default_user_id)
+            body, notes = normalize_add(body, default_user_id=self.default_user_id,
+                                        self_identity=self.self_identity)
             self.state.normalized(notes)
             record.counts.update({
                 "dropped_messages": notes.dropped_messages,
+                "dropped_user_speakers": notes.dropped_user_speakers,
                 "redacted_spans": notes.redacted_spans,
             })
         elif path == "/search":

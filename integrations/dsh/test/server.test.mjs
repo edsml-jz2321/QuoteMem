@@ -828,3 +828,46 @@ test('forget prepare: a vetoed candidate the confirmation forgets all the same i
   assert.ok(!JSON.stringify(result).includes('never lived in Porto'));
   await server.close();
 });
+
+test('quotemem_add: a user message is the user\'s own words; the result carries the store status and reasons', async () => {
+  const answers = [
+    { success: true, outcome: { added: 3 }, agent: { status: 'stored', unresolved: 0, rejected: 0, reasons: {}, items: [] } },
+    { success: true, outcome: { unresolved: 1 }, agent: { status: 'partial', unresolved: 1, rejected: 0, reasons: { identity_unresolved: 1 }, items: [] } },
+    { success: true, outcome: { added: 1 } },
+  ];
+  const server = await stubServer({ '/memory/add': () => ({ body: answers.shift() }) });
+  const mcp = startServer({ QUOTEMEM_URL: server.url, QUOTEMEM_TOKEN: TOKEN, QUOTEMEM_AUTOSTART: '0', QUOTEMEM_USER_ID: 'qm-alice' });
+  mcp.send({ jsonrpc: '2.0', id: 1, method: 'tools/list' });
+  const add = (await mcp.reply(1)).result.tools.find((tool) => tool.name === 'quotemem_add');
+  const speaker = add.inputSchema.properties.messages.items.properties.speaker.description;
+  assert.match(speaker, /^Assistant messages only/);
+  assert.match(speaker, /A user message is always the user's own words, so a speaker on it is ignored/);
+  const calls = [
+    [{ role: 'user', content: 'My cat is called Bob, and I live in Hangzhou.', speaker: 'me' }],
+    [{ role: 'user', content: 'I moved to Shanghai last month.', speaker: 'User' }, { role: 'assistant', content: 'Noted.', speaker: 'Ada' }],
+    [{ role: 'user', content: 'I like green tea.' }],
+  ];
+  const results = [];
+  for (const [index, messages] of calls.entries()) {
+    mcp.send({ jsonrpc: '2.0', id: 10 + index, method: 'tools/call', params: { name: 'quotemem_add', arguments: { messages } } });
+    const reply = (await mcp.reply(10 + index)).result;
+    assert.equal(reply.isError, false);
+    results.push(JSON.parse(reply.content[0].text));
+  }
+  await mcp.stop();
+  const sent = server.of('/memory/add').map((request) => request.body);
+  assert.deepEqual(sent.map((body) => body.messages), [
+    [{ role: 'user', content: 'My cat is called Bob, and I live in Hangzhou.' }],
+    [{ role: 'user', content: 'I moved to Shanghai last month.' }, { role: 'assistant', content: 'Noted.', speaker: 'Ada' }],
+    [{ role: 'user', content: 'I like green tea.' }],
+  ]);
+  assert.deepEqual(sent.map((body) => body.source_metadata_version), [undefined, 1, undefined], 'the version goes only with an assistant speaker');
+  assert.deepEqual(sent.map((body) => body.user_id), ['qm-alice', 'qm-alice', 'qm-alice']);
+  assert.deepEqual(results.map(({ outcome, status, reasons }) => ({ outcome, status, reasons })), [
+    { outcome: { added: 3 }, status: 'stored', reasons: {} },
+    { outcome: { unresolved: 1 }, status: 'partial', reasons: { identity_unresolved: 1 } },
+    { outcome: { added: 1 }, status: null, reasons: null },
+  ]);
+  assert.ok(results.every((result) => typeof result.request_id === 'string' && typeof result.session_id === 'string'));
+  await server.close();
+});

@@ -13,6 +13,9 @@
 //             where it stopped; it is removed once abandoned for a week.
 //   endSync(): end() for a host that is exiting: synchronous, no waiting.
 //   sweep():  queues what idle sessions left (prompt() runs it too).
+//   armIdle(): with `idleWait`, makes sure one background flusher waits to
+//             run that sweep when the oldest chat's idle time is over
+//             (runIdleWaiter), so the last turns go without a later hook.
 //
 // State lives in files under `settings.stateDir`, so every call may come from
 // a new short-lived process: sessions/<sha16([owner, session])>.json holds the
@@ -36,12 +39,12 @@ import path from 'node:path';
 import { SESSION_KEEP_MS, cutBatch, newCaptureState, recordTurn, sha16, timeOf } from './capture.mjs';
 import { setupNote } from './autostart.mjs';
 import { resolveSettings } from './config.mjs';
-import { DiskQueue } from './diskqueue.mjs';
+import { DiskQueue, IDLE_LOCK_STALE_MS, runFlusher } from './diskqueue.mjs';
 import { SETUP_HEADER, chatForgetNote, forgetNote, plainForgetDone, unavailableNote } from './format.mjs';
 import { detectForgetRequests, forgetBody, forgottenOf, noteForgotten } from './forget.mjs';
 import { isMemoryRelated } from './gate.mjs';
 import { errKind } from './http.mjs';
-import { readJson, releaseLock, tryLock, withLock, writeFileAtomic } from './lock.mjs';
+import { adoptLock, readJson, releaseLock, touchLock, tryLock, withLock, writeFileAtomic } from './lock.mjs';
 import { homeDir, settleLaunches } from './proc.mjs';
 import { RecallBreaker, newRecallMemo, recallQuery, recallTurn, rememberIds, searchRecall } from './recall.mjs';
 import { REDACT_MARGIN, redactText } from './redact.mjs';
@@ -85,6 +88,16 @@ export const RUNNING_TURN_MS = 10 * 60_000;
 // reply the transcript has by then, if its own end has not come.
 export const SUPERSEDED_TURN_MS = 60_000;
 const MAX_RUNNING = 8;
+// The flusher that waits for idle chats (runIdleWaiter) sets one timer at a
+// time, at most this long, and reads the wall clock when it fires: after a
+// sleep of the computer it acts within this time of waking.
+export const IDLE_TICK_MS = 60_000;
+// The least time between two of its sweeps (a chat whose lock another
+// process held is looked at again after this).
+export const IDLE_PASS_MS = 30_000;
+// How long one such flusher lives beyond the idle time. Chats still in use
+// then are handed to a new flusher.
+export const IDLE_EXTRA_LIFE_MS = 3_600_000;
 // A prompt that comes while a forget of this user is still queued waits for
 // it, reading only the local queue, at most FORGET_WAIT_MS (a host with a
 // short hook timeout gives less: forgetWaitWithin). A forget queued more
@@ -164,6 +177,32 @@ function turnDue(turn, running, now = Date.now()) {
   return now - Number(turn.at ?? 0) >= RUNNING_TURN_MS;
 }
 
+// When the idle sweep (queueSessions without `all`) would queue something of
+// this session, last written at `mtime`, or null: its pending turns once it
+// has been idle for `idleMs`; a turn held for its reply, or still running
+// beside the open one, when turnDue says so (and the session has been idle
+// a little). A turn in flight alone is left for its own end.
+function idleDue(state, mtime, idleMs) {
+  let due = Infinity;
+  if ((state.capture?.pending?.length ?? 0) > 0) due = mtime + idleMs;
+  const early = mtime + Math.min(idleMs, HELD_TURN_MS);
+  const dueOf = (turn, running) => {
+    if (!turn || typeof turn !== 'object') return Infinity;
+    const times = [Number(turn.held?.at) + HELD_TURN_MS];
+    if (running) times.push(Number(turn.superseded?.at) + SUPERSEDED_TURN_MS, Number(turn.at ?? 0) + RUNNING_TURN_MS);
+    return Math.min(...times.filter(Number.isFinite));
+  };
+  for (const at of [dueOf(state.open, false), ...runningOf(state).map((t) => dueOf(t, true))]) {
+    if (Number.isFinite(at)) due = Math.min(due, Math.max(early, at));
+  }
+  return Number.isFinite(due) ? due : null;
+}
+
+// Whether a session holds turns the idle sweep would queue some time.
+function waitsIdle(state) {
+  return idleDue(state, 0, 0) !== null;
+}
+
 // The open or running turn with this id, or null.
 function turnOf(state, turn) {
   if (turn === null || turn === undefined) return state.open ?? null;
@@ -184,10 +223,17 @@ function turnOf(state, turn) {
  *   close without a session end (Cursor, Cline).
  * @param {number} [options.forgetWaitMs] - how long a prompt waits for a
  *   queued forget of this user before it recalls (default FORGET_WAIT_MS).
+ * @param {boolean} [options.idleWait] - the background flusher keeps the
+ *   idle rule (armIdle, runIdleWaiter): for a host whose plugin keeps no
+ *   timer of its own (hook processes, OpenClaw).
  */
 export class HookMemory {
-  constructor({ settings, log, host, label, env = process.env, overlap = false, reliableEnd = true, forgetWaitMs = FORGET_WAIT_MS }) {
+  constructor({ settings, log, host, label, env = process.env, overlap = false, reliableEnd = true, forgetWaitMs = FORGET_WAIT_MS, idleWait = false }) {
     this.settings = settings;
+    this.idleWait = idleWait;
+    // The sessions this object wrote with turns the idle sweep would queue
+    // (armIdle).
+    this.idleSessions = new Set();
     this.forgetWaitMs = Math.max(0, Number(forgetWaitMs) || 0);
     this.log = log;
     this.host = host;
@@ -233,9 +279,11 @@ export class HookMemory {
       const result = await fn(state);
       if (state.remove) {
         try { fs.unlinkSync(file); } catch { /* gone */ }
+        this.idleSessions.delete(sessionId);
       } else {
         state.updated = Date.now();
         writeFileAtomic(file, JSON.stringify(state));
+        if (waitsIdle(state)) this.idleSessions.add(sessionId); else this.idleSessions.delete(sessionId);
       }
       return result;
     }, { timeoutMs: lockMs, staleMs: SESSION_LOCK_STALE_MS });
@@ -373,7 +421,51 @@ export class HookMemory {
   /** Start the background flusher if anything is queued and none runs. */
   // `sync`: for an exit handler, which cannot wait (startFlusher).
   flush({ sync = false } = {}) {
-    return this.queue.startFlusher({ env: this.env, sync });
+    return this.queue.startFlusher({ env: this.env, sync, idle: this.idleWait });
+  }
+
+  /**
+   * With `idleWait`, when a session this object wrote holds turns the idle
+   * sweep would queue: start a background flusher unless one already waits
+   * for this owner's idle chats. It wakes when the oldest chat's idle time
+   * is over, queues its turns as sweep() does, and sends them
+   * (runIdleWaiter). A hook calls this after its answer.
+   * @returns {boolean} whether a flusher was started.
+   */
+  armIdle({ sync = false } = {}) {
+    if (!this.idleWait || this.idleSessions.size === 0) return false;
+    return this.queue.startFlusher({ env: this.env, sync, idle: 'pending' });
+  }
+
+  /**
+   * When the idle sweep would next queue something of this owner's sessions
+   * (idleDue), or null when nothing waits, the idle time is off or capture
+   * is off. Another user's or service's sessions are not counted.
+   */
+  idleDueAt() {
+    if (!(this.settings.idleFlushMs > 0) || !(this.settings.captureEvery > 0)) return null;
+    let names = [];
+    try {
+      names = fs.readdirSync(this.sessionsDir).filter((name) => /^[0-9a-f]{16}\.json$/.test(name));
+    } catch {
+      return null;
+    }
+    let next = null;
+    for (const name of names) {
+      const file = path.join(this.sessionsDir, name);
+      let mtime = 0;
+      try {
+        mtime = fs.statSync(file).mtimeMs;
+      } catch {
+        continue;
+      }
+      const data = readJson(file);
+      if (!data || typeof data !== 'object' || data.user !== this.user || !data.sessionId) continue;
+      if (Date.now() - mtime >= SESSION_KEEP_MS) continue;
+      const due = idleDue(data, mtime, this.settings.idleFlushMs);
+      if (due !== null && (next === null || due < next)) next = due;
+    }
+    return next;
   }
 
   /**
@@ -1282,5 +1374,117 @@ export async function queueOwnerSessions(env) {
     return queued;
   } catch {
     return 0;
+  }
+}
+
+// Wait `ms` (at most IDLE_TICK_MS), or until `signal` aborts.
+function idleSleep(ms, signal) {
+  return new Promise((resolve) => {
+    if (signal?.aborted) return resolve();
+    const done = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', done);
+      resolve();
+    };
+    const timer = setTimeout(done, Math.max(0, Math.min(ms, IDLE_TICK_MS)));
+    signal?.addEventListener('abort', done, { once: true });
+  });
+}
+
+/**
+ * The background flusher of a hook host (settings.idleWait): it sends the
+ * queue (runFlusher), then keeps the idle rule. One per owner waits: the one
+ * that holds idle.lock. While this owner's sessions hold turns the idle
+ * sweep would queue (HookMemory.idleDueAt), it sleeps until the oldest is
+ * due, by the wall clock, then queues them exactly as a later hook's sweep()
+ * would (a chat whose turn is in flight keeps that turn; another user's or
+ * service's sessions are not touched; kept forgets go again behind the
+ * batches) and sends them. A turn written meanwhile moves the time: the time
+ * is read again at every wake. It exits when nothing waits, when the idle
+ * time or capture is off, when its lock is taken over (a sleep past
+ * IDLE_LOCK_STALE_MS), or once it has lived IDLE_EXTRA_LIFE_MS past the idle
+ * time; then chats still in use are handed to a new flusher.
+ * @param {object} settings - the flusher's settings (with the token).
+ * @param {object} log - from makeLog.
+ * @param {{signal?: AbortSignal, env?: object}} options - `env`: the
+ *   environment the hook gave the flusher (kept forgets, a successor).
+ * @returns {Promise<string>} the outcome, for the log.
+ */
+export async function runIdleWaiter(settings, log, { signal, env = process.env } = {}) {
+  const started = Date.now();
+  const memory = new HookMemory({ settings, log, host: 'idle', env, idleWait: true });
+  // This process sends what it queues.
+  memory.flush = () => false;
+  const on = settings.idleFlushMs > 0 && settings.captureEvery > 0;
+  // The lock the hook that started this process took for it, else a free one.
+  let handle = adoptLock(memory.queue.idleLockFile, env.QUOTEMEM_IDLE_LOCK);
+  if (!on) {
+    releaseLock(handle);
+    handle = null;
+  } else {
+    handle ??= tryLock(memory.queue.idleLockFile, { staleMs: IDLE_LOCK_STALE_MS });
+  }
+  // The lock stays fresh while the queue is sent (which may take minutes).
+  const send = async () => {
+    const beat = handle ? setInterval(() => { if (handle) touchLock(handle); }, IDLE_PASS_MS) : null;
+    beat?.unref?.();
+    try {
+      return await runFlusher(settings, log, { signal });
+    } finally {
+      clearInterval(beat);
+    }
+  };
+  let outcome = await send();
+  if (!handle) return outcome;
+  // QUOTEMEM_TEST_IDLE_LIFE_MS (tests) shortens the life past the idle time.
+  const extra = Number(env.QUOTEMEM_TEST_IDLE_LIFE_MS);
+  const deadline = started + settings.idleFlushMs + (Number.isFinite(extra) && extra >= 0 ? extra : IDLE_EXTRA_LIFE_MS);
+  let lastPass = 0;
+  try {
+    for (;;) {
+      if (signal?.aborted) return 'stopped';
+      if (!touchLock(handle)) {
+        handle = null;
+        log.warnOnce('idle-lock-lost', 'the background flusher that waits for idle chats lost its lock to another one and stopped');
+        return 'idle-busy';
+      }
+      const now = Date.now();
+      let due = memory.idleDueAt();
+      if (due === null) {
+        // Release, then look again: a hook that saw the lock held started
+        // no flusher, and its turns were written before this release.
+        releaseLock(handle);
+        handle = null;
+        if (memory.idleDueAt() === null) return `${outcome}, no idle chat left`;
+        handle = tryLock(memory.queue.idleLockFile, { staleMs: IDLE_LOCK_STALE_MS });
+        if (!handle) return 'idle-busy';
+        continue;
+      }
+      // A chat that was due at the last sweep and still waits (another
+      // process held it) is looked at again IDLE_PASS_MS after it.
+      const retry = due <= lastPass && now - lastPass < IDLE_PASS_MS;
+      if (retry) due = lastPass + IDLE_PASS_MS;
+      if (due > now) {
+        if (now >= deadline) {
+          releaseLock(handle);
+          handle = null;
+          // Chats still in use go to a new flusher; one a sweep keeps
+          // failing on is left to the next hook.
+          if (retry) return 'idle life over';
+          memory.queue.startFlusher({ env, sync: true, idle: 'pending' });
+          return 'idle life over, handed over';
+        }
+        await idleSleep(Math.min(due, deadline) - now, signal);
+        continue;
+      }
+      lastPass = Date.now();
+      const swept = await memory.sweep();
+      if (swept > 0) {
+        log.debug(`idle: queued the turns of ${swept} chat(s)`);
+        outcome = await send();
+      }
+    }
+  } finally {
+    releaseLock(handle);
   }
 }

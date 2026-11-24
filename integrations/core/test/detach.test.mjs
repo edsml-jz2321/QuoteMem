@@ -289,7 +289,7 @@ test('two people signed in at once: a local service that refuses this user\'s to
   assert.equal(block, null);
   const port = core.userPort();
   assert.ok(port >= 20000 && port < 26000 && port === core.userPort(), 'the same port every time, below 27000');
-  assert.match(lines.join('\n'), new RegExp(`refused this user's token \\(401\\); it may be another user's QuoteMem on this computer \\(two people signed in at once\\)\\. Give this user a port of its own: QUOTEMEM_URL=http://127\\.0\\.0\\.1:${port}`));
+  assert.match(lines.join('\n'), new RegExp(`refused this user's token \\(401\\); it may be another user's QuoteMem on this computer \\(two people signed in at once\\)\\. Give this user a port of its own: QUOTEMEM_URL=http://127\\.0\\.0\\.1:${port} in ~/\\.quotemem/env and in the environment Claude Code, Codex and DSH start in`));
   // The port's listener is this user's own here.
   if (process.platform === 'linux' || process.platform === 'darwin') assert.equal(core.portOwner(server.port)?.mine, true);
 });

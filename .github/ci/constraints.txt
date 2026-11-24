@@ -1,5 +1,5 @@
-# Versions the server code was type-checked and tested with. CI installs with these
-# constraints until a uv.lock is published; remove this file when it is.
+# Versions the server code was type-checked and tested with. CI installs the
+# project with these constraints.
 aiofile==3.12.3
 annotated-doc==0.0.5
 annotated-types==0.8.0

@@ -117,6 +117,8 @@ function shippedTextFiles() {
     }
   };
   walk(path.join(ROOT, 'integrations'));
+  walk(path.join(ROOT, 'docs'));
+  walk(path.join(ROOT, 'examples'));
   return out;
 }
 
@@ -133,7 +135,7 @@ test('no doc, manifest or install snippet exports the token where an agent start
   }
   assert.deepEqual(found, []);
   // Each setup guide names the file setting instead.
-  for (const guide of ['README.md', 'integrations/claude-code/README.md', 'integrations/codex/README.md', 'integrations/dsh/README.md', 'integrations/opencode/README.md', 'integrations/hooks/README.md']) {
+  for (const guide of ['docs/agents.md', 'integrations/claude-code/README.md', 'integrations/codex/README.md', 'integrations/dsh/README.md', 'integrations/opencode/README.md', 'integrations/hooks/README.md']) {
     assert.match(fs.readFileSync(path.join(ROOT, guide), 'utf8'), /QUOTEMEM_TOKEN_FILE/, guide);
   }
 });

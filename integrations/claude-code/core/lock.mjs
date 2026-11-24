@@ -120,6 +120,39 @@ export function touchLock(handle) {
   }
 }
 
+/**
+ * Hand a held lock to another process (`pid`, one this process started): the
+ * lock then lives as long as that process does. Its holder takes it over
+ * with adoptLock. False when it is no longer ours.
+ */
+export function handLock(handle, pid) {
+  const data = readJson(handle.file);
+  if (!data || data.nonce !== handle.nonce || !Number.isInteger(pid)) return false;
+  try {
+    writeFileAtomic(handle.file, JSON.stringify({ ...data, pid }));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Take over a lock another process took for this one (its `nonce`, passed
+ * at the start). Null when it is gone or now someone else's.
+ * @returns {{file: string, nonce: string} | null}
+ */
+export function adoptLock(file, nonce) {
+  if (typeof nonce !== 'string' || !nonce) return null;
+  const data = readJson(file);
+  if (!data || data.nonce !== nonce) return null;
+  try {
+    writeFileAtomic(file, JSON.stringify(ownerRecord({ nonce, at: Date.now() })));
+  } catch {
+    return null;
+  }
+  return lockOwned({ file, nonce }) ? { file, nonce } : null;
+}
+
 /** Release a lock if it is still ours. */
 export function releaseLock(handle) {
   if (!handle) return;

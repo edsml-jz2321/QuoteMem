@@ -1,12 +1,19 @@
 [project]
 name = "quotemem"
-version = "0.3.0"
+version = "0.3.1"
 description = "QuoteMem: auditable agent memory with quoted evidence, versioned supersession and forgetting"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE", "NOTICE"]
 authors = [{ name = "Quei" }]
-requires-python = ">=3.12,<3.13"
+requires-python = ">=3.12"
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+]
 dependencies = [
   "anyio==4.15.1",
   "cryptography==50.0.1",

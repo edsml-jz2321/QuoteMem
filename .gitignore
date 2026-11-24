@@ -13,6 +13,8 @@ dist/
 .pyright/
 .coverage
 htmlcov/
+# uv sync writes a lock file; the repository does not keep one.
+uv.lock
 
 # Local data
 qm-workspace/

@@ -146,8 +146,11 @@ export async function handle(event, input, { env = process.env } = {}) {
     return '';
   }
   if (event === 'SessionStart') for (const warning of settings.warnings) log.warnOnce(warning, warning);
-  // A prompt waits for a queued forget only as long as its guard leaves room for the recall.
-  const memory = new HookMemory({ settings, log, host: HOST, label: 'Codex plugin', env, forgetWaitMs: forgetWaitWithin(GUARD_MS.UserPromptSubmit, settings) });
+  // A prompt waits for a queued forget only as long as its guard leaves room
+  // for the recall. idleWait: a chat's last turns are saved once it has been
+  // idle for QUOTEMEM_IDLE_FLUSH_MS, by a background flusher that waits.
+  const memory = new HookMemory({ settings, log, host: HOST, label: 'Codex plugin', env, forgetWaitMs: forgetWaitWithin(GUARD_MS.UserPromptSubmit, settings), idleWait: true });
+  idleArm = () => memory.armIdle();
 
   if (event === 'flush') {
     memory.flush();
@@ -216,10 +219,18 @@ function eventOf(argv, input) {
   return EVENT_ALIASES[arg] ?? arg ?? '';
 }
 
-// The answer first; then the background sender's start (on Windows it waits
-// for PowerShell), within the event's guard.
+// When this call left turns that wait for the idle time, the start of the
+// background flusher that saves them then (HookMemory.armIdle).
+let idleArm = null;
+
+// The answer first; then the start of the flusher that waits for idle chats
+// and the background sender's start (on Windows it waits for PowerShell),
+// within the event's guard.
 function finish(out, untilMs) {
-  const done = () => settleLaunches(untilMs - Date.now()).finally(() => process.exit(0));
+  const done = () => {
+    try { idleArm?.(); } catch { /* the next hook tries again */ }
+    return settleLaunches(untilMs - Date.now()).finally(() => process.exit(0));
+  };
   if (!out) done();
   else process.stdout.write(out, done);
 }

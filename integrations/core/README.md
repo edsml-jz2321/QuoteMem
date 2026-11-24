@@ -132,7 +132,8 @@ file sink, as above.
    after 3 minutes (`HELD_TURN_MS`), with the reply its transcript has by
    then, else with the user's words. Sessions untouched for a week are
    closed, their turns queued and their files removed. This also runs when
-   the idle flush is off.
+   the idle flush is off. With `idleWait` (below), the background flusher
+   does the same once that time is over, with no later hook.
 2. **A new session.** In a session's first 10 minutes (`NEW_SESSION_MS`),
    each prompt queues the pending turns of this user's other sessions in
    the state folder that have been idle a minute (`OTHER_IDLE_MS`): a chat
@@ -292,6 +293,21 @@ statement found by search keeps that statement while it waits, since the
 retry prepares it again.
 
 **`sweep()`** queues what idle sessions left; `prompt` already calls it.
+
+**`new HookMemory({..., idleWait: true})`** and **`armIdle()`** are for a
+host whose plugin keeps no timer of its own (the hook runner, OpenClaw).
+Call `armIdle()` after each hook's answer. When a session it wrote holds
+turns that wait for the idle time, it starts the background flusher, unless
+one already waits for this owner. That flusher sends the queue, then sleeps
+until the oldest such chat's idle time is over (by the wall clock, at most a
+minute per timer, so it acts within a minute of the computer waking). Then
+it queues those turns exactly as `sweep()` does, and sends them. A turn
+written meanwhile moves the time. It exits when nothing waits, when
+`QUOTEMEM_IDLE_FLUSH_MS` or capture is off, or an hour after the idle time
+(a chat still in use then goes to a new flusher). One flusher waits per
+owner: it holds `owners/<owner>/idle.lock`, which the hook takes for it
+before the start, so hooks at once start one. The settings reach it in its
+environment, the token too, never in its arguments.
 
 **`sessionStarted({session})`** queues the unsent turns of this user's
 other sessions idle a minute (with `reliableEnd: false`, also those of this
@@ -679,6 +695,7 @@ mode 0700 and each file 0600.
 | `queue/<stamp>-<pid>-<seq>-<owner>-<key>.json` | One job (a /memory/add batch or a forget), written atomically; FIFO by name. `owner` is one user (`QUOTEMEM_USER_ID`) at one service (`QUOTEMEM_URL`) |
 | `owners/<owner>/state.json` | When this owner's writes are paused after a refused token; when a batch was last stored |
 | `owners/<owner>/flusher.lock` | This owner's one running flusher (host, boot time, pid), refreshed every 10 s |
+| `owners/<owner>/idle.lock` | The one flusher that waits for this owner's idle chats (host, boot time, pid), refreshed at each wake |
 | `owners/<owner>/forgets.json` | This owner's forgets still running when their note was given |
 | `owners/<owner>/results/<key>.json` | A forget's outcome (counts only once its note was given), kept for a day |
 | `owners/<owner>/chat-forgets.json` | What the service's in-chat forget did, counts and request-word hashes only, until the next message reports it |

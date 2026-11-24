@@ -7,7 +7,8 @@
 //   node integrations/check_package.mjs --install  # also pack, install the tarball in a
 //                                                  # temp folder and run every bin there
 //
-// One version covers the package, every adapter manifest and the MCP server.
+// One version covers the package, every adapter manifest, the MCP server and
+// server.json (the MCP Registry entry).
 // The core (integrations/core) and the MCP server (integrations/dsh/server.mjs)
 // are single-source; copies exist only where a host installs a folder on its
 // own (Claude Code and Codex plugins, the Gemini CLI extension, the OpenClaw
@@ -20,11 +21,16 @@ import { fileURLToPath } from 'node:url';
 
 import { check as checkCore, coreFiles } from './core/sync.mjs';
 import { check as checkBundles } from './hooks/bundle.mjs';
+import { checkServerJson, serverSources } from './check_server_json.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..');
 const SERVER = path.join(here, 'dsh', 'server.mjs');
 const SERVER_COPIES = ['claude-code/server.mjs', 'codex/server.mjs', 'gemini-cli/server.mjs', 'openclaw/server.mjs'];
+// The MCP server and its copies are executable (mode 755), as git records them; git
+// reads the owner's executable bit.
+const SERVER_FILES = [SERVER, ...SERVER_COPIES.map((copy) => path.join(here, copy))];
+const EXECUTABLE = 0o755;
 const TOOLS = ['claude-code', 'dsh', 'codex', 'opencode', 'cursor', 'gemini', 'cline', 'goose', 'devin', 'continue', 'openclaw'];
 
 const problems = [];
@@ -42,7 +48,8 @@ const readJson = (file) => {
 if (process.argv.includes('--write')) {
   execFileSync(process.execPath, [path.join(here, 'core', 'sync.mjs')], { stdio: 'inherit' });
   execFileSync(process.execPath, [path.join(here, 'hooks', 'bundle.mjs')], { stdio: 'inherit' });
-  for (const copy of ['claude-code/server.mjs', 'codex/server.mjs']) fs.copyFileSync(SERVER, path.join(here, copy));
+  for (const copy of SERVER_COPIES) fs.copyFileSync(SERVER, path.join(here, copy));
+  for (const file of SERVER_FILES) fs.chmodSync(file, EXECUTABLE);
 }
 
 // ----------------------------------------------------------- root manifest
@@ -97,6 +104,8 @@ const versionOf = {
   'integrations/core/autostart.mjs': /export const SERVICE_RELEASE = '([^']+)'/.exec(fs.readFileSync(path.join(here, 'core', 'autostart.mjs'), 'utf8'))?.[1],
 };
 for (const [file, value] of Object.entries(versionOf)) ok(value === version, `${file} version ${value} differs from package.json ${version}`);
+// server.json, the MCP Registry entry: the same version, and its name is mcpName.
+for (const problem of checkServerJson(readJson(path.join(root, 'server.json')), pkg, serverSources())) ok(false, problem);
 // Folders with their own package.json (a host loads them as a plugin
 // folder) are part of this package, never separate npm packages.
 for (const name of ['opencode', 'openclaw']) ok(readJson(path.join(here, name, 'package.json')).private === true, `integrations/${name}/package.json must be private`);
@@ -104,6 +113,10 @@ for (const name of ['opencode', 'openclaw']) ok(readJson(path.join(here, name, '
 // ----------------------------------------------------------- shipped copies
 for (const problem of checkCore()) ok(false, `${problem}; run node integrations/check_package.mjs --write`);
 for (const problem of checkBundles()) ok(false, `${problem}; run node integrations/check_package.mjs --write`);
+// Windows has no executable bit; git keeps the recorded mode there.
+if (process.platform !== 'win32') {
+  for (const file of SERVER_FILES) ok((fs.statSync(file).mode & 0o100) !== 0, `${rel(file)} must be executable (mode 755); run with --write`);
+}
 for (const copy of SERVER_COPIES) {
   ok(fs.readFileSync(path.join(here, copy)).equals(fs.readFileSync(SERVER)), `${copy} differs from integrations/dsh/server.mjs; run with --write`);
 }
@@ -149,6 +162,16 @@ if (process.argv.includes('--pack') || process.argv.includes('--install')) {
     ok(!/(^|\/)test\//.test(file), `npm pack would include a test: ${file}`);
     ok(!/(^|\/)(check_[a-z_]+|sync|bundle)\.mjs$/.test(file), `npm pack would include a maintenance script: ${file}`);
     ok(!/^(src|benchmarks)\//.test(file) && !file.endsWith('.py'), `npm pack would include Python code: ${file}`);
+  }
+  // A relative link in a shipped Markdown file must name a shipped file.
+  for (const file of packed) {
+    if (!/\.mdc?$/.test(file)) continue;
+    const text = fs.readFileSync(path.join(root, file), 'utf8').replace(/```[\s\S]*?```/g, '').replace(/`[^`\n]*`/g, '');
+    for (const [, link] of text.matchAll(/\]\(([^)\s]+)\)/g)) {
+      if (/^[a-z]+:/i.test(link) || link.startsWith('#')) continue;
+      const target = path.posix.normalize(path.posix.join(path.posix.dirname(file), link.split('#')[0]));
+      ok(packed.has(target) || [...packed].some((name) => name.startsWith(`${target}/`)), `${file} links to ${link}, which npm pack leaves out`);
+    }
   }
 }
 

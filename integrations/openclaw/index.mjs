@@ -108,7 +108,10 @@ export function registerQuoteMem(api, { env = process.env } = {}) {
       // In a group chat several senders share one session: each sender's
       // turns are collected under its own session id.
       const host = perSender ? `${HOST}-${sha16(userId).slice(0, 8)}` : HOST;
-      memory = new HookMemory({ settings: { ...settings, userId }, log, host, label: 'QuoteMem OpenClaw plugin', env: full });
+      // OpenClaw keeps no timer for idle chats: the background flusher does
+      // (idleWait), so a chat's last turns are saved after the idle time even
+      // when no later turn comes, or the gateway stops.
+      memory = new HookMemory({ settings: { ...settings, userId }, log, host, label: 'QuoteMem OpenClaw plugin', env: full, idleWait: true });
       memories.set(userId, memory);
     }
     return memory;
@@ -147,6 +150,7 @@ export function registerQuoteMem(api, { env = process.env } = {}) {
         if (runs.size > 1000) runs.delete(runs.keys().next().value);
       }
       const result = await memory.prompt({ session, turn, text });
+      memory.armIdle();
       return result.context ? { prependContext: result.context } : undefined;
     } catch {
       return undefined;
@@ -163,6 +167,7 @@ export function registerQuoteMem(api, { env = process.env } = {}) {
       if (!session || !memory) return;
       const completed = event?.success !== false;
       await memory.reply({ session, text: completed ? lastText(event?.messages, 'assistant') : null, completed });
+      memory.armIdle();
     } catch {
       // capture is best effort
     }
@@ -180,7 +185,10 @@ export function registerQuoteMem(api, { env = process.env } = {}) {
 
   api.on('gateway_stop', () => {
     for (const memory of memories.values()) {
-      try { memory.flush({ sync: true }); } catch { /* best effort */ }
+      try {
+        memory.flush({ sync: true });
+        memory.armIdle({ sync: true });
+      } catch { /* best effort */ }
     }
   }, { timeoutMs: 2000 });
 

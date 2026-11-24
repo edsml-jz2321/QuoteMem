@@ -3,11 +3,14 @@
 // disk queue and exits when it is idle. Started by DiskQueue.startFlusher,
 // which passes the settings (without the token) in QUOTEMEM_FLUSHER_SETTINGS
 // and the token in QUOTEMEM_TOKEN. It writes nothing to stdout or stderr;
-// warnings go to <stateDir>/quotemem.log.
+// warnings go to <stateDir>/quotemem.log. A hook host's flusher
+// (settings.idleWait) then stays while chats wait for their idle time, and
+// saves their last turns (runIdleWaiter).
 import path from 'node:path';
 
 import { capLog } from './autostart.mjs';
 import { runFlusher } from './diskqueue.mjs';
+import { runIdleWaiter } from './hooks.mjs';
 import { fileSink, makeLog } from './log.mjs';
 
 let settings;
@@ -29,7 +32,9 @@ for (const name of ['SIGTERM', 'SIGINT', 'SIGHUP']) {
   try { process.on(name, () => stop.abort()); } catch { /* not on this platform */ }
 }
 try {
-  const outcome = await runFlusher(settings, log, { signal: stop.signal });
+  const outcome = settings.idleWait === true
+    ? await runIdleWaiter(settings, log, { signal: stop.signal, env: process.env })
+    : await runFlusher(settings, log, { signal: stop.signal });
   log.debug(`flusher exit: ${outcome}`);
 } catch (error) {
   log.warnOnce('flusher', `background flusher error (${error?.code ?? error?.name ?? 'error'})`);

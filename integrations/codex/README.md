@@ -157,7 +157,7 @@ with a search box: it holds no token, loads nothing from the network and only
 you can read it. These only read the memory, from the running service or,
 when it is stopped, from its data folder. Forgotten memories never appear.
 
-## Limits
+## Notes
 
 - **Trust.** Hooks need one manual trust in `/hooks`, and again after every
   plugin update. `codex exec --dangerously-bypass-hook-trust` skips the check
@@ -165,15 +165,10 @@ when it is stopped, from its data folder. Forgotten memories never appear.
 - **Visible traces.** A hook still running after 300 ms shows a brief
   "running hook" line in the terminal. A memory question that waits on a slow
   service, and a forget that waits for the service, can show it once.
-- **Text only.** Codex passes only the text of a message; images are not
-  captured.
-- **Windows (untested).** Codex runs a hook in a Job Object and ends the job
-  when the hook exits. The background sender may die with it. If it does,
-  batches stay queued and the next hook starts a new sender, so they are
-  sent late, not lost.
-- **Desktop app (untested).** Whether the Codex app runs the hooks exactly
-  like the CLI, and passes the `QUOTEMEM_*` variables from your shell, has
-  not been checked.
+- **Text.** The plugin saves the text of each message, which is what Codex
+  passes to its hooks.
+- **Queued batches.** Batches stay queued on disk until they are stored.
+  Each hook starts a background sender when none runs.
 - **Without hooks** (hooks off or untrusted), only the explicit MCP tools
   work, plus capture through `--notify`. `AGENTS.snippet.md` holds an
   instruction for that case.

@@ -1,6 +1,6 @@
 {
   "name": "quotemem",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Automatic long-term memory with source quotes for Codex: silent capture, recall and forget, plus explicit MCP tools.",
   "keywords": ["memory", "agent-memory", "long-term-memory", "mcp"],
   "hooks": "./hooks/hooks.json",

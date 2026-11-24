@@ -806,12 +806,12 @@ class SnapshotReadGuard:
         thread took before the section from passing during or after it.
 
         The lock-free reads are single dictionary lookups, a weak reference
-        call and an event read; on the pinned CPython 3.12 GIL build each is
+        call and an event read; on a CPython build with the GIL each is
         atomic, ``cancellation`` only ever becomes set, this thread's
         ``operations`` entry is written only by this thread and a
         registration is replaced only under ``_PUBLISHERS_LOCK``, so reads
-        taken at different instants compose. A free-threaded build would
-        need this derivation redone.
+        taken at different instants compose. This derivation is for builds
+        with the GIL.
         """
         thread = threading.get_ident()
         exact = _exact_scope(scope)

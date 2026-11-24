@@ -73,6 +73,27 @@ class CheckedLock:
         """
         self._lock.release()
 
+    def locked(self) -> bool:
+        """Report whether any thread holds the lock, without waiting for it.
+
+        ``threading.Condition`` exports its lock's ``locked`` from Python 3.14
+        on, where the ``RLock`` answers without being taken. On older Python
+        the method answers with a nonblocking acquire that it releases at
+        once.
+
+        Returns:
+            bool: Whether the lock is held, by this thread or another.
+        """
+        if self._is_owned():
+            return True
+        native = cast(Callable[[], bool] | None, getattr(self._lock, "locked", None))
+        if native is not None:
+            return native()
+        if self._lock.acquire(False):
+            self._lock.release()
+            return False
+        return True
+
     def __enter__(self) -> bool:
         """Take the lock, waiting while another thread holds it."""
         return self.acquire()

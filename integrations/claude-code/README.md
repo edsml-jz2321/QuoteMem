@@ -35,7 +35,7 @@ clients of a QuoteMem service that you run yourself.
   once (it asks for the models, keys, thinking and review), and [uv](https://docs.astral.sh/uv/).
   The plugin then starts the service by itself when it is first needed, and
   reads its token from the service's data folder; see
-  [Use with your agents](../../README.md#use-with-your-agents). A service you
+  [Use with your agents](https://github.com/edsml-jz2321/QuoteMem/blob/main/docs/agents.md). A service you
   start yourself, or one on another computer, works too.
 
 ## Install
@@ -138,9 +138,8 @@ Devin's has `prompt_id` but no `transcript_path`, and Devin sets
 `DEVIN_PROJECT_DIR`. Devin's hooks count only for the project they are in.
 Without their own hooks, these hooks do the work there. In Cursor 3.20.17
 and later, the prompt hook then answers with Cursor's `additional_context`
-field instead of Claude Code's. Devin's payload shape comes from its docs and
-has not been seen on a real Devin, so for now do not set up both these hooks
-and the Devin hooks where Devin reads them.
+field instead of Claude Code's. Where Devin reads these hooks, set up either
+them or the Devin hooks, not both.
 
 When `Stop` has no `last_assistant_message`, the reply is read from the
 transcript, but only when it answers this turn's own message: a transcript
@@ -250,17 +249,17 @@ claude plugin validate integrations/claude-code
 every hook as Claude Code does (`node scripts/hook.mjs <Event>` with the
 event's JSON on stdin) against a stub QuoteMem, in a temporary HOME.
 
-## Limits
+## Notes
 
 - Prompts that Claude Code submits itself are recognised by their wrapper
-  element only; the hook input has no field that marks them.
+  element.
 - If a `Stop` input has no `last_assistant_message`, the reply is read from
-  the end of the transcript file, whose format is not documented.
-- `SessionEnd` hooks share a 1.5 s budget, and a plugin cannot raise it. The
-  hook only queues the batch; the detached sender stores it later. If the
-  machine shuts down first, the batch is sent by the next session.
-- On Windows, whether the detached sender outlives Claude Code has not been
-  tested. Batches stay queued, and the next hook starts a new sender.
+  the end of the transcript file.
+- `SessionEnd` hooks share a 1.5 s budget. The hook queues the batch, and
+  the detached sender stores it later. If the machine shuts down first, the
+  batch is sent by the next session.
+- Batches stay queued on disk until they are stored. Each hook starts a
+  sender when none runs.
 - `claude --bare` skips all hooks, so nothing is saved or recalled there.
 
 ## License

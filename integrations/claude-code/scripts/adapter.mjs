@@ -99,8 +99,23 @@ export function open(env = process.env) {
   settings.maxInjectChars = Math.min(settings.maxInjectChars, MAX_CONTEXT_CHARS);
   settings.forgetTimeoutMs = Math.min(settings.forgetTimeoutMs, MAX_FORGET_WAIT_MS);
   settings.recallTimeoutMs = Math.min(settings.recallTimeoutMs, MAX_RECALL_WAIT_MS);
-  const memory = new HookMemory({ settings, log, host: HOST, label: 'Claude Code plugin', env: hostEnv });
+  // idleWait: a chat's last turns are saved once it has been idle for
+  // QUOTEMEM_IDLE_FLUSH_MS, by a background flusher that waits (armIdle).
+  const memory = new HookMemory({ settings, log, host: HOST, label: 'Claude Code plugin', env: hostEnv, idleWait: true });
   return { settings, log, memory };
+}
+
+// When this hook left turns that wait for the idle time, the start of the
+// background flusher that saves them then (HookMemory.armIdle).
+let idleArm = null;
+
+/** After the hook's answer is written: start the flusher that waits for idle chats, if any wait. */
+export function armIdle() {
+  try {
+    return idleArm?.() ?? false;
+  } catch {
+    return false; // the next hook tries again
+  }
 }
 
 /**
@@ -122,6 +137,7 @@ export async function runHook(event, input, env = process.env) {
     if (host && nativeAdapterFor(host, env, payload)) return '';
     ctx = open(env);
     const { settings, log, memory } = ctx;
+    if (memory) idleArm = () => memory.armIdle();
     if (!memory) {
       if (name === 'SessionStart') log.warn(`automatic memory is off: ${settings.problem}`);
       return '';

@@ -61,7 +61,8 @@ function setup(server, env = {}) {
   const home = path.join(root, `home-${homeSeq}`);
   const codexHome = path.join(home, '.codex');
   fs.mkdirSync(codexHome, { recursive: true });
-  const base = { PATH: process.env.PATH, HOME: home, USERPROFILE: home, CODEX_HOME: codexHome, QUOTEMEM_URL: server.url, QUOTEMEM_TOKEN: TOKEN, QUOTEMEM_USER_ID: 'quei', ...env };
+  // No flusher waits for idle chats beyond a test, unless the test sets a time.
+  const base = { PATH: process.env.PATH, HOME: home, USERPROFILE: home, CODEX_HOME: codexHome, QUOTEMEM_URL: server.url, QUOTEMEM_TOKEN: TOKEN, QUOTEMEM_USER_ID: 'quei', QUOTEMEM_IDLE_FLUSH_MS: '0', ...env };
   const stateDir = path.join(codexHome, 'quotemem');
   // One hook call as Codex makes it: stdin JSON, its own process group,
   // SIGKILL to the group once the hook exits (ProcessTreeGuard).
@@ -166,6 +167,26 @@ test('capture: every 3 user turns from UserPromptSubmit + Stop; the flusher outl
   silent(await c.hook(P.end(SID(1))));
   await waitFor(() => server.of('/memory/add').length === 3, 8000, 'the resumed batch');
   assert.match(server.of('/memory/add')[2].body.request_id, /:t6-6:/, 'not t1-1 again');
+});
+
+test('idle: a chat left open is saved after QUOTEMEM_IDLE_FLUSH_MS by a flusher that waits, with no later hook', async () => {
+  const server = await serve({ '/memory/add': () => ({ body: { success: true, outcome: { added: 1 } } }) });
+  const c = setup(server, { QUOTEMEM_IDLE_FLUSH_MS: '1200', QUOTEMEM_DEBUG: '1' });
+  const s = SID(80);
+  await c.hook(P.prompt(s, TID(1), 'My kite is orange.'));
+  const at = Date.now();
+  const stop = await c.hook(P.stop(s, TID(1), 'Noted.'));
+  silent(stop);
+  assert.ok(stop.ms < 1200, `the Stop hook did not wait for the idle time (${stop.ms} ms)`);
+  assert.equal(server.of('/memory/add').length, 0, 'nothing is saved before the idle time');
+  await waitFor(() => server.of('/memory/add').length === 1, 8000, 'the idle save');
+  const [add] = server.of('/memory/add');
+  assert.ok(add.at - at >= 1200, `saved after the idle time (${add.at - at} ms)`);
+  assert.equal(add.body.session_id, `codex:${s}`);
+  assert.deepEqual(add.body.messages.map((m) => [m.role, m.content]), [['user', 'My kite is orange.'], ['assistant', 'Noted.']]);
+  const log = () => { try { return fs.readFileSync(path.join(c.stateDir, 'quotemem.log'), 'utf8'); } catch { return ''; } };
+  await waitFor(() => /flusher exit: .*no idle chat left/.test(log()), 8000, 'the waiting flusher to exit');
+  assert.equal(server.of('/memory/add').length, 1, 'nothing is sent twice');
 });
 
 test('capture: a repeated hook (plugin and direct install both active) records a turn once', async () => {
@@ -497,7 +518,7 @@ function realCodex(bin, home, quotemem) {
   const env = {
     PATH: process.env.PATH, HOME: home, USERPROFILE: home, CODEX_HOME: codexHome, OPENAI_API_KEY: 'unused-test-key',
     HTTPS_PROXY: 'http://127.0.0.1:9', HTTP_PROXY: 'http://127.0.0.1:9', NO_PROXY: '127.0.0.1,localhost',
-    QUOTEMEM_URL: quotemem.url, QUOTEMEM_TOKEN: TOKEN, QUOTEMEM_USER_ID: 'quei',
+    QUOTEMEM_URL: quotemem.url, QUOTEMEM_TOKEN: TOKEN, QUOTEMEM_USER_ID: 'quei', QUOTEMEM_IDLE_FLUSH_MS: '0',
   };
   const cli = (args) => execFileSync(bin, args, { env, cwd: WORK, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 60_000 });
   const exec = (prompt) => new Promise((resolve) => {

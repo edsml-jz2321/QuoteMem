@@ -214,6 +214,7 @@ def compose(options: AgentServeOptions, environment: Mapping[str, str]) -> Agent
     gateway = AgentGateway(
         credentials, state, default_user_id=options.default_user_id,
         default_top_k=options.default_top_k, store=store, spend=spend,
+        self_identity=config.self_identity,
     )
     return AgentService(options, workspace, config, routes, credentials, state, gateway,
                         store, policy)

@@ -18,7 +18,7 @@ so something learned in one agent is recalled in the others.
 | Agent | Mechanism | Capture | Recall | Forget |
 |---|---|---|---|---|
 | [Gemini CLI](#gemini-cli) | Extension: hooks, MCP and `GEMINI.md` | yes | yes, each turn | yes, with a note |
-| [Cursor](#cursor) | User hooks, MCP and a rule | app and CLI interactive mode: yes, by the turn hooks; CLI print mode: at the end of each run, from the chat's transcript | app: yes, each turn (seen on 3.31.15, expected on 3.20.17 and later); CLI interactive mode: yes, each turn (2026.11.19 and later); CLI print mode: a session-start digest and the tools | app: yes, with a note (expected on 3.20.17 and later); CLI interactive mode: yes, with a note; CLI print mode: when the run ends, without a note, or through the tools |
+| [Cursor](#cursor) | User hooks, MCP and a rule | app and CLI interactive mode: yes, by the turn hooks; CLI print mode: at the end of each run, from the chat's transcript | app: yes, each turn (3.20.17 and later); CLI interactive mode: yes, each turn (2026.11.19 and later); CLI print mode: a session-start digest and the tools | app: yes, with a note (3.20.17 and later); CLI interactive mode: yes, with a note; CLI print mode: when the run ends, without a note, or through the tools |
 | [Cline](#cline) (VS Code) | Hook files | yes | yes, each turn | yes, with a note |
 | [goose](#goose) | Plugin hooks and the context file | yes | yes, each turn | yes, with a note |
 | [Devin](#devin-cli-and-devin-desktop) (CLI, Desktop) | Hooks | yes (CLI 3000.5.20 and later) | yes, each turn | yes, with a note |
@@ -35,7 +35,7 @@ Claude Code, Codex and OpenCode have their own adapters in
    hooks then start the service on your computer by themselves when it is
    first needed (this needs [uv](https://docs.astral.sh/uv/)), and read its
    token from its data folder. A service you start yourself works too; see
-   [Use with your agents](../../README.md#use-with-your-agents).
+   [Use with your agents](https://github.com/edsml-jz2321/QuoteMem/blob/main/docs/agents.md).
 2. **Install Node 20.3 or later** and make sure it is on `PATH`.
 3. **Install the hooks.** The shortest way is the npm package:
 
@@ -122,8 +122,7 @@ on whether it is the desktop app or Cursor's CLI, and on the app's version:
   about the user goes into the conversation's system context. Cursor does
   not wait for that hook, so a first prompt sent quickly may go without it.
 - **Settings: in `~/.quotemem/env`.** Cursor's CLI does not pass its own
-  environment to the MCP server it starts (seen on 2026.11.19): the hooks
-  saw `QUOTEMEM_URL` from the shell, while the MCP tools read
+  environment to the MCP server it starts, and the MCP tools read
   `~/.quotemem/env`. So keep every `QUOTEMEM_*` setting for Cursor in that
   file (step 4 above), and none only in the shell. `quotemem install cursor`
   warns about a setting set only in the shell.
@@ -191,9 +190,8 @@ on whether it is the desktop app or Cursor's CLI, and on the app's version:
   next hook), with the transcript's reply if it has one; one with no later
   turn, after 10 minutes. Such a turn reaches the service after the later
   turns; each batch carries its messages' times.
-- **Closing the console.** When Cursor's CLI console is closed, the
-  background sender may stop with it. The queued turns stay on disk, and a
-  later hook sends them.
+- **Closing the console.** Turns queued when Cursor's CLI console is closed
+  stay on disk, and a later hook sends them.
 - **The app saves through its turn hooks.** It runs no `sessionEnd` when a
   chat tab is closed (and the CLI may run none when its console is closed
   without `/quit`), so its turns are saved by the turn hooks: every few
@@ -206,8 +204,10 @@ on whether it is the desktop app or Cursor's CLI, and on the app's version:
     closed just before is found when the service stores it in that time;
   - a chat whose turn still runs keeps its batch; the new chat's prompts in
     its first 10 minutes send it once it has been idle a minute;
-  - else a later prompt or session start sends a chat once it has been idle
-    for `QUOTEMEM_IDLE_FLUSH_MS` (5 minutes).
+  - else a chat goes once it has been idle for `QUOTEMEM_IDLE_FLUSH_MS`
+    (5 minutes), with no further hook: after a hook that leaves unsent
+    turns, the background sender waits for that time, saves them, and
+    exits.
 
   So a new chat cuts the batch of every other chat between turns, in use or
   not: one more Add for each, never a turn lost or sent twice. Every hook
@@ -227,23 +227,14 @@ on whether it is the desktop app or Cursor's CLI, and on the app's version:
   transcript, or their record is incomplete, nothing is saved from it that
   time and the record starts again, so a turn is never saved twice.
 
-Cursor documents `additional_context` only for `sessionStart`,
-`postToolUse` and `postToolUseFailure`, not for `beforeSubmitPrompt`.
-`postToolUse` adds its context after a tool result, so it cannot carry
-recall for a turn that calls no tool. Another project saw the prompt hook's
-`additional_context` reach the model on Cursor 3.20.17, in one test on
-Windows, and saw it last for that turn only. In the desktop app 3.31.15 on
-Windows it reached the model too, and in Cursor's CLI 2026.11.19 in
-interactive mode. QuoteMem's own tests feed the documented payloads to the
-hook. Later versions could drop the field. `QUOTEMEM_CURSOR_PROMPT_CONTEXT`
-sets this:
+Per-turn recall reaches the model through `additional_context` in the
+prompt hook's (`beforeSubmitPrompt`) answer, for that turn.
+`QUOTEMEM_CURSOR_PROMPT_CONTEXT` sets when the hook sends it:
 - `auto` (the default): on the app 3.20.17 and later, read from the
   payload's `cursor_version`, and on the CLI 2026.11.19 and later (its
-  interactive mode; print mode runs no prompt hook). Earlier CLI dates were
-  not seen to read the field, so they get none;
-- `on`: on every version; an older Cursor may ignore the field, and then
-  only the session digest and the tools remain;
-- `off`: never.
+  interactive mode; print mode runs no prompt hook);
+- `on`: on every version;
+- `off`: never. Recall is then the session digest and the tools.
 
 ```bash
 mkdir -p ~/.cursor
@@ -267,8 +258,8 @@ mkdir -p .cursor/rules && cp /path/to/QuoteMem/integrations/cursor/rules/quoteme
   QuoteMem's hook for that event counts. The hook then answers ("carry on"
   at the latest) and ends the work after its answer 1 s before that
   timeout. Without such an entry it uses the timeouts `quotemem install`
-  writes: 15 s for the prompt hook, 5 s for the others. A shorter timeout
-  can leave the background sender unstarted; a later hook starts it.
+  writes: 15 s for the prompt hook, 5 s for the others. When a shorter
+  timeout ends the hook first, a later hook starts the background sender.
 - Background agents are not remembered unless
   `QUOTEMEM_INCLUDE_SUBAGENTS=on`.
 
@@ -300,7 +291,7 @@ Then, in Cline's settings, turn on **Enable Hooks**.
   its absolute path, or edit the hook files. A hook that cannot find it lets
   the turn go on.
 
-Windows is not supported by Cline hooks.
+Cline runs these hooks on macOS and Linux.
 
 ## goose
 
@@ -356,7 +347,7 @@ command `quotemem-hook` and argument `mcp`.
   `last_assistant_message` (Devin's changelog). Devin Desktop's local agent
   shares that harness.
 - Without that field, a `transcript_path` in the payload is read instead, if
-  Devin ever sends one (Devin does not document it). The reader reads
+  the payload has one. The reader reads
   Claude Code's JSONL or an ATIF file. It takes the last reply only when the
   user message it answers is this turn's own message. A transcript that is
   not yet written up to this turn gives no reply, not an earlier turn's. An
@@ -472,9 +463,8 @@ hooks are installed:
   `~/.config/devin/config.json`.
 
 Without the agent's own hooks, the Claude Code hooks still do the work.
-Devin's payload shape here comes from its docs and has not been seen on a
-real Devin, so for now do not set up both the Claude Code hooks and the
-Devin hooks where Devin reads them. Inside a Cursor that reads
+Where Devin reads the Claude Code hooks, set up either those hooks or the
+Devin hooks, not both. Inside a Cursor that reads
 `additional_context` from the prompt hook, the Claude Code prompt hook
 answers with that field only.
 
@@ -492,7 +482,7 @@ node integrations/core/sync.mjs --check      # the bundles' copies of the core
   `hooks.json`, hook file or plugin script, through `sh -c`.
 - Each gets the agent's own payload shape, a temporary `HOME` and a stub
   QuoteMem service.
-- The OpenClaw plugin is loaded with a fake plugin API.
+- The OpenClaw plugin runs in a test host that offers OpenClaw's plugin API.
 
 **What they cover.**
 - capture batches and their session ids;

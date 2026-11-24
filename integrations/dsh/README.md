@@ -44,8 +44,8 @@ DSH itself requires Node 24. The bundle needs DSH 0.1.2-rc.1 or later
 (`engines.dsh` is `>=0.1.2-rc.1`, with no upper bound) and DSH's pnpm
 prerequisite. If a DSH version lacks an optional API the automatic layer uses,
 the plugin skips that part, with one warning where it can detect the gap; the
-MCP tools keep working. The service is the Python package `quotemem`; it
-needs Python 3.12, and `uvx` from [uv](https://docs.astral.sh/uv/) 0.11.21 or
+MCP tools keep working. The service is the Python package `quotemem`
+([what it needs](https://github.com/edsml-jz2321/QuoteMem/blob/main/docs/service.md#install)); `uvx` from [uv](https://docs.astral.sh/uv/) 0.11.21 or
 later runs it without a separate install. The plugin is tested
 against a stub service and a simulated DSH context
 (`node --test integrations/dsh/test/*.test.mjs`; the shell expands the glob), and was tried in a real DSH 0.2.2-rc.5.
@@ -58,7 +58,7 @@ Or install it from a packed tarball of a clone (`npm pack` in the clone's root
 writes `quotemem-<version>.tgz`):
 
 ```console
-dsh plugin --profile quotemem add file:/path/to/quotemem-0.3.0.tgz
+dsh plugin --profile quotemem add file:/path/to/quotemem-0.3.1.tgz
 ```
 
 ### 1. Set up the memory service, once
@@ -77,8 +77,7 @@ effort and embedding model `qwen3.7-text-embedding` (1024 dimensions), both
 through Alibaba Cloud Model Studio with one API key, billed to your account.
 Thinking makes saving memories slower (a large batch of corrections can take
 several minutes) and adds output tokens. The `fast` preset is the same with
-thinking off: memories are saved in seconds, and it scored slightly lower in
-our benchmark (within noise). `custom` takes any OpenAI-compatible chat and
+thinking off: memories are saved in seconds. `custom` takes any OpenAI-compatible chat and
 embedding endpoints. Switch with `npx quotemem setup --preset fast` (or
 `custom`), or edit `~/.quotemem/service.env`, where each `QUOTEMEM_*` line
 overrides the preset (`QUOTEMEM_CHAT_REASONING=off` turns thinking off).
@@ -96,7 +95,7 @@ and point `QUOTEMEM_DATA_DIR` in `~/.quotemem/service.env` at the new
 directory (with `npx quotemem setup --review full`).
 
 From then on the plugin starts the service by itself
-(`uvx --from quotemem==0.3.0 quotemem serve`, on 127.0.0.1:8765) when DSH
+(`uvx --from quotemem==0.3.1 quotemem serve`, on 127.0.0.1:8765) when DSH
 first needs memory, so [uv](https://docs.astral.sh/uv/) must be installed.
 The service keeps its data in `~/.local/share/quotemem` (a
 `QUOTEMEM_DATA_DIR` line in `~/.quotemem/service.env` moves it), and creates
@@ -355,7 +354,11 @@ settings and read the same token file.
 
 A write through `quotemem_add` returns only after the new memories are
 stored and searchable, which usually takes tens of seconds, sometimes
-minutes. Automatic saving runs in the background instead: it asks for an
+minutes. Its result holds the store's `status` (`stored`, or `partial` when
+some facts did not become memories) and `reasons` (the reason code of each
+such fact, with its count). A user message is the user's own words, so its
+"I" is the user; `speaker` names the assistant on assistant messages only.
+Automatic saving runs in the background instead: it asks for an
 early acknowledgement (`Prefer: respond-async`) and reads each batch's result
 later with the identical request. `quotemem_history` and `quotemem_provenance` take
 the id of a memory hit; for an Evidence hit's id the tool shows the service's
@@ -400,7 +403,7 @@ To keep DSH's state out of your home directory, set `DSH_HOME` and
 `DSH_AGENTS_HOME` to private folders and disable telemetry with
 `DSH_TELEMETRY_DISABLED=1` before these commands. On the day a version is
 published, DSH's pnpm may refuse it as too new; pin it, for example
-`dsh plugin --profile quotemem add quotemem@0.3.0`.
+`dsh plugin --profile quotemem add quotemem@0.3.1`.
 
 ## Other MCP clients
 
@@ -428,4 +431,4 @@ itself, so the token stays out of the client's config file.
 
 ## License
 
-MIT, see [LICENSE](LICENSE).
+MIT, see [LICENSE](https://github.com/edsml-jz2321/QuoteMem/blob/main/integrations/dsh/LICENSE).

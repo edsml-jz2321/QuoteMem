@@ -18,6 +18,7 @@ import { homeDir } from '../core/proc.mjs';
 
 import { install as codexInstall, writeConfigFile } from '../codex/install.mjs';
 import { envFilePath, parseEnvFile } from '../hooks/env.mjs';
+import { MANAGED } from './service.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 export const PACKAGE_DIR = path.resolve(here, '..', '..');
@@ -155,9 +156,9 @@ const TOOLS = {
     plan() {
       return {
         lines: [
-          'DSH installs the quotemem npm package as a bundle. Run:',
-          '  dsh plugin add quotemem',
-          '(add --profile <name> to install it into one profile only).',
+          'DSH installs the quotemem npm package as a bundle. DSH needs Node 24 and pnpm for this. Run:',
+          '  dsh plugin --profile quotemem add quotemem',
+          'then start DSH with: dsh --profile quotemem',
           'Start DSH with QUOTEMEM_URL (and QUOTEMEM_TOKEN_FILE for a service elsewhere) in its environment.',
           'Nothing is written by this command.',
         ],
@@ -204,7 +205,7 @@ const TOOLS = {
   cursor: {
     summary: 'Cursor user hooks and MCP server, merged into ~/.cursor',
     // Cursor's CLI does not pass its own environment to the MCP server it
-    // starts (seen on 2026.11.19): only ~/.quotemem/env reaches it.
+    // starts: only ~/.quotemem/env reaches it.
     plan({ node }) {
       const dir = path.join(homeDir(), '.cursor');
       const hooksFile = path.join(dir, 'hooks.json');
@@ -218,9 +219,9 @@ const TOOLS = {
       return {
         lines: [
           'Each session starts with a digest of what is known about you. On Cursor 3.20.17 and',
-          'later, the prompt hook is expected to add recall and forget notes to each turn (it',
-          'relies on a field Cursor does not document). Otherwise recall is the digest plus the',
-          'MCP tools, which the rule tells the model to use. In each project, copy the rule:',
+          'later, the prompt hook adds recall and forget notes to each turn. On earlier versions',
+          'recall is the digest plus the MCP tools, which the rule tells the model to use.',
+          'In each project, copy the rule:',
           `  mkdir -p .cursor/rules && cp ${q(integration('cursor', 'rules', 'quotemem.mdc'))} .cursor/rules/`,
           ...shellOnlyWarning(),
         ],
@@ -373,6 +374,18 @@ const ALIASES = { claude: 'claude-code', 'gemini-cli': 'gemini', windsurf: 'devi
  * one a process started without this shell's environment reads.
  */
 export function shellOnlySettings(env = process.env) {
+  return shellNames(env).filter((name) => !serviceSetting(name));
+}
+
+// The service's model settings and keys: `quotemem setup` writes them to
+// ~/.quotemem/service.env, and the service takes them from there alone.
+function serviceSetting(name) {
+  return MANAGED.includes(name) || /^QUOTEMEM_(?:CHAT|EMBED)_/.test(name);
+}
+
+// The QUOTEMEM_* names set in this shell that ~/.quotemem/env does not hold
+// with the same value.
+function shellNames(env) {
   let saved = {};
   try {
     saved = parseEnvFile(fs.readFileSync(envFilePath({ HOME: env.HOME, USERPROFILE: env.USERPROFILE }), 'utf8'));
@@ -383,9 +396,19 @@ export function shellOnlySettings(env = process.env) {
 }
 
 function shellOnlyWarning(env = process.env) {
+  const out = [];
+  const service = shellNames(env).filter(serviceSetting);
+  if (service.length > 0) {
+    out.push(
+      '',
+      `note: ${service.join(', ')} ${service.length === 1 ? 'is' : 'are'} set in this shell. The service's model settings and`,
+      'keys belong in ~/.quotemem/service.env (written by `quotemem setup`), not in ~/.quotemem/env.',
+    );
+  }
   const names = shellOnlySettings(env);
-  if (names.length === 0) return [];
+  if (names.length === 0) return out;
   return [
+    ...out,
     '',
     `warning: ${names.join(', ')} ${names.length === 1 ? 'is' : 'are'} set in this shell, not in ~/.quotemem/env. Cursor's CLI`,
     'does not pass the shell\'s environment to the MCP server, so the memory tools would not see',

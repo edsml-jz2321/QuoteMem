@@ -212,6 +212,20 @@ class WriterMutex:
                         self._handoff_until = time.monotonic() + DELIVERY_HANDOFF_SECONDS
                     self._condition.notify_all()
 
+    def locked(self) -> bool:
+        """Report whether any thread owns the mutex, without waiting for it.
+
+        ``threading.Condition`` exports its lock's ``locked`` from Python 3.14
+        on. The answer is the parity of the critical-section sequence, which
+        is odd exactly while a thread owns the mutex, so asking takes neither
+        the mutex nor its bookkeeping condition. A ``Condition.wait`` leaves
+        the mutex unowned until it reacquires it.
+
+        Returns:
+            bool: Whether the mutex is owned, by this thread or another.
+        """
+        return self._sequence % 2 == 1
+
     def on_outermost_release(self, hook: Callable[[bool], None] | None) -> None:
         """Run ``hook`` at the end of every critical section, before its release.
 

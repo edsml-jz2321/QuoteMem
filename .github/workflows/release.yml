@@ -1,25 +1,37 @@
 name: Release
 
-# Pushing a tag vX.Y.Z builds the release files once from the tagged checkout,
-# then publishes those same files to PyPI and npm and attaches them, with
-# SHA256SUMS, to a GitHub Release. No token is stored anywhere: PyPI and npm
-# trust this workflow file through OpenID Connect (Trusted Publishing), and only
-# in the `pypi` and `npm` environments, which are limited to v* tags.
+# A tag vX.Y.Z starts this workflow: pushed by hand, or created by
+# tag-release.yml, which then starts this workflow for the tag (workflow_dispatch
+# with the tag as the ref), because a tag created with the workflow token starts
+# no workflow. A run for any ref other than a vX.Y.Z tag fails in `build`.
 #
-# Nothing is published until the `verify` and `node-tests` jobs pass: the npm
-# tests on Node 20 and 24, the package contents, the server smoke test, and the
-# built wheel installed in a fresh environment with every dependency resolved
-# from PyPI alone, so a dependency that is not on PyPI yet stops the release
-# before anything is uploaded.
+# It builds the release files once from the tagged checkout, then publishes
+# those same files to PyPI and npm and attaches them, with SHA256SUMS, to a
+# GitHub Release, and lists server.json in the official MCP Registry once npm
+# serves the new version. No token is stored anywhere: PyPI and npm trust this
+# workflow file through OpenID Connect (Trusted Publishing), and only in the
+# `pypi` and `npm` environments, which are limited to v* tags; the MCP Registry
+# trusts the GitHub OIDC token of this repository's owner.
+#
+# Nothing is published until the `verify`, `node-tests` and
+# `validate-server-json` jobs pass: the npm tests on Node 20 and 24, the
+# package contents, the server smoke test, the built wheel installed in a fresh
+# environment with every dependency resolved from PyPI alone, so a dependency
+# that is not on PyPI yet stops the release before anything is uploaded, and
+# server.json validated by the pinned mcp-publisher. npm publishes only after
+# PyPI, because the npm package starts the service with
+# `uvx --from quotemem==X.Y.Z`.
 #
 # Every job can be rerun safely. A registry that already holds this version is
 # compared by checksum: PyPI files and the npm tarball that match this build are
 # skipped, and any difference fails the job, because a published version can
-# never be replaced. An existing GitHub Release is updated in place.
+# never be replaced. An existing GitHub Release is updated in place. A version
+# the MCP Registry already lists is skipped.
 
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
 
 permissions: {}
 
@@ -44,6 +56,13 @@ jobs:
       # its own digest goes through the job outputs and every later job checks it.
       sums: ${{ steps.build.outputs.sums }}
     steps:
+      # A workflow_dispatch run can name any branch or tag; only a v* tag goes on.
+      - name: Run only for a v* tag
+        run: |
+          case "$GITHUB_REF" in
+            refs/tags/v*) echo "${GITHUB_EVENT_NAME} for ${GITHUB_REF}" ;;
+            *) echo "::error::release.yml runs only for a tag vX.Y.Z, not ${GITHUB_REF}; push the tag, or start this workflow with the tag as the ref"; exit 1 ;;
+          esac
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -70,7 +89,7 @@ jobs:
           tag = os.environ["GITHUB_REF_NAME"]
           problems = []
           if not ref.startswith("refs/tags/"):
-              problems.append(f"{ref} is not a tag")
+              problems.append(f"{ref} is not a tag; run this workflow for a tag vX.Y.Z")
           match = re.fullmatch(r"v(\d+\.\d+\.\d+)", tag)
           if match is None:
               problems.append(f"tag {tag!r} is not vMAJOR.MINOR.PATCH")
@@ -199,10 +218,39 @@ jobs:
       - name: Server smoke test against the installed wheel (stub provider, no network)
         run: PATH="$RUNNER_TEMP/wheel-venv/bin:$PATH" "$RUNNER_TEMP/wheel-venv/bin/python" -I .github/ci/server_smoke.py
 
+  validate-server-json:
+    # The same pinned mcp-publisher as publish-mcp-registry validates
+    # server.json before anything is published. Validation needs no login.
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    env:
+      MCP_PUBLISHER_VERSION: v1.8.16
+      # sha256 of mcp-publisher_linux_amd64.tar.gz in registry_1.8.16_checksums.txt of that release.
+      MCP_PUBLISHER_SHA256: 6e2f799550cf843c6fd3350498d56cc49be3dc0af1e6237eb0e6435c7a9d5c05
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install the pinned mcp-publisher
+        run: |
+          archive=mcp-publisher_linux_amd64.tar.gz
+          [ "$(uname -m)" = x86_64 ] || { echo "::error::this step installs the linux amd64 build; the runner is $(uname -m)"; exit 1; }
+          curl --fail --location --silent --show-error --retry 3 --output "${RUNNER_TEMP}/${archive}" \
+            "https://github.com/modelcontextprotocol/registry/releases/download/${MCP_PUBLISHER_VERSION}/${archive}"
+          echo "${MCP_PUBLISHER_SHA256}  ${RUNNER_TEMP}/${archive}" | sha256sum --check --strict
+          tar -xzf "${RUNNER_TEMP}/${archive}" -C "$RUNNER_TEMP" mcp-publisher
+          rm -f "${RUNNER_TEMP}/${archive}"
+          "${RUNNER_TEMP}/mcp-publisher" --version
+      - name: Validate server.json with the registry
+        run: '"${RUNNER_TEMP}/mcp-publisher" validate server.json'
+
   publish-pypi:
     # PyPI Trusted Publishing: PyPI trusts this workflow file (release.yml) in
     # this repository, running in the `pypi` environment.
-    needs: [build, verify, node-tests]
+    needs: [build, verify, node-tests, validate-server-json]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment:
@@ -295,7 +343,9 @@ jobs:
     # trusts this workflow file (release.yml) in this repository, running in
     # the `npm` environment, and attaches provenance itself for a public
     # repository. No checkout: the tarball's own package.json is the manifest.
-    needs: [build, verify, node-tests]
+    # It runs after publish-pypi: the npm package starts the service with
+    # `uvx --from quotemem==X.Y.Z`, so that version is on PyPI first.
+    needs: [build, verify, node-tests, validate-server-json, publish-pypi]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment:
@@ -381,3 +431,131 @@ jobs:
           else
             gh release create "$GITHUB_REF_NAME" "${files[@]}" --verify-tag --title "$GITHUB_REF_NAME" --notes "$notes" --latest="$latest"
           fi
+
+  publish-mcp-registry:
+    # The official MCP Registry lists server.json as io.github.edsml-jz2321/quotemem.
+    # It accepts a version only when registry.npmjs.org serves the npm package
+    # of that version with `mcpName` equal to the server name, so this job runs
+    # after publish-npm and first waits until npm serves the version, which can
+    # take several minutes. `mcp-publisher login github-oidc` gives this
+    # repository's owner the io.github.edsml-jz2321/ namespace; no token is
+    # stored. The registry refuses a version it already lists, so a version that
+    # is listed is skipped and a rerun succeeds. github-release does not wait
+    # for this job.
+    needs: [build, publish-npm]
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      VERSION: ${{ needs.build.outputs.version }}
+      MCP_PUBLISHER_VERSION: v1.8.16
+      # sha256 of mcp-publisher_linux_amd64.tar.gz in registry_1.8.16_checksums.txt of that release.
+      MCP_PUBLISHER_SHA256: 6e2f799550cf843c6fd3350498d56cc49be3dc0af1e6237eb0e6435c7a9d5c05
+      MCP_REGISTRY: https://registry.modelcontextprotocol.io
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check that server.json names this version and the npm package
+        id: server
+        run: |
+          python3 -I - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          version = os.environ["VERSION"]
+          server = json.loads(Path("server.json").read_text(encoding="utf-8"))
+          package = json.loads(Path("package.json").read_text(encoding="utf-8"))
+          problems = []
+          if not version:
+              problems.append("the build job gave no version")
+          if server.get("name") != package.get("mcpName"):
+              problems.append(f"server.json name {server.get('name')!r} differs from package.json mcpName {package.get('mcpName')!r}")
+          if server.get("version") != version:
+              problems.append(f"server.json version is {server.get('version')!r}, expected {version!r}")
+          for entry in server.get("packages", []):
+              if (entry.get("registryType"), entry.get("identifier"), entry.get("version")) != ("npm", package.get("name"), version):
+                  problems.append(f"server.json package {entry.get('identifier')!r} {entry.get('version')!r} is not npm {package.get('name')!r} {version!r}")
+          if not server.get("packages"):
+              problems.append("server.json lists no package")
+          if problems:
+              for problem in problems:
+                  print(f"::error::{problem}")
+              raise SystemExit(1)
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"name={server['name']}\n")
+          print(f"server.json: {server['name']} {version}, npm package {package['name']}")
+          PY
+      - name: Install the pinned mcp-publisher
+        run: |
+          archive=mcp-publisher_linux_amd64.tar.gz
+          [ "$(uname -m)" = x86_64 ] || { echo "::error::this step installs the linux amd64 build; the runner is $(uname -m)"; exit 1; }
+          curl --fail --location --silent --show-error --retry 3 --output "${RUNNER_TEMP}/${archive}" \
+            "https://github.com/modelcontextprotocol/registry/releases/download/${MCP_PUBLISHER_VERSION}/${archive}"
+          echo "${MCP_PUBLISHER_SHA256}  ${RUNNER_TEMP}/${archive}" | sha256sum --check --strict
+          tar -xzf "${RUNNER_TEMP}/${archive}" -C "$RUNNER_TEMP" mcp-publisher
+          rm -f "${RUNNER_TEMP}/${archive}"
+          "${RUNNER_TEMP}/mcp-publisher" --version
+      - name: Validate server.json with the registry
+        run: '"${RUNNER_TEMP}/mcp-publisher" validate server.json'
+      - name: Wait until npm serves this version with its mcpName
+        env:
+          NAME: ${{ steps.server.outputs.name }}
+        run: |
+          python3 -I - <<'PY'
+          import json
+          import os
+          import sys
+          import time
+          import urllib.error
+          import urllib.request
+
+          version = os.environ["VERSION"]
+          name = os.environ["NAME"]
+          url = f"https://registry.npmjs.org/quotemem/{version}"
+          # 60 attempts, 30 seconds apart: up to about 30 minutes.
+          for attempt in range(1, 61):
+              try:
+                  request = urllib.request.Request(url, headers={"Accept": "application/json"})
+                  with urllib.request.urlopen(request, timeout=30) as response:
+                      served = json.load(response)
+                  if served.get("version") == version and served.get("mcpName") == name:
+                      print(f"npm serves quotemem {version} with mcpName {name}")
+                      break
+                  # A published version never changes, so waiting does not help.
+                  print(f"::error::npm serves quotemem {served.get('version')!r} with mcpName {served.get('mcpName')!r}; the MCP Registry needs version {version!r} with mcpName {name!r}")
+                  sys.exit(1)
+              except urllib.error.HTTPError as error:
+                  reason = f"HTTP {error.code}"
+              except (OSError, ValueError) as error:
+                  reason = str(error)
+              print(f"attempt {attempt}: {url}: {reason}; waiting")
+              time.sleep(30)
+          else:
+              print(f"::error::npm did not serve quotemem {version} in time; rerun this job")
+              sys.exit(1)
+          PY
+      - name: Publish server.json unless the registry lists this version
+        env:
+          NAME: ${{ steps.server.outputs.name }}
+        run: |
+          listed="${MCP_REGISTRY}/v0.1/servers/${NAME//\//%2F}/versions/${VERSION}"
+          for attempt in 1 2 3 4 5; do
+            code="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 30 "$listed" || true)"
+            if [ "$code" = 200 ]; then
+              echo "${NAME} ${VERSION} is in the MCP Registry; nothing to publish."
+              exit 0
+            fi
+            echo "attempt ${attempt}: ${listed} answered ${code}; publishing"
+            # The OIDC token is short-lived, so log in again before every attempt.
+            if "${RUNNER_TEMP}/mcp-publisher" login github-oidc && "${RUNNER_TEMP}/mcp-publisher" publish server.json; then
+              echo "${NAME} ${VERSION} is published to the MCP Registry."
+              exit 0
+            fi
+            sleep 60
+          done
+          echo "::error::the MCP Registry did not accept ${NAME} ${VERSION}; see the messages above, then rerun this job"
+          exit 1

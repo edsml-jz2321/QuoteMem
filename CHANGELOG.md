@@ -2,6 +2,45 @@
 
 All notable changes to QuoteMem are listed here. Dates are UTC.
 
+## 0.3.1 - 2026-11-24
+
+- **A user message is the user's own words.** In the `agent` Add mode (the
+  default) a speaker set on a user message is ignored, so first-person facts
+  and updates always bind to the user. Over HTTP, the `lean-local` and `full`
+  Add modes keep the speaker of every message. The MCP tool `quotemem_add`
+  sends a speaker only on assistant messages, in every Add mode, and returns
+  the store status and reasons.
+- **Setup names the Model Studio key and where to get it.** For the default
+  and fast presets, `quotemem setup` says that both models, DeepSeek
+  included, are called through Alibaba Cloud Model Studio, so the key comes
+  from bailian.console.aliyun.com (China region). When Model Studio refuses
+  the key, setup says so and how to try again. Each numbered question also
+  takes the option's name, such as `standard` or `fast`.
+- **Python 3.13 and 3.14.** The memory service runs on Python 3.12, 3.13 and
+  3.14, and CI tests all three.
+- **Official MCP Registry.** QuoteMem is listed in the official MCP Registry
+  as `io.github.edsml-jz2321/quotemem`.
+- **Releases start from a version change on `main`.** When a commit on `main`
+  sets a new version and passes CI, the tag `vX.Y.Z` is created and the
+  release workflow publishes that version. The release workflow validates
+  `server.json` before it publishes anything, and publishes to PyPI before npm.
+- **SECURITY.md and CONTRIBUTING.md.** They describe how to report a security
+  issue and how to send a change.
+- **A chat's last turns are saved after 5 minutes idle.** In the Claude Code,
+  Codex, Gemini CLI, Cursor, Cline, goose and Devin plugins and in OpenClaw, a
+  background sender saves a chat's last turns once it has been idle for
+  `QUOTEMEM_IDLE_FLUSH_MS` (5 minutes), with no further prompt.
+- **`quotemem install dsh` prints the full command with its profile:**
+  `dsh plugin --profile quotemem add quotemem`, then `dsh --profile quotemem`.
+- **Setup hints name `service.env` and the environment the tools start in.**
+  Model settings and keys go in `~/.quotemem/service.env`. A port of your own
+  goes in `~/.quotemem/env` and in the environment Claude Code, Codex and DSH
+  start in.
+- **A short README with a demo and a quick start.** The full guides are in
+  `docs/`. The demo runs from a clone of the repository and waits up to a
+  minute for the service to answer, so it can start right after
+  `quotemem serve &`.
+
 ## 0.3.0 - 2026-11-24
 
 Version 0.2.0 was not released.

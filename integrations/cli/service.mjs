@@ -19,6 +19,8 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const core = (name) => import(pathToFileURL(path.join(here, '..', 'core', name)).href);
 
 const DASHSCOPE_URL = 'https://dashscope.aliyuncs.com/compatible-mode/v1';
+/** Where the key of the default and fast presets comes from. */
+const MODEL_STUDIO_CONSOLE = 'https://bailian.console.aliyun.com';
 
 /**
  * The QUOTEMEM_CHAT_REASONING values `setup` writes: `high` asks for
@@ -49,11 +51,11 @@ const COMPETITION = Object.freeze({
 /** The ready-made model settings `setup` offers; `custom` asks for each value instead. */
 export const PRESETS = Object.freeze({
   default: Object.freeze({
-    label: 'recommended, the competition configuration: DeepSeek V4.1 Flash with thinking at high effort and Qwen3.7 embeddings (1024 dimensions), both through Alibaba Cloud Model Studio with one key. Saving memories is slower (a large batch of corrections can take minutes), and thinking adds output tokens to the bill',
+    label: 'default (recommended), the competition configuration: DeepSeek V4.1 Flash with thinking at high effort and Qwen3.7 embeddings (1024 dimensions), both through Alibaba Cloud Model Studio with one key. Saving memories is slower (a large batch of corrections can take minutes), and thinking adds output tokens to the bill',
     values: Object.freeze({ ...COMPETITION, QUOTEMEM_CHAT_REASONING: CHAT_REASONING.high }),
   }),
   fast: Object.freeze({
-    label: 'fast: the same models and key with thinking off. Memories are saved in seconds; it scored slightly lower in our test (60.8 against 62.6 on 240 BEAM 100K questions, not statistically significant)',
+    label: 'fast: the same models and key with thinking off. Memories are saved in seconds',
     values: Object.freeze({ ...COMPETITION, QUOTEMEM_CHAT_REASONING: CHAT_REASONING.off }),
   }),
 });
@@ -69,7 +71,7 @@ const REASONING_CHOICES = { high: CHAT_REASONING.high, off: CHAT_REASONING.off, 
  * change them here, and only here, when it does.
  */
 export const REVIEWS = Object.freeze({
-  fast: 'fast: local review rules only, as in the competition submission. No review calls, so the fastest and cheapest; "I moved to Hangzhou" can leave "I live in Beijing" current too',
+  fast: 'fast: local review rules only, as in the competition submission. No review calls, so the fastest and cheapest; a change said outright ("Hangzhou, not Beijing") retires the old memory',
   standard: 'standard (recommended): the chat model reviews only the new memories that may repeat, update or correct a stored one',
   full: 'full: the chat model reviews every new memory. The slowest and most careful, with the most model calls',
 });
@@ -121,8 +123,7 @@ presets (--preset NAME):
             Alibaba Cloud Model Studio (DashScope) with one key. Saving
             memories is slower, and thinking adds output tokens to the bill.
   fast      the same models with thinking off: memories are saved in
-            seconds; it scored slightly lower in our test (60.8 against 62.6
-            on 240 BEAM 100K questions, not statistically significant).
+            seconds.
   custom    any OpenAI-compatible chat and embedding endpoints, models and
             keys.
 
@@ -223,15 +224,20 @@ function prompter(input, output, echo) {
   };
 }
 
-/** A numbered menu; Enter takes option `first` (0-based). Returns the chosen option's value. */
+/**
+ * A numbered menu; Enter takes option `first` (0-based). An answer is the
+ * option's number or its name (`name`, else `value`), in any case. Returns
+ * the chosen option's value.
+ */
 async function menu(ask, out, title, options, first = 0) {
   out.write(`\n${title}\n`);
   options.forEach((option, i) => out.write(`  ${i + 1}) ${option.label}\n`));
+  const names = options.map((option) => String(option.name ?? option.value).toLowerCase());
   for (;;) {
     const answer = await ask(`choose [${first + 1}]: `);
-    const index = answer === '' ? first : /^[0-9]+$/.test(answer) ? Number(answer) - 1 : -1;
+    const index = answer === '' ? first : /^[0-9]+$/.test(answer) ? Number(answer) - 1 : names.indexOf(answer.toLowerCase());
     if (index >= 0 && index < options.length) return options[index].value;
-    out.write(`  type a number from 1 to ${options.length}\n`);
+    out.write(`  type a number from 1 to ${options.length} or its name\n`);
   }
 }
 
@@ -478,8 +484,14 @@ async function askKeys(ask, out, values, previous, preset) {
   const sharedHost = sameHost(embedUrlOf(values), values.QUOTEMEM_CHAT_BASE_URL);
   const savedChat = savedKey(previous, values, 'QUOTEMEM_CHAT_API_KEY');
   if (preset && sharedHost) {
-    const label = values.QUOTEMEM_CHAT_BASE_URL === DASHSCOPE_URL ? 'Model Studio (DashScope) API key, for both models' : 'API key, for both models';
+    const modelStudio = values.QUOTEMEM_CHAT_BASE_URL === DASHSCOPE_URL;
+    const label = modelStudio ? 'Model Studio (DashScope) API key, for both models' : 'API key, for both models';
     out.write('\n');
+    if (modelStudio) {
+      const deepseek = /^deepseek/i.test(values.QUOTEMEM_CHAT_MODEL ?? '');
+      out.write(`  Both models${deepseek ? ', DeepSeek included,' : ''} are called through Alibaba Cloud Model Studio: the key is a Model Studio key\n`);
+      out.write(`  from ${MODEL_STUDIO_CONSOLE} (China region)${deepseek ? ', not a DeepSeek platform key' : ''}.\n`);
+    }
     const key = (await askKey(ask, label, Boolean(savedChat), null, out)) ?? savedChat;
     values.QUOTEMEM_CHAT_API_KEY = key;
     values.QUOTEMEM_EMBED_API_KEY = key;
@@ -504,7 +516,7 @@ async function askCustom(ask, out, flags, previous) {
     { label: 'json_object: JSON mode, the schema in the prompt (DeepSeek, Model Studio and others without strict schemas)', value: 'json_object' },
   ]));
   put(values, 'QUOTEMEM_CHAT_REASONING', flags['chat-reasoning'] !== undefined ? REASONING_CHOICES[flags['chat-reasoning']] : await menu(ask, out, '  thinking:', [
-    { label: 'the provider\'s default (no reasoning parameters are sent)', value: REASONING_CHOICES.default },
+    { label: 'the provider\'s default (no reasoning parameters are sent)', name: 'default', value: REASONING_CHOICES.default },
     { label: 'off (faster writes)', value: REASONING_CHOICES.off },
     { label: 'high effort (slower writes, more output tokens)', value: REASONING_CHOICES.high },
   ]));
@@ -655,21 +667,49 @@ export async function cmdSetup(flags, { env = process.env, input = process.stdin
     return 0;
   }
   output.write('checking the settings with `quotemem check` (one call to each model; the first run downloads the service)...\n');
-  const { child } = await runServiceCommand('check', [], { env, stdio: ['ignore', 'inherit', 'inherit'], release, exact: true });
+  // The check's report goes to the output as it comes, and is read for a refused key.
+  const { child } = await runServiceCommand('check', [], { env, stdio: ['ignore', 'pipe', 'inherit'], release, exact: true });
   if (!child) {
     output.write('could not check: uvx is not on PATH. Install uv (https://docs.astral.sh/uv/); the memory service runs through it.\n');
     return 1;
   }
+  let report = '';
+  child.stdout.on('data', (chunk) => {
+    output.write(chunk);
+    if (report.length < REPORT_CHARS) report += chunk.toString('utf8');
+  });
   const code = await new Promise((resolve) => {
     child.on('error', () => resolve(127));
-    child.on('exit', (exitCode, signal) => resolve(signal ? 1 : exitCode ?? 1));
+    child.on('close', (exitCode, signal) => resolve(signal ? 1 : exitCode ?? 1));
   });
   if (code === 0) {
     output.write('ok: the settings work. The memory service now starts by itself whenever an agent needs it.\n');
     return 0;
   }
+  if ((preset === 'default' || preset === 'fast') && keyRefused(report)) {
+    output.write([
+      `FAIL: Alibaba Cloud Model Studio refused the key. The ${preset} preset takes a Model Studio API key`,
+      `from ${MODEL_STUDIO_CONSOLE} (China region); a DeepSeek platform key or an international Model Studio key`,
+      'is refused there. The settings are saved; to try again, run `quotemem setup`, or set DASHSCOPE_API_KEY',
+      `and run \`quotemem setup --yes --preset ${preset}\`.`,
+    ].join('\n') + '\n');
+    return 1;
+  }
   output.write(`FAIL: \`quotemem check\` exited with ${code}; fix the settings with \`quotemem setup\` (the file is saved).\n`);
   return 1;
+}
+
+/** Characters of the check's output `setup` reads; its report is one short line. */
+const REPORT_CHARS = 1 << 16;
+
+/** Whether the check's report (one JSON line on its output) says a provider refused the key. */
+function keyRefused(text) {
+  for (const line of text.split('\n')) {
+    let value = null;
+    try { value = JSON.parse(line); } catch { continue; }
+    if (value && typeof value === 'object' && ['http_401', 'http_403'].includes(value.code)) return true;
+  }
+  return false;
 }
 
 /** `quotemem status`: whether the service runs, where, and its log. */
@@ -716,7 +756,7 @@ async function otherUserNote(settings, env, probe) {
     refused = (await probe(`${settings.url}/memory/search`, { method: 'POST', headers, body: '{}' })).status === 401;
   }
   if (!refused && !(owner && !owner.mine)) return null;
-  return `the memory service at ${settings.url} ${owner && !owner.mine ? `runs as another user (${owner.owner})` : 'refused this user\'s token'}: it may be another user's QuoteMem on this computer (two people signed in at once). Give this user a port of its own: QUOTEMEM_URL=http://127.0.0.1:${proc.userPort(env)} in ~/.quotemem/env (its plugins then start its own service there)`;
+  return `the memory service at ${settings.url} ${owner && !owner.mine ? `runs as another user (${owner.owner})` : 'refused this user\'s token'}: it may be another user's QuoteMem on this computer (two people signed in at once). Give this user a port of its own: QUOTEMEM_URL=http://127.0.0.1:${proc.userPort(env)} in ~/.quotemem/env and in the environment Claude Code, Codex and DSH start in (its plugins then start its own service there)`;
 }
 
 /** `quotemem stop`: stop the instance a plugin started (only that one). */

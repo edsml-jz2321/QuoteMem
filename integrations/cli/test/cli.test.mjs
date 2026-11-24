@@ -189,6 +189,12 @@ test('install cursor: a QUOTEMEM_* setting set only in the shell is named (the C
   assert.match(second.out, /warning: QUOTEMEM_USER_ID is set in this shell, not in ~\/\.quotemem\/env\./);
   const same = await quotemem(['install', 'cursor'], { env: { PATH: process.env.PATH, HOME: home, USERPROFILE: home, QUOTEMEM_URL: 'https://memory.example.org' }, cwd: project });
   assert.doesNotMatch(same.out, /set in this shell/);
+  // The service's model settings and keys are pointed to service.env, never to ~/.quotemem/env.
+  const keys = await quotemem(['install', 'cursor'], { env: { PATH: process.env.PATH, HOME: home, USERPROFILE: home, QUOTEMEM_URL: 'https://memory.example.org', QUOTEMEM_CHAT_API_KEY: 'sk-shell-key-7f2e', QUOTEMEM_EMBED_MODEL: 'text-embedding-v4' }, cwd: project });
+  assert.equal(keys.code, 0, keys.err);
+  assert.match(keys.out, /note: QUOTEMEM_CHAT_API_KEY, QUOTEMEM_EMBED_MODEL are set in this shell\. The service's model settings and\nkeys belong in ~\/\.quotemem\/service\.env \(written by `quotemem setup`\), not in ~\/\.quotemem\/env\./);
+  assert.doesNotMatch(keys.out, /warning: [^\n]*QUOTEMEM_CHAT_API_KEY/);
+  assert.ok(!keys.out.includes('sk-shell-key-7f2e') && !keys.out.includes('text-embedding-v4'), 'names only, never values');
 });
 
 test('install: protected files keep their mode, get a backup, and stay symlinks', { skip: process.platform === 'win32' ? 'POSIX modes' : false }, async () => {
@@ -230,7 +236,7 @@ test('install: print-only tools, an unknown tool, and invalid JSON in a config f
   const cwd = path.join(home, 'project');
   const expected = {
     'claude-code': /claude plugin marketplace add edsml-jz2321\/QuoteMem[\s\S]*claude plugin install quotemem@quotemem/,
-    dsh: /dsh plugin add quotemem/,
+    dsh: /needs Node 24 and pnpm[\s\S]*dsh plugin --profile quotemem add quotemem\n[\s\S]*dsh --profile quotemem/,
     gemini: /gemini extensions install ".*integrations\/gemini-cli"/,
     openclaw: /openclaw plugins install ".*integrations\/openclaw"/,
     opencode: /"plugin": \[[\s\S]*integrations\/opencode"[\s\S]*"plugins": \[/,
@@ -268,7 +274,7 @@ test('doctor: reports the token check and the shared default owner, never the to
   assert.equal(bad.code, 1);
   assert.match(bad.out, /FAIL {2}the service refused the token/);
   // A service on this computer: it may be another user's, and a port of this user's own is named.
-  assert.match(bad.out, /another user's QuoteMem on this computer[^\n]*QUOTEMEM_URL=http:\/\/127\.0\.0\.1:2\d{4} in ~\/\.quotemem\/env/);
+  assert.match(bad.out, /another user's QuoteMem on this computer[^\n]*QUOTEMEM_URL=http:\/\/127\.0\.0\.1:2\d{4} in ~\/\.quotemem\/env and in the environment Claude Code, Codex and DSH start in/);
   assert.ok(!bad.out.includes('wrong-token-1'));
   // The search probe carried no query: nothing was searched.
   assert.ok(server.of('/memory/search').every((s) => JSON.stringify(s.body) === '{}'));

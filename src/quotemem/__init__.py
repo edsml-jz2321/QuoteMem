@@ -3,7 +3,7 @@
 import os
 import sys
 
-__version__ = "0.3.0"
+__version__ = "0.3.1"
 
 # HeavenBase, the store, is included in this package; `heavenbase` is imported from here.
 _INCLUDED = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_vendor")

@@ -313,7 +313,7 @@ async function cmdDoctor() {
         // Two people signed in at once share 127.0.0.1:8765: the first one's service refuses the second one's token.
         const { portOwner, userPort } = await import(pathToFileURL(path.join(here, '..', 'core', 'proc.mjs')).href);
         const owner = portOwner(settings.localService.port);
-        line(false, `the service refused the token: it must equal the service's own (its <data-dir>/token), or the service at ${settings.url} is another user's QuoteMem on this computer${owner && !owner.mine ? ` (it runs as ${owner.owner})` : ''} (two people signed in at once). Then give this user a port of its own: QUOTEMEM_URL=http://127.0.0.1:${userPort(env)} in ~/.quotemem/env (its plugins then start its own service there)`);
+        line(false, `the service refused the token: it must equal the service's own (its <data-dir>/token), or the service at ${settings.url} is another user's QuoteMem on this computer${owner && !owner.mine ? ` (it runs as ${owner.owner})` : ''} (two people signed in at once). Then give this user a port of its own: QUOTEMEM_URL=http://127.0.0.1:${userPort(env)} in ~/.quotemem/env and in the environment Claude Code, Codex and DSH start in (its plugins then start its own service there)`);
       } else if (auth.status === 401) line(false, 'the service refused the token (it must equal the service\'s token: the QUOTEMEM_TOKEN it was started with, or its <data-dir>/token)');
       else if (auth.status === 403) line(false, 'the token is not allowed to search');
       else if (auth.status >= 400 && auth.status < 500) line(true, 'the service accepts the token');

@@ -51,7 +51,7 @@ async function loadCore() {
 const core = await loadCore();
 
 const SERVER_NAME = 'quotemem';
-const SERVER_VERSION = '0.3.0';
+const SERVER_VERSION = '0.3.1';
 const PROTOCOL_VERSIONS = ['2025-06-18', '2025-03-26', '2024-11-05'];
 
 const MAX_ID_CHARS = 1024;
@@ -477,7 +477,7 @@ const TOOLS = [
             properties: {
               role: { type: 'string', enum: ['user', 'assistant', 'system'] },
               content: { type: 'string', minLength: 1 },
-              speaker: { type: 'string', description: 'Name of the person who said it (user and assistant messages).' },
+              speaker: { type: 'string', description: 'Assistant messages only: the assistant\'s name. A user message is always the user\'s own words, so a speaker on it is ignored; put another person\'s words in the content with a line label ("Alice: ...").' },
               timestamp: { type: 'integer', minimum: 0, description: 'When it was said, Unix milliseconds.' },
             },
             required: ['role', 'content'],
@@ -507,7 +507,8 @@ const TOOLS = [
         const timestamp = integer(message.timestamp, `messages[${index}].timestamp`, { min: 0, fallback: undefined });
         if (timestamp !== undefined) out.timestamp = timestamp;
         const speaker = text(message.speaker, `messages[${index}].speaker`, { required: false });
-        if (speaker !== undefined && message.role !== 'system') {
+        // A user message is the user's own words: the service binds its "I" to the user.
+        if (speaker !== undefined && message.role === 'assistant') {
           out.speaker = speaker;
           speakers = true;
         }
@@ -521,7 +522,14 @@ const TOOLS = [
       if (speakers) body.source_metadata_version = 1;
       try {
         const result = await call('POST', '/memory/add', body, signal);
-        return { request_id: requestId, session_id: sessionId, outcome: result.outcome ?? null };
+        // The store's status (stored or partial) and the reason code of each fact that
+        // did not become a memory, with its count.
+        const agent = result.agent && typeof result.agent === 'object' ? result.agent : {};
+        return {
+          request_id: requestId, session_id: sessionId, outcome: result.outcome ?? null,
+          status: typeof agent.status === 'string' ? agent.status : null,
+          reasons: agent.reasons && typeof agent.reasons === 'object' ? agent.reasons : null,
+        };
       } catch (error) {
         if (error instanceof ToolError) error.message += ` To retry the same content, pass request_id "${requestId}".`;
         throw error;

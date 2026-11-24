@@ -421,7 +421,7 @@ test('setup writes service.env 600 in a 700 folder and never prints a key', asyn
   const asked = spawnSync(process.execPath, [CLI, 'setup', '--no-check'], { env: { HOME: box.home, USERPROFILE: box.home, PATH: process.env.PATH }, input: answers, encoding: 'utf8' });
   assert.equal(asked.status, 0, asked.stdout + asked.stderr);
   assert.doesNotMatch(asked.stdout + asked.stderr, /sk-openai-chat|sk-chat-secret|sk-embed-secret/);
-  assert.match(asked.stdout, /recommended, the competition configuration/);
+  assert.match(asked.stdout, /default \(recommended\), the competition configuration/);
   const again = auto.parseServiceEnv(fs.readFileSync(file, 'utf8'));
   assert.equal(again.QUOTEMEM_CHAT_BASE_URL, 'https://api.openai.com/v1');
   assert.equal(again.QUOTEMEM_CHAT_MODEL, 'gpt-4o-mini');
@@ -931,6 +931,102 @@ test('setup asks the review: standard by default, fixed per store; --review and 
   const unset = sandbox({ serviceEnv: {} });
   const plain = spawnSync(process.execPath, [CLI, 'status'], { env: { ...env, HOME: unset.home, USERPROFILE: unset.home }, encoding: 'utf8' });
   assert.match(plain.stdout, /^review: standard \(the default\);/m);
+});
+
+test('setup: each numbered question takes the option name, in any case, as well as the number', async () => {
+  const { PRESETS } = await import(pathToFileURL(path.resolve(CORE, '..', 'cli', 'service.mjs')).href);
+  const setup = (box, input) => spawnSync(process.execPath, [CLI, 'setup', '--no-check'], { env: { HOME: box.home, USERPROFILE: box.home, PATH: process.env.PATH }, encoding: 'utf8', input });
+  const saved = (box) => auto.parseServiceEnv(fs.readFileSync(path.join(box.home, '.quotemem', 'service.env'), 'utf8'));
+  const keys = (key) => ({ QUOTEMEM_CHAT_API_KEY: key, QUOTEMEM_EMBED_API_KEY: key });
+
+  // Models and review by name.
+  const box = sandbox({ setup: false });
+  const fast = setup(box, 'Fast\nSTANDARD\nsk-typed-name-OOOO\n');
+  assert.equal(fast.status, 0, fast.stdout + fast.stderr);
+  assert.match(fast.stdout, /1\) default \(recommended\), the competition configuration/);
+  assert.deepEqual(saved(box), { ...PRESETS.fast.values, ...keys('sk-typed-name-OOOO'), QUOTEMEM_REVIEW: 'standard' });
+  const def = setup(box, 'default\nfull\n\n');
+  assert.equal(def.status, 0, def.stdout + def.stderr);
+  assert.deepEqual(saved(box), { ...PRESETS.default.values, ...keys('sk-typed-name-OOOO'), QUOTEMEM_REVIEW: 'full' });
+
+  // Custom by name, with its structured output and thinking by name; then keep.
+  // Custom: chat URL, model, structured output, thinking; embedding URL (Enter:
+  // the chat URL), model; the review; the chat key, the embedding key (Enter: the chat key).
+  const custom = setup(box, `${['custom', 'https://api.openai.com/v1', 'gpt-4o-mini', 'JSON_OBJECT', 'High', '', 'text-embedding-3-small', 'Fast', 'sk-custom-name-QQQQ', ''].join('\n')}\n`);
+  assert.equal(custom.status, 0, custom.stdout + custom.stderr);
+  const customValues = saved(box);
+  assert.equal(customValues.QUOTEMEM_CHAT_STRUCTURED_OUTPUT, 'json_object');
+  assert.equal(customValues.QUOTEMEM_CHAT_REASONING, 'high');
+  assert.equal(customValues.QUOTEMEM_REVIEW, 'fast');
+  const thinking = setup(box, `${['custom', '', '', 'json_schema', 'DEFAULT', '', '', 'standard', '', ''].join('\n')}\n`);
+  assert.equal(thinking.status, 0, thinking.stdout + thinking.stderr);
+  assert.equal(saved(box).QUOTEMEM_CHAT_REASONING, 'none', "`default` is the provider's default");
+  assert.equal(saved(box).QUOTEMEM_CHAT_STRUCTURED_OUTPUT, 'json_schema');
+  const kept = setup(box, 'KEEP\nfull\n\n\n');
+  assert.equal(kept.status, 0, kept.stdout + kept.stderr);
+  assert.equal(saved(box).QUOTEMEM_CHAT_MODEL, 'gpt-4o-mini');
+  assert.equal(saved(box).QUOTEMEM_REVIEW, 'full');
+  assert.equal(saved(box).QUOTEMEM_CHAT_API_KEY, 'sk-custom-name-QQQQ');
+
+  // Neither a number nor a name: asked again, naming both.
+  const other = sandbox({ setup: false });
+  const retried = setup(other, 'turbo\n0\n2\nthorough\n9\nstandard\nsk-retried-RRRR\n');
+  assert.equal(retried.status, 0, retried.stdout + retried.stderr);
+  assert.equal((retried.stdout.match(/ {2}type a number from 1 to 3 or its name\n/g) ?? []).length, 4, retried.stdout);
+  assert.deepEqual(saved(other), { ...PRESETS.fast.values, ...keys('sk-retried-RRRR'), QUOTEMEM_REVIEW: 'standard' });
+});
+
+test('setup: the key question of the default and fast presets names the Model Studio key and where to get it', () => {
+  const setup = (box, input) => spawnSync(process.execPath, [CLI, 'setup', '--no-check'], { env: { HOME: box.home, USERPROFILE: box.home, PATH: process.env.PATH }, encoding: 'utf8', input });
+  const note = '\n  Both models, DeepSeek included, are called through Alibaba Cloud Model Studio: the key is a Model Studio key\n'
+    + '  from https://bailian.console.aliyun.com (China region), not a DeepSeek platform key.\n'
+    + '  Model Studio (DashScope) API key, for both models (typed without echo): ';
+  for (const input of ['\n\nsk-typed-note-SSSS\n', 'fast\n\nsk-typed-note-SSSS\n']) {
+    const run = setup(sandbox({ setup: false }), input);
+    assert.equal(run.status, 0, run.stdout + run.stderr);
+    assert.ok(run.stdout.includes(note), run.stdout);
+    assert.doesNotMatch(run.stdout + run.stderr, /sk-typed-note/);
+  }
+  // Custom endpoints: no note.
+  const custom = setup(sandbox({ setup: false }), `${['custom', 'https://api.openai.com/v1', 'gpt-4o-mini', '', '', '', 'm', '', 'sk-typed-note-TTTT', ''].join('\n')}\n`);
+  assert.equal(custom.status, 0, custom.stdout + custom.stderr);
+  assert.doesNotMatch(custom.stdout, /bailian|Model Studio key/);
+});
+
+test('setup: a key Model Studio refuses for the default or fast preset is explained; other failures keep the plain line', () => {
+  /** A stub `quotemem check` that prints a failed report with `code` and exits 1. */
+  const failing = (box, code) => writeUvx(box.bin, `console.log(JSON.stringify({ code: ${JSON.stringify(code)}, hint: 'The embedding provider refused the key; check QUOTEMEM_EMBED_API_KEY', ok: false, role: 'embedding', status: 'checked' }));\nprocess.exit(1);\n`);
+  const setup = (box, args, env) => spawnSync(process.execPath, [CLI, 'setup', '--yes', ...args], { env: { HOME: box.home, USERPROFILE: box.home, PATH: `${box.bin}${path.delimiter}${process.env.PATH}`, ...env }, encoding: 'utf8' });
+  const refusedLines = (preset) => 'FAIL: Alibaba Cloud Model Studio refused the key. The ' + preset + ' preset takes a Model Studio API key\n'
+    + 'from https://bailian.console.aliyun.com (China region); a DeepSeek platform key or an international Model Studio key\n'
+    + 'is refused there. The settings are saved; to try again, run `quotemem setup`, or set DASHSCOPE_API_KEY\n'
+    + 'and run `quotemem setup --yes --preset ' + preset + '`.\n';
+  const plain = 'FAIL: `quotemem check` exited with 1; fix the settings with `quotemem setup` (the file is saved).\n';
+
+  for (const [preset, code] of [['default', 'http_401'], ['fast', 'http_401'], ['default', 'http_403']]) {
+    const box = sandbox({ setup: false });
+    failing(box, code);
+    const run = setup(box, ['--preset', preset, '--review', 'standard'], { DASHSCOPE_API_KEY: 'sk-refused-dash-UUUU' });
+    assert.equal(run.status, 1, run.stdout + run.stderr);
+    assert.ok(run.stdout.includes(`"code": "${code}"`) || run.stdout.includes(`"code":"${code}"`), 'the report is shown');
+    assert.ok(run.stdout.endsWith(refusedLines(preset)), run.stdout);
+    assert.ok(!run.stdout.includes(plain));
+    assert.doesNotMatch(run.stdout + run.stderr, /sk-refused-dash/);
+    assert.ok(fs.existsSync(path.join(box.home, '.quotemem', 'service.env')), 'the settings are saved');
+  }
+  // Another failure with a preset, and a refused key on custom endpoints: the plain line.
+  const busy = sandbox({ setup: false });
+  failing(busy, 'http_429');
+  const limited = setup(busy, ['--preset', 'default'], { DASHSCOPE_API_KEY: 'sk-refused-dash-UUUU' });
+  assert.equal(limited.status, 1);
+  assert.ok(limited.stdout.endsWith(plain), limited.stdout);
+  const custom = sandbox({ setup: false });
+  failing(custom, 'http_401');
+  const run = setup(custom, ['--chat-url', 'https://api.deepseek.com/v1', '--chat-model', 'deepseek-chat', '--embed-model', 'm'], { QUOTEMEM_CHAT_API_KEY: 'sk-refused-custom-VVVV' });
+  assert.equal(run.status, 1, run.stdout + run.stderr);
+  assert.ok(run.stdout.endsWith(plain), run.stdout);
+  assert.doesNotMatch(run.stdout, /Model Studio refused|bailian/);
+  assert.doesNotMatch(run.stdout + run.stderr, /sk-refused-custom/);
 });
 
 test('setup refuses a model URL whose host is not plain, before writing anything', () => {

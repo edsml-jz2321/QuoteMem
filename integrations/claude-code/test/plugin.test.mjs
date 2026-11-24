@@ -50,6 +50,8 @@ function install(server, { options = {}, env = {} } = {}) {
     CLAUDE_PLUGIN_OPTION_URL: server ? server.url : 'http://127.0.0.1:9',
     CLAUDE_PLUGIN_OPTION_TOKEN: TOKEN,
     CLAUDE_PLUGIN_OPTION_USER_ID: 'quei',
+    // No flusher waits for idle chats beyond a test, unless the test sets a time.
+    QUOTEMEM_IDLE_FLUSH_MS: '0',
     ...options,
     ...env,
   };
@@ -244,6 +246,24 @@ test('session end: the rest is handed to a detached flusher; the hook returns at
   assert.equal(server.of('/memory/add').length, 0, 'the hook did not wait for the service');
   await waitFor(() => server.of('/memory/add').length === 1, 8000, 'the background flush');
   assert.deepEqual(server.of('/memory/add')[0].body.messages.map((m) => m.content), ['I am allergic to peanuts.', 'Noted.', 'My birthday is on 3 May.', 'Noted.']);
+});
+
+test('idle: a chat left open is saved after QUOTEMEM_IDLE_FLUSH_MS by a flusher that waits, with no later hook', async () => {
+  const server = await serve({ '/memory/add': ADDED });
+  const cc = install(server, { env: { QUOTEMEM_IDLE_FLUSH_MS: '1200', QUOTEMEM_DEBUG: '1' } });
+  await cc.prompt('sess-i', 'prompt-1', 'My kite is orange.');
+  const at = Date.now();
+  const stopped = await cc.stop('sess-i', 'prompt-1', 'Noted.');
+  assert.deepEqual([stopped.code, stopped.out, stopped.err], [0, '', '']);
+  assert.ok(stopped.ms < 1200, `the Stop hook did not wait for the idle time (${stopped.ms} ms)`);
+  assert.equal(server.of('/memory/add').length, 0, 'nothing is saved before the idle time');
+  await waitFor(() => server.of('/memory/add').length === 1, 8000, 'the idle save');
+  const [add] = server.of('/memory/add');
+  assert.ok(add.at - at >= 1200, `saved after the idle time (${add.at - at} ms)`);
+  assert.equal(add.body.session_id, 'claude-code:sess-i');
+  assert.deepEqual(add.body.messages.map((m) => [m.role, m.content]), [['user', 'My kite is orange.'], ['assistant', 'Noted.']]);
+  await waitFor(() => /flusher exit: .*no idle chat left/.test(cc.logText()), 8000, 'the waiting flusher to exit');
+  assert.equal(server.of('/memory/add').length, 1, 'nothing is sent twice');
 });
 
 test('inside Cursor: silent when Cursor\'s own QuoteMem hooks are installed, so a turn is saved once', async () => {

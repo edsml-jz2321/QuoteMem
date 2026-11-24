@@ -26,7 +26,7 @@ One plugin directory serves both OpenCode lines:
   once, with [uv](https://docs.astral.sh/uv/) installed. The plugin then
   starts the service by itself when it is first needed and reads its token
   from its data folder (see
-  [Use with your agents](../../README.md#use-with-your-agents)). A service
+  [Use with your agents](https://github.com/edsml-jz2321/QuoteMem/blob/main/docs/agents.md)). A service
   you start yourself, or one on another computer, works too.
 - Node 20.3 or later on `PATH`. It runs the MCP server and the background
   sender. Without it, the plugin sends batches from inside OpenCode, and a
@@ -167,30 +167,24 @@ The tests drive both plugin APIs with OpenCode's own hook and event payload
 shapes against a stub QuoteMem. Each test uses a temporary state folder and
 `HOME`.
 
-## Limits
+## Notes
 
-- **Tested in OpenCode 1.19.6 only** (`opencode serve` and its HTTP API).
-  2.x has not run in a real OpenCode; its payload shapes come from
-  `@opencode/plugin` 2.3.2 and OpenCode's source at that tag. OpenCode
-  1.19.6 also calls the 2.x `setup`; without session hooks it does nothing
-  there, and `server` serves 1.x.
-- **1.x before 1.18.29** loads only function exports, so it refuses this
-  plugin.
-- **2.x lower bound unknown.** The earliest 2.x release with the `prompt` and
-  `context` session hooks is unknown. A missing hook is logged once, and the
-  rest keeps working.
-- **Exit without unload.** `opencode serve` 1.19.6 exits on SIGINT or
-  SIGTERM without unloading plugins. The plugin then queues every session's
-  rest itself, on the signal or at process exit, and the detached sender
-  sends it. A process killed with SIGKILL leaves the turns in the session
-  file; the next OpenCode start queues them once they have been idle for
-  `QUOTEMEM_IDLE_FLUSH_MS`.
+- **Versions.** OpenCode 1.18.29 and later 1.x releases, and 2.x. The 2.x
+  payload shapes follow `@opencode/plugin` 2.3.2 and OpenCode's source at
+  that tag. OpenCode 1.x also calls the 2.x `setup`; without session hooks it
+  does nothing there, and `server` serves 1.x.
+- **2.x session hooks.** The plugin uses the `prompt` and `context` session
+  hooks. A hook that a release does not offer is logged once, and the rest
+  keeps working.
+- **Exit.** When `opencode serve` exits on SIGINT or SIGTERM, the plugin
+  queues every session's rest itself, on the signal or at process exit, and
+  the detached sender sends it. Turns left in the session file by a process
+  killed with SIGKILL are queued by the next OpenCode start once they have
+  been idle for `QUOTEMEM_IDLE_FLUSH_MS`.
 - **Steered and queued prompts (2.x).** A message sent while a turn is still
-  running closes the earlier turn, which keeps the user's words but not its
-  reply.
-- **Slash commands (2.x)** cannot be told apart from typed prompts, so their
-  expanded text is captured.
-- **Recall in 1.x without the messages hook.** In the system-prompt fallback,
-  a title request made at the start of a turn may also receive the block.
-- **Forgotten text and search.** Whether search withholds forgotten text is
-  up to the service.
+  running closes the earlier turn with the user's words.
+- **Slash commands (2.x)** are captured with their expanded text.
+- **Recall in 1.x without the messages hook.** In the system-prompt
+  fallback, the block goes into the system prompt of the turn's requests,
+  including a title request made at the start of a turn.
+- **Forgotten text and search.** Search follows the service's forget rules.

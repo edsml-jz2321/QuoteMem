@@ -499,7 +499,8 @@ export async function runHook({ host, event = '', input, env }) {
   if (action.action === 'prompt') forgetWait = forgetWaitMs(host, turnSettings, configuredTimeoutMs(host, event, env, input));
   const digestTime = action.action === 'start' && digestOn ? digestTimes(configuredTimeoutMs(host, event, env, input) ?? hookTimeoutMs(host, event), settings) : null;
   if (digestTime) forgetWait = digestTime.wait;
-  const memory = new HookMemory({ settings: turnSettings, log, host: label, label: `QuoteMem ${HOSTS[host].name} hook`, env: full, overlap: host === 'cursor', reliableEnd: HOSTS[host].reliableEnd !== false, forgetWaitMs: forgetWait });
+  const memory = new HookMemory({ settings: turnSettings, log, host: label, label: `QuoteMem ${HOSTS[host].name} hook`, env: full, overlap: host === 'cursor', reliableEnd: HOSTS[host].reliableEnd !== false, forgetWaitMs: forgetWait, idleWait: true });
+  idleArm = () => memory.armIdle();
   switch (action.action) {
     case 'prompt': {
       if (host === 'cursor') {
@@ -682,6 +683,9 @@ function configuredTimeoutMs(host, event, env, input) {
 
 // Work a hook does after its answer is printed (sessionStart's other chats).
 const afterWork = [];
+// Then, when this hook left turns that wait for the idle time, the start of
+// the background flusher that saves them then (HookMemory.armIdle).
+let idleArm = null;
 
 async function afterAnswer(untilMs) {
   const left = () => untilMs - Date.now();
@@ -691,6 +695,7 @@ async function afterAnswer(untilMs) {
     await Promise.race([work().catch(() => {}), new Promise((resolve) => { timer = setTimeout(resolve, left()); })]);
     clearTimeout(timer);
   }
+  try { idleArm?.(); } catch { /* the next hook tries again */ }
   await settleLaunches(left());
 }
 

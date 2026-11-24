@@ -1,6 +1,6 @@
 {
   "name": "quotemem-opencode",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "private": true,
   "description": "QuoteMem automatic memory for OpenCode: silent capture, recall and forget.",
   "type": "module",

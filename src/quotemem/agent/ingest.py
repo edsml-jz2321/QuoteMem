@@ -11,6 +11,13 @@ identical normalized request and keeps Add idempotent:
   messages (``agent-`` and 40 hex digits);
 - ``tool`` and ``function`` messages are dropped: tool output is not the user's
   conversation;
+- in a store with the ``user-role-v1`` self-identity rule (the ``agent`` Add mode) a
+  ``user`` message is the user's own words, so its ``speaker`` and
+  ``source_participant`` are dropped (`USER_SPEAKER_FIELDS`): that mode remembers one
+  person, the authenticated user, and its first-person facts and updates bind to that
+  user. Another person's words go in the content with a line label
+  (``Alice: I moved to Lisbon.``). An ``assistant`` message keeps its speaker. The
+  ``full`` and ``lean-local`` Add modes keep the speaker metadata of every message;
 - text-part arrays are joined, and credential spans that the code-owned detector
   recognizes are replaced by ``[redacted credential]`` instead of storing them (the
   bench profile stores them verbatim, the product profile rejects the whole Add);
@@ -31,10 +38,14 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Final, cast
 
+from quotemem.core.extraction_policy import SelfIdentityRule
 from quotemem.ingestion.boundary import recognized_credential_spans
 
 REDACTION: Final = "[redacted credential]"
 DROPPED_ROLES: Final = frozenset({"tool", "function"})
+USER_SPEAKER_FIELDS: Final = ("speaker", "source_participant")
+"""Speaker metadata a ``user`` message does not carry under the ``user-role-v1`` rule:
+the service would read it as another person's turn, not the authenticated user's."""
 DEFAULT_SESSION_ID: Final = "default"
 _SECONDS_LIMIT: Final = 100_000_000_000
 """Positive timestamps below this are seconds: as milliseconds it is March 1973."""
@@ -46,6 +57,8 @@ class IngestNotes:
 
     redacted_spans: int = 0
     dropped_messages: int = 0
+    dropped_user_speakers: int = 0
+    """User messages whose speaker metadata was dropped (`USER_SPEAKER_FIELDS`)."""
     scaled_timestamps: int = 0
     parsed_timestamps: int = 0
     derived_request_id: bool = False
@@ -120,12 +133,17 @@ def derive_request_id(user_id: object, session_id: object, messages: object) -> 
     return "agent-" + digest[:40]
 
 
-def normalize_add(body: bytes, *, default_user_id: str) -> tuple[bytes, IngestNotes]:
+def normalize_add(
+    body: bytes, *, default_user_id: str, self_identity: SelfIdentityRule | None = None,
+) -> tuple[bytes, IngestNotes]:
     """Normalize one Add body.
 
     Args:
         body: The HTTP body as received.
         default_user_id: The user of a request that names none.
+        self_identity: The store's self-identity rule (``ProviderConfig.self_identity``).
+            Under ``user-role-v1`` a user message's speaker metadata is dropped; None
+            keeps it.
 
     Returns:
         The body to forward and what changed; the original bytes when it is not a
@@ -163,6 +181,11 @@ def normalize_add(body: bytes, *, default_user_id: str) -> tuple[bytes, IngestNo
             fields["content"] = content
         if "timestamp" in fields:
             fields["timestamp"] = _timestamp(fields["timestamp"], notes)
+        if self_identity == "user-role-v1" and fields.get("role") == "user" and any(
+                key in fields for key in USER_SPEAKER_FIELDS):
+            for key in USER_SPEAKER_FIELDS:
+                fields.pop(key, None)
+            notes.dropped_user_speakers += 1
         messages.append(fields)
     request["messages"] = messages
     if request.get("request_id") in (None, ""):

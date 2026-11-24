@@ -205,7 +205,7 @@ export async function searchRecall(settings, query, { signal, skipIds = new Set(
     // A local service that refuses this user's token may be another OS
     // user's (two people signed in at once share 127.0.0.1:8765).
     log?.warnOnce('recall-auth', settings.localService
-      ? `recall skipped: the memory service at ${settings.url} refused this user's token (${response.status}); it may be another user's QuoteMem on this computer (two people signed in at once). Give this user a port of its own: QUOTEMEM_URL=http://127.0.0.1:${userPort()} in ~/.quotemem/env (see \`quotemem doctor\`)`
+      ? `recall skipped: the memory service at ${settings.url} refused this user's token (${response.status}); it may be another user's QuoteMem on this computer (two people signed in at once). Give this user a port of its own: QUOTEMEM_URL=http://127.0.0.1:${userPort()} in ~/.quotemem/env and in the environment Claude Code, Codex and DSH start in (see \`quotemem doctor\`)`
       : `recall skipped: the service refused the token (${response.status})`);
     return null;
   }

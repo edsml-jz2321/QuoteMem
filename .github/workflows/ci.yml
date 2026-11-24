@@ -15,31 +15,38 @@ concurrency:
 
 jobs:
   server:
-    name: Server (lint, type check, smoke)
+    name: Server (Python ${{ matrix.python }}; lint, type check, smoke)
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.12", "3.13", "3.14"]
     steps:
       - name: Check out
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - name: Set up uv and Python 3.12
+      - name: Set up uv and Python ${{ matrix.python }}
         uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           version: "0.11.21"
-          python-version: "3.12"
+          python-version: ${{ matrix.python }}
           enable-cache: false
 
-      # There is no uv.lock yet. Install the project from pyproject.toml, with the
-      # transitive versions it was tested with held by .github/ci/constraints.txt.
+      # Install the project from pyproject.toml, with the transitive versions it
+      # was tested with held by .github/ci/constraints.txt.
       - name: Install from pyproject.toml
         run: |
           uv venv .venv
           uv pip install --constraints .github/ci/constraints.txt --editable ".[dev,bench]"
 
       - name: Lint (ruff)
-        run: uv run --no-sync ruff check src .github/ci
+        run: uv run --no-sync ruff check src .github/ci .github/release
+
+      - name: Release script tests
+        run: uv run --no-sync python -m unittest discover -s .github/release
 
       - name: Type check (pyright, strict)
         run: uv run --no-sync pyright

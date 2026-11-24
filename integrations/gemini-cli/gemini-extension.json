@@ -1,6 +1,6 @@
 {
   "name": "quotemem",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "QuoteMem long-term memory: saves the conversation, recalls memories with their source quotes, and forgets on request, without any extra step.",
   "contextFileName": "GEMINI.md",
   "mcpServers": {

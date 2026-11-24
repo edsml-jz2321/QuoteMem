@@ -1,0 +1,150 @@
+name: Tag release
+
+# A push to main that sets a new version in pyproject.toml and package.json
+# releases it: this workflow checks the version, waits for the CI run of that
+# commit to succeed, creates the tag vX.Y.Z on the commit and starts
+# release.yml for the tag. A tag created with the workflow token starts no
+# workflow, so release.yml is started by workflow_dispatch with the tag as the
+# ref; the `pypi` and `npm` environments accept it because the ref is a v* tag.
+#
+# A push that keeps a version that is already tagged does nothing. A version
+# that differs between the two files, that is not higher than the latest tag,
+# that server.json does not name, or that has no dated CHANGELOG.md section
+# fails the `check` job, and nothing is tagged.
+#
+# Pushing a tag vX.Y.Z by hand still starts release.yml directly. When the tag
+# exists before this workflow creates it, this workflow does not start
+# release.yml again.
+
+on:
+  push:
+    branches: [main]
+
+permissions: {}
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: tag-release
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      release: ${{ steps.decide.outputs.release }}
+      version: ${{ steps.decide.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: '0.11.21'
+          python-version: '3.12'
+          enable-cache: false
+      - name: List the release tags
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api --paginate "repos/${GITHUB_REPOSITORY}/git/matching-refs/tags/v" --jq '.[].ref' \
+            | sed 's|^refs/tags/||' > "${RUNNER_TEMP}/tags.txt"
+          echo "$(wc -l < "${RUNNER_TEMP}/tags.txt") tags start with v"
+      - name: Decide whether this push releases a new version
+        id: decide
+        run: uv run --no-project --python 3.12 -- python -I .github/release/next_version.py "${RUNNER_TEMP}/tags.txt" .
+
+  wait-for-ci:
+    needs: check
+    if: needs.check.outputs.release == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    permissions:
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SHA: ${{ github.sha }}
+    steps:
+      - name: Wait for the CI run of this commit to succeed
+        run: |
+          runs="repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?event=push&branch=main&head_sha=${SHA}&per_page=1"
+          # Poll every 30 seconds, up to 110 minutes; a run must appear within 10 minutes.
+          for attempt in $(seq 1 220); do
+            if ! run="$(gh api "$runs" --jq '.workflow_runs[0] // {} | [.status // "none", .conclusion // "none", .html_url // "none"] | join(" ")')"; then
+              echo "attempt ${attempt}: the GitHub API did not answer; waiting"
+              sleep 30
+              continue
+            fi
+            read -r status conclusion url <<< "$run"
+            if [ "$status" = none ]; then
+              if [ "$attempt" -ge 20 ]; then
+                echo "::error::no CI run for ${SHA} in 10 minutes; nothing was tagged. Rerun this workflow when CI has run."
+                exit 1
+              fi
+              echo "attempt ${attempt}: no CI run for ${SHA} yet"
+            elif [ "$status" != completed ]; then
+              echo "attempt ${attempt}: CI is ${status}: ${url}"
+            elif [ "$conclusion" = success ]; then
+              echo "CI passed for ${SHA}: ${url}"
+              exit 0
+            else
+              echo "::error::CI for ${SHA} ended with '${conclusion}': ${url}. Nothing was tagged. Fix it and push again, or rerun CI and then this workflow."
+              exit 1
+            fi
+            sleep 30
+          done
+          echo "::error::CI for ${SHA} did not finish in time; nothing was tagged. Rerun this workflow when CI has finished."
+          exit 1
+
+  tag:
+    needs: [check, wait-for-ci]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    outputs:
+      created: ${{ steps.tag.outputs.created }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SHA: ${{ github.sha }}
+      TAG: v${{ needs.check.outputs.version }}
+    steps:
+      - name: Create the tag on this commit
+        id: tag
+        run: |
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::'${TAG}' is not vMAJOR.MINOR.PATCH"; exit 1; }
+          # The commit the tag names (also for an annotated tag); fails when there is no such tag.
+          if found="$(gh api "repos/${GITHUB_REPOSITORY}/commits/refs/tags/${TAG}" --jq '.sha' 2>/dev/null)"; then
+            # Someone pushed the tag meanwhile; that push started release.yml.
+            if [ "$found" = "$SHA" ]; then
+              echo "${TAG} already points at ${SHA}; release.yml was started by that push."
+              echo "created=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "::error::${TAG} exists and points at ${found}, not at ${SHA}; nothing was changed."
+            exit 1
+          fi
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/git/refs" -f "ref=refs/tags/${TAG}" -f "sha=${SHA}" --jq '.ref'
+          echo "created=true" >> "$GITHUB_OUTPUT"
+          echo "Created ${TAG} on ${SHA}."
+
+  start-release:
+    needs: [check, tag]
+    if: needs.tag.outputs.created == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      actions: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: v${{ needs.check.outputs.version }}
+    steps:
+      - name: Start release.yml for the tag
+        run: |
+          gh workflow run release.yml --repo "$GITHUB_REPOSITORY" --ref "$TAG"
+          echo "Started release.yml for ${TAG}: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/workflows/release.yml"

@@ -14,7 +14,9 @@ records, indexes) is made again by this release:
 2. The plan is printed before any provider call: Adds, forget statements, content
    bytes and an estimate of the model calls.
 3. The new store is opened with the bench composition behind the agent gateway, on
-   a loopback port with the store's token, exactly as ``quotemem serve`` runs it.
+   a loopback port with the store's token, exactly as ``quotemem serve`` runs it. The
+   gateway normalizes each replayed Add under the new store's Add mode, so a user
+   message's speaker metadata follows that mode's rule (``quotemem.agent.ingest``).
    The records are sent in the order the old store took them (``in_time_order``):
    every Add in the journal's order, with its original user, session and request ids
    and message timestamps, and every forget at its place in time among them, before

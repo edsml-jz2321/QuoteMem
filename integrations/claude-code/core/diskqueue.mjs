@@ -12,6 +12,7 @@
 //   owners/<owner>/state.json                      {pausedUntil} after a refused token, {storedAt},
 //                                                  {cappedUntil} the spend cap's last reset
 //   owners/<owner>/flusher.lock                    the one running flusher of this owner
+//   owners/<owner>/idle.lock                       the one flusher that waits for idle chats
 //   owners/<owner>/results/<sha16(request_id)>.json   outcome of a forget job
 //   owners/<owner>/chat-forgets.json               what the service's in-chat forget did while
 //                                                  storing a batch: counts and a hash of a request's
@@ -49,6 +50,13 @@
 // itself, at most every PROBE_EVERY_MS, and a 2xx counts as that contact; a
 // hook starts a flusher for it. A probe uses no attempt, and a job the
 // service held back (busy, its spend cap) is never probed for.
+//
+// A hook host's flusher also keeps the idle rule (`idleWait`): while this
+// owner's chats hold unsent turns, one flusher per owner takes idle.lock and
+// stays until the oldest chat has been idle for QUOTEMEM_IDLE_FLUSH_MS, then
+// queues those turns as a later hook's sweep would and sends them (see
+// runIdleWaiter in hooks.mjs). It does not hold flusher.lock while it
+// waits: a hook still starts a sender at once for a new batch or forget.
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -57,7 +65,7 @@ import { ownerKey, sha16 } from './capture.mjs';
 import { CAPTURE_BUSY_MAX_WAIT_MS, publicSettings } from './config.mjs';
 import { carryOnDisk, effectCounts, requestKey, runForget } from './forget.mjs';
 import { errKind, healthOk } from './http.mjs';
-import { lockHeld, readJson, releaseLock, touchLock, tryLock, withLock, writeFileAtomic } from './lock.mjs';
+import { handLock, lockHeld, readJson, releaseLock, touchLock, tryLock, withLock, writeFileAtomic } from './lock.mjs';
 import { DIRECT_START_FILE, spawnDetached, spawnDetachedAsync } from './proc.mjs';
 import { AUTH_PAUSE_MS, backoffMs, pollDelayMs, rotateJob, sendAdd, validJob } from './send.mjs';
 
@@ -68,6 +76,9 @@ const LEGACY_JOB_FILE = /^\d{15}-\d+-\d{6}-[0-9a-f]{16}\.json$/;
 // How often one queue object looks for files of the earlier layout.
 const LEGACY_CHECK_MS = 3_600_000;
 const FLUSHER_STALE_MS = 60_000;
+// The waiting flusher refreshes idle.lock at every wake (at most a minute
+// apart): a lock older than this is taken as left by a crash or a sleep.
+export const IDLE_LOCK_STALE_MS = 180_000;
 const HEARTBEAT_MS = 10_000;
 const RESULT_KEEP_MS = 86_400_000;
 // How long past its forget deadline an outcome may keep memory text for the
@@ -139,6 +150,7 @@ export class DiskQueue {
     this.dir = path.join(settings.stateDir, 'queue');
     this.ownerDir = path.join(settings.stateDir, 'owners', this.owner);
     this.lockFile = path.join(this.ownerDir, 'flusher.lock');
+    this.idleLockFile = path.join(this.ownerDir, 'idle.lock');
     this.resultsDir = path.join(this.ownerDir, 'results');
     this.chatForgetsFile = path.join(this.ownerDir, 'chat-forgets.json');
     this.contactFile = path.join(this.ownerDir, 'contact.json');
@@ -289,6 +301,11 @@ export class DiskQueue {
     return lockHeld(this.lockFile, { staleMs: FLUSHER_STALE_MS });
   }
 
+  /** Whether a live flusher waits for this owner's idle chats (idle.lock). */
+  idleWaiting() {
+    return lockHeld(this.idleLockFile, { staleMs: IDLE_LOCK_STALE_MS });
+  }
+
   /**
    * Start the background flusher unless one is running. It runs detached
    * with no stdio and none of the hook's handles (spawnDetached), so it
@@ -301,40 +318,65 @@ export class DiskQueue {
    *   binary) must pass a real `node` or `bun`: its own execPath would start
    *   the host itself. `sync`: start it before returning (an exit handler,
    *   which cannot wait); else it starts while the caller goes on.
+   *   `idle`: the flusher keeps the idle rule (runIdleWaiter), and one is
+   *   started when chats of this owner hold unsent turns (`idle` 'pending')
+   *   and no flusher waits for them yet, even with nothing to send.
+   *   `launch` (tests): spawnDetached's `platform` and `powershell`.
    * @returns {boolean} whether a flusher was started.
    */
-  startFlusher({ env = process.env, execPath = process.execPath, sync = false } = {}) {
+  startFlusher({ env = process.env, execPath = process.execPath, sync = false, idle = false, launch = {} } = {}) {
     try {
       // One start at a time; an exit handler starts one anyway (the other dies with the process).
       if (this.launching && !sync) return false;
-      const entries = this.entries();
-      if (entries.length === 0 || this.flusherRunning()) return false;
-      // Nothing is due soon (a paused queue, a far retry): a flusher would
-      // exit at once, so none is started; a later hook tries again.
-      const head = readJson(entries[0].file);
-      const paused = Number(this.state().pausedUntil) || 0;
-      const due = dueAt(head, paused, this.contactAt());
-      // Unless the head could not reach the service and a /health probe is due.
-      if (due - Date.now() > (this.settings.flusherMaxWaitMs ?? 120_000) && !this.mayProbe(head, paused)) return false;
+      // Chats wait for their idle time and no flusher waits for them: one
+      // starts, whatever the queue holds (it sends that first). This process
+      // takes idle.lock for it first and hands it over (handLock, adoptLock),
+      // so two hooks at once start one.
+      const handle = idle === 'pending' && this.settings.idleFlushMs > 0 && this.settings.captureEvery > 0
+        ? tryLock(this.idleLockFile, { staleMs: IDLE_LOCK_STALE_MS }) : null;
+      if (!handle) {
+        const entries = this.entries();
+        if (entries.length === 0 || this.flusherRunning()) return false;
+        // Nothing is due soon (a paused queue, a far retry): a flusher would
+        // exit at once, so none is started; a later hook tries again.
+        const head = readJson(entries[0].file);
+        const paused = Number(this.state().pausedUntil) || 0;
+        const due = dueAt(head, paused, this.contactAt());
+        // Unless the head could not reach the service and a /health probe is due.
+        if (due - Date.now() > (this.settings.flusherMaxWaitMs ?? 120_000) && !this.mayProbe(head, paused)) return false;
+      }
       // It starts while the hook goes on (on Windows PowerShell takes up to
       // half a second); the hook waits for it before it exits (settleLaunches).
       const options = {
         label: 'quotemem flusher',
         env: {
           ...env,
-          QUOTEMEM_FLUSHER_SETTINGS: JSON.stringify(publicSettings(this.settings)),
+          QUOTEMEM_FLUSHER_SETTINGS: JSON.stringify({ ...publicSettings(this.settings), idleWait: Boolean(idle) }),
           QUOTEMEM_TOKEN: this.settings.token,
+          QUOTEMEM_IDLE_LOCK: handle ? handle.nonce : '',
         },
         log: this.log,
         mark: path.join(this.settings.stateDir, DIRECT_START_FILE),
+        ...launch,
       };
       const failed = (error) => this.log.warnOnce(`flusher-spawn:${errKind(error)}`, `could not start the background flusher (${errKind(error)})`);
+      // The lock lives with the started process until it takes it over; a
+      // start that failed leaves it to the next hook.
+      const started = (child) => {
+        if (handle && !(Number.isInteger(child?.pid) && handLock(handle, child.pid)) && !child?.started) releaseLock(handle);
+        return child;
+      };
       if (sync) {
-        spawnDetached(execPath, [FLUSHER_PATH], options).on('error', failed);
+        try {
+          started(spawnDetached(execPath, [FLUSHER_PATH], options)).on('error', failed);
+        } catch (error) {
+          releaseLock(handle);
+          throw error;
+        }
         return true;
       }
       this.launching = spawnDetachedAsync(execPath, [FLUSHER_PATH], options)
-        .then((child) => child.on('error', failed), failed)
+        .then((child) => started(child).on('error', failed), (error) => { releaseLock(handle); failed(error); })
         .finally(() => { this.launching = null; });
       return true;
     } catch (error) {
