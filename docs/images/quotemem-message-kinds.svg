@@ -1,0 +1,168 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="970" height="751" viewBox="0 0 970 751" role="img" aria-labelledby="t d">
+<title id="t">What each kind of message does</title>
+<desc id="d">Six frames, each with what the user said and what changed in the store, oldest on top. New facts: four new memories. A repeat: the nurse memory gets a second quote and version 2. Added detail: two new memories, and the nurse memory gets one more quote. A correction: the cat-name memory keeps version 1 in its history and version 2 says Max, not Bob. An update: the Beijing memory becomes past and a new memory about Shanghai is current. An event: a new event memory.</desc>
+<style>
+.frame{fill:#ffffff;stroke:#d0d7de;stroke-width:1.5}
+.ftitle{font:bold 15px "DejaVu Sans",Verdana,Arial,Helvetica,sans-serif;fill:#1f2328}
+.num{font:bold 13px "DejaVu Sans",Verdana,Arial,Helvetica,sans-serif;fill:#ffffff}
+.numbg{fill:#0969da}
+.who{font:12px "DejaVu Sans",Verdana,Arial,Helvetica,sans-serif;fill:#57606a}
+.t{font:13px "DejaVu Sans",Verdana,Arial,Helvetica,sans-serif;fill:#1f2328}
+.t12{font:12px "DejaVu Sans",Verdana,Arial,Helvetica,sans-serif;fill:#1f2328}
+.tm{font:13px "DejaVu Sans",Verdana,Arial,Helvetica,sans-serif;fill:#57606a}
+.tb{font:bold 13px "DejaVu Sans",Verdana,Arial,Helvetica,sans-serif;fill:#1f2328}
+.ts{font:12px "DejaVu Sans",Verdana,Arial,Helvetica,sans-serif;fill:#57606a}
+.mono{font:12.5px "DejaVu Sans Mono",Menlo,Consolas,monospace;fill:#1f2328}
+.ubub{fill:#ddf4ff;stroke:#0969da;stroke-width:1.2}
+.abub{fill:#fff8c5;stroke:#9a6700;stroke-width:1.2}
+.query{fill:#ffffff;stroke:#0969da;stroke-width:1.2;stroke-dasharray:3 2}
+.card{fill:#f6f8fa;stroke:#8c959f;stroke-width:1.2}
+.pick{fill:#ddf4ff;stroke:#0969da;stroke-width:1.6}
+.new{fill:#dafbe1;stroke:#1a7f37;stroke-width:1.6}
+.past{fill:#eaeef2;stroke:#8c959f;stroke-width:1.2;stroke-dasharray:4 3}
+.gone{fill:#ffebe9;stroke:#cf222e;stroke-width:1.4;stroke-dasharray:5 3}
+.pastt{font:13px "DejaVu Sans",Verdana,Arial,Helvetica,sans-serif;fill:#59636e}
+.gonet{font:13px "DejaVu Sans",Verdana,Arial,Helvetica,sans-serif;fill:#a40e26;text-decoration:line-through}
+.chipj{fill:#fbefff;stroke:#8250df;stroke-width:1}
+.chipjt{font:bold 12px "DejaVu Sans",Verdana,Arial,Helvetica,sans-serif;fill:#8250df}
+.chipp{fill:#f6f8fa;stroke:#57606a;stroke-width:1}
+.chippt{font:bold 12px "DejaVu Sans",Verdana,Arial,Helvetica,sans-serif;fill:#424a53}
+.okt{font:bold 12px "DejaVu Sans",Verdana,Arial,Helvetica,sans-serif;fill:#1a7f37}
+.badt{font:bold 12px "DejaVu Sans",Verdana,Arial,Helvetica,sans-serif;fill:#cf222e}
+.hl{fill:#fff1a6}
+.redact{fill:#1f2328}
+.tomb{fill:#6e7781}
+.tombt{font:bold 9px "DejaVu Sans",Verdana,Arial,Helvetica,sans-serif;fill:#ffffff}
+.arrow{stroke:#8c959f;stroke-width:2;fill:none}
+.head{fill:#8c959f}
+.link{stroke:#1a7f37;stroke-width:1.6;fill:none;stroke-dasharray:4 3}
+@media (prefers-color-scheme:dark){
+.frame{fill:#0d1117;stroke:#3d444d}.ftitle,.t,.t12,.tb,.mono{fill:#f0f6fc}.tm,.ts,.who{fill:#9198a1}
+.numbg{fill:#4493f8}.ubub{fill:#0c2d6b;stroke:#4493f8}.abub{fill:#3b2e05;stroke:#d29922}
+.query{fill:#0d1117;stroke:#4493f8}.card{fill:#161b22;stroke:#656c76}.pick{fill:#0c2d6b;stroke:#4493f8}
+.new{fill:#0f2d1a;stroke:#3fb950}.past{fill:#21262d;stroke:#656c76}.gone{fill:#3d1418;stroke:#f85149}
+.pastt{fill:#8b949e}.gonet{fill:#ff7b72}
+.chipj{fill:#271052;stroke:#a371f7}.chipjt{fill:#c297ff}.chipp{fill:#161b22;stroke:#9198a1}.chippt{fill:#d1d9e0}
+.okt{fill:#3fb950}.badt{fill:#f85149}.hl{fill:#5a4a00}.redact{fill:#d1d9e0}.tomb{fill:#656c76}
+.arrow{stroke:#656c76}.head{fill:#656c76}.link{stroke:#3fb950}}
+</style>
+<defs><marker id="h" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="head" d="M0 0L10 5L0 10z"/></marker></defs>
+<rect class="frame" x="8.0" y="8" width="308.7" height="354" rx="10"/>
+<circle class="numbg" cx="28.0" cy="29" r="11"/>
+<text class="num" x="28.0" y="33.5" text-anchor="middle">1</text>
+<text class="ftitle" x="46.0" y="34.0">New facts</text>
+<text class="who" x="22.0" y="63.0">user · 1 Nov</text>
+<rect class="ubub" x="22.0" y="68" width="281" height="50" rx="9"/>
+<path class="ubub" d="M38.0 117l2 9l9-9z"/>
+<text class="t" x="33.0" y="89.0">I live in Beijing. My cat is</text>
+<text class="t" x="33.0" y="106.0">called Bob. I work as a nurse.</text>
+<rect class="new" x="22.0" y="134" width="281" height="32" rx="6"/>
+<text class="t" x="32.0" y="154.0">The user lives in Beijing.</text>
+<rect class="new" x="22.0" y="172" width="281" height="32" rx="6"/>
+<text class="t" x="32.0" y="192.0">The user has a cat.</text>
+<rect class="new" x="22.0" y="210" width="281" height="32" rx="6"/>
+<text class="t" x="32.0" y="230.0">The user&#x27;s cat is named Bob.</text>
+<rect class="new" x="22.0" y="248" width="281" height="32" rx="6"/>
+<text class="t" x="32.0" y="268.0">The user works as a nurse.</text>
+<text class="okt" x="22.0" y="298.0">four new memories, each with its quote</text>
+<rect class="frame" x="330.7" y="8" width="308.7" height="354" rx="10"/>
+<circle class="numbg" cx="350.7" cy="29" r="11"/>
+<text class="num" x="350.7" y="33.5" text-anchor="middle">2</text>
+<text class="ftitle" x="368.7" y="34.0">A repeat</text>
+<text class="who" x="344.7" y="63.0">user · 5 Nov</text>
+<rect class="ubub" x="344.7" y="68" width="281" height="33" rx="9"/>
+<path class="ubub" d="M360.7 100l2 9l9-9z"/>
+<text class="t" x="355.7" y="89.0">I&#x27;m a nurse, by the way.</text>
+<rect class="chipj" x="344.7" y="117" width="44" height="21" rx="10.5"/>
+<text class="chipjt" x="366.5" y="132.0" text-anchor="middle">same</text>
+<text class="t" x="395.3" y="132.0">as the nurse memory</text>
+<rect class="new" x="344.7" y="147" width="281" height="83" rx="6"/>
+<text class="t" x="354.7" y="167.0">The user works as a nurse.</text>
+<text class="ts" x="354.7" y="184.0">quote: &quot;I work as a nurse&quot;</text>
+<text class="ts" x="354.7" y="201.0">quote: &quot;I&#x27;m a nurse&quot;   ← added</text>
+<text class="okt" x="354.7" y="218.0">same memory · version 2</text>
+<rect class="frame" x="653.4" y="8" width="308.7" height="354" rx="10"/>
+<circle class="numbg" cx="673.4" cy="29" r="11"/>
+<text class="num" x="673.4" y="33.5" text-anchor="middle">3</text>
+<text class="ftitle" x="691.4" y="34.0">Added detail</text>
+<text class="who" x="667.4" y="63.0">user · 8 Nov</text>
+<rect class="ubub" x="667.4" y="68" width="281" height="50" rx="9"/>
+<path class="ubub" d="M683.4 117l2 9l9-9z"/>
+<text class="t" x="678.4" y="89.0">I work as a nurse at Ruijin</text>
+<text class="t" x="678.4" y="106.0">Hospital.</text>
+<rect class="new" x="667.4" y="134" width="281" height="66" rx="6"/>
+<text class="t" x="677.4" y="154.0">The user works at Ruijin</text>
+<text class="t" x="677.4" y="171.0">Hospital.</text>
+<text class="okt" x="677.4" y="188.0">new</text>
+<rect class="new" x="667.4" y="206" width="281" height="66" rx="6"/>
+<text class="t" x="677.4" y="226.0">A hospital is named Ruijin</text>
+<text class="t" x="677.4" y="243.0">Hospital.</text>
+<text class="okt" x="677.4" y="260.0">new</text>
+<rect class="new" x="667.4" y="278" width="281" height="66" rx="6"/>
+<text class="t" x="677.4" y="298.0">The user works as a nurse.</text>
+<text class="ts" x="677.4" y="315.0">one more quote: &quot;I work as a nurse&quot;</text>
+<text class="okt" x="677.4" y="332.0">same memory · version 3</text>
+<rect class="frame" x="8.0" y="376" width="308.7" height="337" rx="10"/>
+<circle class="numbg" cx="28.0" cy="397" r="11"/>
+<text class="num" x="28.0" y="401.5" text-anchor="middle">4</text>
+<text class="ftitle" x="46.0" y="402.0">A correction</text>
+<text class="who" x="22.0" y="431.0">user · 10 Nov</text>
+<rect class="ubub" x="22.0" y="436" width="281" height="50" rx="9"/>
+<path class="ubub" d="M38.0 485l2 9l9-9z"/>
+<text class="t" x="33.0" y="457.0">Sorry, I got that wrong earlier:</text>
+<text class="t" x="33.0" y="474.0">my cat is called Max, not Bob.</text>
+<rect class="chipj" x="22.0" y="502" width="66" height="21" rx="10.5"/>
+<text class="chipjt" x="54.9" y="517.0" text-anchor="middle">correct</text>
+<text class="t" x="94.8" y="517.0">the cat&#x27;s-name memory</text>
+<text class="ts" x="22.0" y="542.0">The same memory gets a new version.</text>
+<rect class="past" x="22.0" y="548" width="281" height="49" rx="6"/>
+<text class="pastt" x="32.0" y="568.0">The user&#x27;s cat is named Bob.</text>
+<text class="ts" x="32.0" y="585.0">version 1 · kept in history</text>
+<text class="tb" x="32.0" y="615.0">↓</text>
+<rect class="new" x="22.0" y="621" width="281" height="66" rx="6"/>
+<text class="t" x="32.0" y="641.0">The user&#x27;s cat is named Max, not</text>
+<text class="t" x="32.0" y="658.0">Bob.</text>
+<text class="okt" x="32.0" y="675.0">version 2 · current</text>
+<rect class="frame" x="330.7" y="376" width="308.7" height="337" rx="10"/>
+<circle class="numbg" cx="350.7" cy="397" r="11"/>
+<text class="num" x="350.7" y="401.5" text-anchor="middle">5</text>
+<text class="ftitle" x="368.7" y="402.0">An update</text>
+<text class="who" x="344.7" y="431.0">user · 20 Nov</text>
+<rect class="ubub" x="344.7" y="436" width="281" height="50" rx="9"/>
+<path class="ubub" d="M360.7 485l2 9l9-9z"/>
+<text class="t" x="355.7" y="457.0">I moved from Beijing to Shanghai</text>
+<text class="t" x="355.7" y="474.0">last month.</text>
+<rect class="chipj" x="344.7" y="502" width="58" height="21" rx="10.5"/>
+<text class="chipjt" x="373.9" y="517.0" text-anchor="middle">update</text>
+<text class="t" x="410.1" y="517.0">the Beijing memory</text>
+<text class="ts" x="344.7" y="542.0">A new memory; the old one is now past.</text>
+<rect class="past" x="344.7" y="548" width="281" height="49" rx="6"/>
+<text class="pastt" x="354.7" y="568.0">The user lives in Beijing.</text>
+<text class="ts" x="354.7" y="585.0">now past</text>
+<path class="link" d="M370.7 601L370.7 625"/>
+<text class="okt" x="380.7" y="618.0">superseded · from October 2026</text>
+<rect class="new" x="344.7" y="629" width="281" height="66" rx="6"/>
+<text class="t" x="354.7" y="649.0">The user moved from Beijing to</text>
+<text class="t" x="354.7" y="666.0">Shanghai last month.</text>
+<text class="okt" x="354.7" y="683.0">new · current</text>
+<rect class="frame" x="653.4" y="376" width="308.7" height="337" rx="10"/>
+<circle class="numbg" cx="673.4" cy="397" r="11"/>
+<text class="num" x="673.4" y="401.5" text-anchor="middle">6</text>
+<text class="ftitle" x="691.4" y="402.0">An event</text>
+<text class="who" x="667.4" y="431.0">user · 21 Nov</text>
+<rect class="ubub" x="667.4" y="436" width="281" height="50" rx="9"/>
+<path class="ubub" d="M683.4 485l2 9l9-9z"/>
+<text class="t" x="678.4" y="457.0">I have a dentist appointment next</text>
+<text class="t" x="678.4" y="474.0">Tuesday at 3 pm.</text>
+<rect class="new" x="667.4" y="502" width="281" height="83" rx="6"/>
+<text class="t" x="677.4" y="522.0">The user has a dentist</text>
+<text class="t" x="677.4" y="539.0">appointment next Tuesday at 3 pm.</text>
+<text class="ts" x="677.4" y="556.0">kind: event</text>
+<text class="okt" x="677.4" y="573.0">new</text>
+<rect class="new" x="12" y="725" width="26" height="15" rx="4"/>
+<text class="ts" x="44.0" y="737.0">new or changed memory</text>
+<rect class="past" x="211.1" y="725" width="26" height="15" rx="4"/>
+<text class="ts" x="243.1" y="737.0">past memory or older version</text>
+<rect class="chipj" x="459.9" y="722" width="118" height="21" rx="10.5"/>
+<text class="chipjt" x="518.7" y="737.0" text-anchor="middle">model&#x27;s answer</text>
+</svg>

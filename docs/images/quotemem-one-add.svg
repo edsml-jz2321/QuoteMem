@@ -1,0 +1,161 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="970" height="527" viewBox="0 0 970 527" role="img" aria-labelledby="t d">
+<title id="t">One Add, step by step</title>
+<desc id="d">The message of 20 November, &quot;I moved from Beijing to Shanghai last month.&quot;, in six steps. 1: the message is kept word for word. 2: a model proposes a fact and copies its quote. 3: the program finds the quote at bytes 0 to 44 and turns &quot;last month&quot; into October 2026. 4: the program picks five stored memories to compare, the Beijing memory first by meaning and by words. 5: the judge model answers update for the Beijing memory, three times. 6: the Beijing memory becomes past and the new memory is current.</desc>
+<style>
+.frame{fill:#ffffff;stroke:#d0d7de;stroke-width:1.5}
+.ftitle{font:bold 15px "DejaVu Sans",Verdana,Arial,Helvetica,sans-serif;fill:#1f2328}
+.num{font:bold 13px "DejaVu Sans",Verdana,Arial,Helvetica,sans-serif;fill:#ffffff}
+.numbg{fill:#0969da}
+.who{font:12px "DejaVu Sans",Verdana,Arial,Helvetica,sans-serif;fill:#57606a}
+.t{font:13px "DejaVu Sans",Verdana,Arial,Helvetica,sans-serif;fill:#1f2328}
+.t12{font:12px "DejaVu Sans",Verdana,Arial,Helvetica,sans-serif;fill:#1f2328}
+.tm{font:13px "DejaVu Sans",Verdana,Arial,Helvetica,sans-serif;fill:#57606a}
+.tb{font:bold 13px "DejaVu Sans",Verdana,Arial,Helvetica,sans-serif;fill:#1f2328}
+.ts{font:12px "DejaVu Sans",Verdana,Arial,Helvetica,sans-serif;fill:#57606a}
+.mono{font:12.5px "DejaVu Sans Mono",Menlo,Consolas,monospace;fill:#1f2328}
+.ubub{fill:#ddf4ff;stroke:#0969da;stroke-width:1.2}
+.abub{fill:#fff8c5;stroke:#9a6700;stroke-width:1.2}
+.query{fill:#ffffff;stroke:#0969da;stroke-width:1.2;stroke-dasharray:3 2}
+.card{fill:#f6f8fa;stroke:#8c959f;stroke-width:1.2}
+.pick{fill:#ddf4ff;stroke:#0969da;stroke-width:1.6}
+.new{fill:#dafbe1;stroke:#1a7f37;stroke-width:1.6}
+.past{fill:#eaeef2;stroke:#8c959f;stroke-width:1.2;stroke-dasharray:4 3}
+.gone{fill:#ffebe9;stroke:#cf222e;stroke-width:1.4;stroke-dasharray:5 3}
+.pastt{font:13px "DejaVu Sans",Verdana,Arial,Helvetica,sans-serif;fill:#59636e}
+.gonet{font:13px "DejaVu Sans",Verdana,Arial,Helvetica,sans-serif;fill:#a40e26;text-decoration:line-through}
+.chipj{fill:#fbefff;stroke:#8250df;stroke-width:1}
+.chipjt{font:bold 12px "DejaVu Sans",Verdana,Arial,Helvetica,sans-serif;fill:#8250df}
+.chipp{fill:#f6f8fa;stroke:#57606a;stroke-width:1}
+.chippt{font:bold 12px "DejaVu Sans",Verdana,Arial,Helvetica,sans-serif;fill:#424a53}
+.okt{font:bold 12px "DejaVu Sans",Verdana,Arial,Helvetica,sans-serif;fill:#1a7f37}
+.badt{font:bold 12px "DejaVu Sans",Verdana,Arial,Helvetica,sans-serif;fill:#cf222e}
+.hl{fill:#fff1a6}
+.redact{fill:#1f2328}
+.tomb{fill:#6e7781}
+.tombt{font:bold 9px "DejaVu Sans",Verdana,Arial,Helvetica,sans-serif;fill:#ffffff}
+.arrow{stroke:#8c959f;stroke-width:2;fill:none}
+.head{fill:#8c959f}
+.link{stroke:#1a7f37;stroke-width:1.6;fill:none;stroke-dasharray:4 3}
+@media (prefers-color-scheme:dark){
+.frame{fill:#0d1117;stroke:#3d444d}.ftitle,.t,.t12,.tb,.mono{fill:#f0f6fc}.tm,.ts,.who{fill:#9198a1}
+.numbg{fill:#4493f8}.ubub{fill:#0c2d6b;stroke:#4493f8}.abub{fill:#3b2e05;stroke:#d29922}
+.query{fill:#0d1117;stroke:#4493f8}.card{fill:#161b22;stroke:#656c76}.pick{fill:#0c2d6b;stroke:#4493f8}
+.new{fill:#0f2d1a;stroke:#3fb950}.past{fill:#21262d;stroke:#656c76}.gone{fill:#3d1418;stroke:#f85149}
+.pastt{fill:#8b949e}.gonet{fill:#ff7b72}
+.chipj{fill:#271052;stroke:#a371f7}.chipjt{fill:#c297ff}.chipp{fill:#161b22;stroke:#9198a1}.chippt{fill:#d1d9e0}
+.okt{fill:#3fb950}.badt{fill:#f85149}.hl{fill:#5a4a00}.redact{fill:#d1d9e0}.tomb{fill:#656c76}
+.arrow{stroke:#656c76}.head{fill:#656c76}.link{stroke:#3fb950}}
+</style>
+<defs><marker id="h" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="head" d="M0 0L10 5L0 10z"/></marker></defs>
+<rect class="frame" x="8.0" y="8" width="308.7" height="217" rx="10"/>
+<circle class="numbg" cx="28.0" cy="29" r="11"/>
+<text class="num" x="28.0" y="33.5" text-anchor="middle">1</text>
+<text class="ftitle" x="46.0" y="34.0">Keep the message</text>
+<rect class="chipp" x="236.9" y="18" width="66" height="21" rx="10.5"/>
+<text class="chippt" x="269.8" y="33.0" text-anchor="middle">program</text>
+<text class="who" x="22.0" y="63.0">user · 20 Nov 09:00</text>
+<rect class="ubub" x="22.0" y="68" width="281" height="50" rx="9"/>
+<path class="ubub" d="M38.0 117l2 9l9-9z"/>
+<text class="t" x="33.0" y="89.0">I moved from Beijing to Shanghai</text>
+<text class="t" x="33.0" y="106.0">last month.</text>
+<text class="tm" x="22.0" y="142.0">Stored word for word, with its</text>
+<text class="tm" x="22.0" y="159.0">session and time. Every memory must</text>
+<text class="tm" x="22.0" y="176.0">quote these bytes.</text>
+<rect class="frame" x="330.7" y="8" width="308.7" height="217" rx="10"/>
+<circle class="numbg" cx="350.7" cy="29" r="11"/>
+<text class="num" x="350.7" y="33.5" text-anchor="middle">2</text>
+<text class="ftitle" x="368.7" y="34.0">A model proposes facts</text>
+<rect class="chipj" x="574.4" y="18" width="51" height="21" rx="10.5"/>
+<text class="chipjt" x="599.9" y="33.0" text-anchor="middle">model</text>
+<rect class="card" x="344.7" y="54" width="281" height="66" rx="6"/>
+<text class="t" x="354.7" y="74.0">The user moved from Beijing to</text>
+<text class="t" x="354.7" y="91.0">Shanghai last month.</text>
+<text class="ts" x="354.7" y="108.0">kind: event · time: &quot;last month&quot;</text>
+<rect class="card" x="344.7" y="126" width="281" height="49" rx="6"/>
+<text class="t" x="354.7" y="146.0">quote: &quot;I moved from Beijing to</text>
+<text class="t" x="354.7" y="163.0">Shanghai last month.&quot;</text>
+<text class="ts" x="344.7" y="195.0">revises: the Beijing memory (a hint)</text>
+<rect class="frame" x="653.4" y="8" width="308.7" height="217" rx="10"/>
+<circle class="numbg" cx="673.4" cy="29" r="11"/>
+<text class="num" x="673.4" y="33.5" text-anchor="middle">3</text>
+<text class="ftitle" x="691.4" y="34.0">The program checks</text>
+<rect class="chipp" x="882.3" y="18" width="66" height="21" rx="10.5"/>
+<text class="chippt" x="915.2" y="33.0" text-anchor="middle">program</text>
+<rect class="hl" x="667.4" y="54" width="281" height="44" rx="4"/>
+<text class="mono" x="675.4" y="72.0">I moved from Beijing to Shanghai</text>
+<text class="mono" x="675.4" y="90.0">last month.</text>
+<text class="tb" x="667.4" y="120.0">found at bytes [0, 44) of the message</text>
+<text class="t" x="667.4" y="146.0">&quot;last month&quot;, said on 20 Nov</text>
+<text class="tb" x="667.4" y="164.0">→ October 2026</text>
+<text class="ts" x="667.4" y="190.0">Rule: a quote that is not in the</text>
+<text class="ts" x="667.4" y="207.0">message is dropped. No quote, no fact.</text>
+<rect class="frame" x="8.0" y="239" width="308.7" height="250" rx="10"/>
+<circle class="numbg" cx="28.0" cy="260" r="11"/>
+<text class="num" x="28.0" y="264.5" text-anchor="middle">4</text>
+<text class="ftitle" x="46.0" y="265.0">Pick what to compare</text>
+<rect class="chipp" x="236.9" y="249" width="66" height="21" rx="10.5"/>
+<text class="chippt" x="269.8" y="264.0" text-anchor="middle">program</text>
+<text class="tm" x="22.0" y="291.0">Stored memories about the user,</text>
+<text class="tm" x="22.0" y="308.0">ranked by meaning and by words:</text>
+<text class="ts" x="294.7" y="322.0" text-anchor="end">meaning · words</text>
+<rect class="pick" x="22.0" y="328" width="281" height="24" rx="5"/>
+<text class="t12" x="30.0" y="344.5">The user lives in Beijing.</text>
+<text class="ts" x="294.7" y="345.0" text-anchor="end">#1 · #1</text>
+<rect class="card" x="22.0" y="356" width="281" height="24" rx="5"/>
+<text class="t12" x="30.0" y="372.5">The user works at Ruijin Hospital.</text>
+<text class="ts" x="294.7" y="373.0" text-anchor="end">#2 · #4</text>
+<rect class="card" x="22.0" y="384" width="281" height="24" rx="5"/>
+<text class="t12" x="30.0" y="400.5">The user has a cat.</text>
+<text class="ts" x="294.7" y="401.0" text-anchor="end">#3 · #2</text>
+<rect class="card" x="22.0" y="412" width="281" height="24" rx="5"/>
+<text class="t12" x="30.0" y="428.5">The user works as a nurse.</text>
+<text class="ts" x="294.7" y="429.0" text-anchor="end">#4 · #3</text>
+<text class="ts" x="22.0" y="454.0">+1 more. This input is saved first, so</text>
+<text class="ts" x="22.0" y="471.0">the decision can be replayed.</text>
+<rect class="frame" x="330.7" y="239" width="308.7" height="250" rx="10"/>
+<circle class="numbg" cx="350.7" cy="260" r="11"/>
+<text class="num" x="350.7" y="264.5" text-anchor="middle">5</text>
+<text class="ftitle" x="368.7" y="265.0">The judge reviews</text>
+<rect class="chipj" x="574.4" y="249" width="51" height="21" rx="10.5"/>
+<text class="chipjt" x="599.9" y="264.0" text-anchor="middle">model</text>
+<rect class="chipj" x="344.7" y="287" width="58" height="21" rx="10.5"/>
+<text class="chipjt" x="373.9" y="302.0" text-anchor="middle">update</text>
+<text class="t" x="410.1" y="302.0">The user lives in Beijing.</text>
+<rect class="chipj" x="344.7" y="315" width="95" height="21" rx="10.5"/>
+<text class="chipjt" x="392.4" y="330.0" text-anchor="middle">independent</text>
+<text class="t" x="447.1" y="330.0">the other four</text>
+<text class="tm" x="344.7" y="365.0">&quot;The quote states a move from</text>
+<text class="tm" x="344.7" y="382.0">Beijing to Shanghai last month,</text>
+<text class="tm" x="344.7" y="399.0">replacing the Beijing residence; …&quot;</text>
+<text class="tb" x="344.7" y="429.0">Asked 3 times; all three said</text>
+<text class="tb" x="344.7" y="446.0">update.</text>
+<rect class="frame" x="653.4" y="239" width="308.7" height="250" rx="10"/>
+<circle class="numbg" cx="673.4" cy="260" r="11"/>
+<text class="num" x="673.4" y="264.5" text-anchor="middle">6</text>
+<text class="ftitle" x="691.4" y="265.0">Write</text>
+<rect class="chipp" x="882.3" y="249" width="66" height="21" rx="10.5"/>
+<text class="chippt" x="915.2" y="264.0" text-anchor="middle">program</text>
+<rect class="past" x="667.4" y="285" width="281" height="49" rx="6"/>
+<text class="pastt" x="677.4" y="305.0">The user lives in Beijing.</text>
+<text class="ts" x="677.4" y="322.0">now past · kept in history</text>
+<path class="link" d="M693.4 338L693.4 362"/>
+<text class="okt" x="703.4" y="355.0">superseded · from October 2026</text>
+<rect class="new" x="667.4" y="366" width="281" height="66" rx="6"/>
+<text class="t" x="677.4" y="386.0">The user moved from Beijing to</text>
+<text class="t" x="677.4" y="403.0">Shanghai last month.</text>
+<text class="okt" x="677.4" y="420.0">new · current</text>
+<path class="arrow" d="M317.7 118.0L328.7 118.0" marker-end="url(#h)"/>
+<path class="arrow" d="M640.4 118.0L651.4 118.0" marker-end="url(#h)"/>
+<path class="arrow" d="M317.7 349.0L328.7 349.0" marker-end="url(#h)"/>
+<path class="arrow" d="M640.4 349.0L651.4 349.0" marker-end="url(#h)"/>
+<rect class="new" x="12" y="501" width="26" height="15" rx="4"/>
+<text class="ts" x="44.0" y="513.0">new or current memory</text>
+<rect class="past" x="211.1" y="501" width="26" height="15" rx="4"/>
+<text class="ts" x="243.1" y="513.0">past memory</text>
+<rect class="pick" x="339.2" y="501" width="26" height="15" rx="4"/>
+<text class="ts" x="371.2" y="513.0">picked first</text>
+<rect class="chipj" x="474.4" y="498" width="51" height="21" rx="10.5"/>
+<text class="chipjt" x="499.9" y="513.0" text-anchor="middle">model</text>
+<rect class="chipp" x="544.4" y="498" width="66" height="21" rx="10.5"/>
+<text class="chippt" x="577.3" y="513.0" text-anchor="middle">program</text>
+</svg>

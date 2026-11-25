@@ -1,0 +1,139 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="970" height="609" viewBox="0 0 970 609" role="img" aria-labelledby="t d">
+<title id="t">Forgetting</title>
+<desc id="d">Three frames. 1: a forget said in chat on 22 November forgets the appointment memory, withholds both messages about it and writes one tombstone, before the Add answers. 2: a forget through the API first prepares a plan that changes nothing, then confirms it: the workplace memory and the hospital-name memory are forgotten, &quot;at Ruijin Hospital&quot; is withheld in the message of 8 November, two tombstones are written and the nurse memory stays. 3: a later assistant reply names the hospital; no memory is added from it. A search for where the user works returns the nurse memory first and, fifth, the message of 8 November with the forgotten words left out.</desc>
+<style>
+.frame{fill:#ffffff;stroke:#d0d7de;stroke-width:1.5}
+.ftitle{font:bold 15px "DejaVu Sans",Verdana,Arial,Helvetica,sans-serif;fill:#1f2328}
+.num{font:bold 13px "DejaVu Sans",Verdana,Arial,Helvetica,sans-serif;fill:#ffffff}
+.numbg{fill:#0969da}
+.who{font:12px "DejaVu Sans",Verdana,Arial,Helvetica,sans-serif;fill:#57606a}
+.t{font:13px "DejaVu Sans",Verdana,Arial,Helvetica,sans-serif;fill:#1f2328}
+.t12{font:12px "DejaVu Sans",Verdana,Arial,Helvetica,sans-serif;fill:#1f2328}
+.tm{font:13px "DejaVu Sans",Verdana,Arial,Helvetica,sans-serif;fill:#57606a}
+.tb{font:bold 13px "DejaVu Sans",Verdana,Arial,Helvetica,sans-serif;fill:#1f2328}
+.ts{font:12px "DejaVu Sans",Verdana,Arial,Helvetica,sans-serif;fill:#57606a}
+.mono{font:12.5px "DejaVu Sans Mono",Menlo,Consolas,monospace;fill:#1f2328}
+.ubub{fill:#ddf4ff;stroke:#0969da;stroke-width:1.2}
+.abub{fill:#fff8c5;stroke:#9a6700;stroke-width:1.2}
+.query{fill:#ffffff;stroke:#0969da;stroke-width:1.2;stroke-dasharray:3 2}
+.card{fill:#f6f8fa;stroke:#8c959f;stroke-width:1.2}
+.pick{fill:#ddf4ff;stroke:#0969da;stroke-width:1.6}
+.new{fill:#dafbe1;stroke:#1a7f37;stroke-width:1.6}
+.past{fill:#eaeef2;stroke:#8c959f;stroke-width:1.2;stroke-dasharray:4 3}
+.gone{fill:#ffebe9;stroke:#cf222e;stroke-width:1.4;stroke-dasharray:5 3}
+.pastt{font:13px "DejaVu Sans",Verdana,Arial,Helvetica,sans-serif;fill:#59636e}
+.gonet{font:13px "DejaVu Sans",Verdana,Arial,Helvetica,sans-serif;fill:#a40e26;text-decoration:line-through}
+.chipj{fill:#fbefff;stroke:#8250df;stroke-width:1}
+.chipjt{font:bold 12px "DejaVu Sans",Verdana,Arial,Helvetica,sans-serif;fill:#8250df}
+.chipp{fill:#f6f8fa;stroke:#57606a;stroke-width:1}
+.chippt{font:bold 12px "DejaVu Sans",Verdana,Arial,Helvetica,sans-serif;fill:#424a53}
+.okt{font:bold 12px "DejaVu Sans",Verdana,Arial,Helvetica,sans-serif;fill:#1a7f37}
+.badt{font:bold 12px "DejaVu Sans",Verdana,Arial,Helvetica,sans-serif;fill:#cf222e}
+.hl{fill:#fff1a6}
+.redact{fill:#1f2328}
+.tomb{fill:#6e7781}
+.tombt{font:bold 9px "DejaVu Sans",Verdana,Arial,Helvetica,sans-serif;fill:#ffffff}
+.arrow{stroke:#8c959f;stroke-width:2;fill:none}
+.head{fill:#8c959f}
+.link{stroke:#1a7f37;stroke-width:1.6;fill:none;stroke-dasharray:4 3}
+@media (prefers-color-scheme:dark){
+.frame{fill:#0d1117;stroke:#3d444d}.ftitle,.t,.t12,.tb,.mono{fill:#f0f6fc}.tm,.ts,.who{fill:#9198a1}
+.numbg{fill:#4493f8}.ubub{fill:#0c2d6b;stroke:#4493f8}.abub{fill:#3b2e05;stroke:#d29922}
+.query{fill:#0d1117;stroke:#4493f8}.card{fill:#161b22;stroke:#656c76}.pick{fill:#0c2d6b;stroke:#4493f8}
+.new{fill:#0f2d1a;stroke:#3fb950}.past{fill:#21262d;stroke:#656c76}.gone{fill:#3d1418;stroke:#f85149}
+.pastt{fill:#8b949e}.gonet{fill:#ff7b72}
+.chipj{fill:#271052;stroke:#a371f7}.chipjt{fill:#c297ff}.chipp{fill:#161b22;stroke:#9198a1}.chippt{fill:#d1d9e0}
+.okt{fill:#3fb950}.badt{fill:#f85149}.hl{fill:#5a4a00}.redact{fill:#d1d9e0}.tomb{fill:#656c76}
+.arrow{stroke:#656c76}.head{fill:#656c76}.link{stroke:#3fb950}}
+</style>
+<defs><marker id="h" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="head" d="M0 0L10 5L0 10z"/></marker></defs>
+<rect class="frame" x="8.0" y="8" width="308.7" height="563" rx="10"/>
+<circle class="numbg" cx="28.0" cy="29" r="11"/>
+<text class="num" x="28.0" y="33.5" text-anchor="middle">1</text>
+<text class="ftitle" x="46.0" y="34.0">Forget, said in chat</text>
+<text class="who" x="22.0" y="63.0">user · 22 Nov</text>
+<rect class="ubub" x="22.0" y="68" width="281" height="50" rx="9"/>
+<path class="ubub" d="M38.0 117l2 9l9-9z"/>
+<text class="t" x="33.0" y="89.0">Please forget that I have a</text>
+<text class="t" x="33.0" y="106.0">dentist appointment.</text>
+<rect class="gone" x="22.0" y="134" width="281" height="66" rx="6"/>
+<text class="gonet" x="32.0" y="154.0">The user has a dentist</text>
+<text class="gonet" x="32.0" y="171.0">appointment next Tuesday at 3 pm.</text>
+<text class="badt" x="32.0" y="188.0">forgotten</text>
+<text class="tm" x="22.0" y="220.0">Both messages about it are withheld:</text>
+<rect class="redact" x="22.0" y="232" width="251" height="14" rx="2"/>
+<rect class="redact" x="22.0" y="252" width="231" height="14" rx="2"/>
+<path class="tomb" d="M22.0 306v-18a12 12 0 0 1 24 0v18z"/>
+<text class="tombt" x="34.0" y="299.0" text-anchor="middle">RIP</text>
+<text class="ts" x="54.0" y="299.0">one tombstone</text>
+<text class="ts" x="22.0" y="326.0">Done before the Add answers.</text>
+<rect class="frame" x="330.7" y="8" width="308.7" height="563" rx="10"/>
+<circle class="numbg" cx="350.7" cy="29" r="11"/>
+<text class="num" x="350.7" y="33.5" text-anchor="middle">2</text>
+<text class="ftitle" x="368.7" y="34.0">Forget through the API</text>
+<text class="tb" x="344.7" y="62.0">&quot;Forget that I work at Ruijin</text>
+<text class="tb" x="344.7" y="79.0">Hospital.&quot;</text>
+<text class="t" x="344.7" y="99.0">Prepare: a plan; nothing changes</text>
+<text class="t" x="344.7" y="116.0">yet.</text>
+<rect class="chipj" x="344.7" y="126" width="58" height="21" rx="10.5"/>
+<text class="chipjt" x="373.9" y="141.0" text-anchor="middle">target</text>
+<text class="ts" x="410.1" y="141.0">The user works at Ruijin</text>
+<text class="ts" x="410.1" y="156.0">Hospital.</text>
+<rect class="chipj" x="344.7" y="168" width="73" height="21" rx="10.5"/>
+<text class="chipjt" x="381.3" y="183.0" text-anchor="middle">affected</text>
+<text class="ts" x="424.9" y="183.0">A hospital is named Ruijin</text>
+<text class="ts" x="424.9" y="198.0">Hospital.</text>
+<rect class="chipj" x="344.7" y="210" width="81" height="21" rx="10.5"/>
+<text class="chipjt" x="385.0" y="225.0" text-anchor="middle">unrelated</text>
+<text class="ts" x="432.3" y="225.0">The user works as a nurse,</text>
+<text class="ts" x="432.3" y="240.0">and the rest</text>
+<text class="t" x="344.7" y="266.0">Confirm:</text>
+<rect class="gone" x="344.7" y="272" width="281" height="66" rx="6"/>
+<text class="gonet" x="354.7" y="292.0">The user works at Ruijin</text>
+<text class="gonet" x="354.7" y="309.0">Hospital.</text>
+<text class="badt" x="354.7" y="326.0">forgotten</text>
+<rect class="gone" x="344.7" y="344" width="281" height="66" rx="6"/>
+<text class="gonet" x="354.7" y="364.0">A hospital is named Ruijin</text>
+<text class="gonet" x="354.7" y="381.0">Hospital.</text>
+<text class="badt" x="354.7" y="398.0">forgotten</text>
+<text class="tm" x="344.7" y="430.0">The message of 8 Nov:</text>
+<text class="mono" x="344.7" y="452.0">I work as a nurse</text>
+<rect class="redact" x="477.0" y="440" width="143.4" height="15" rx="2"/>
+<text class="mono" x="623.5" y="452.0">.</text>
+<path class="tomb" d="M344.7 492v-18a12 12 0 0 1 24 0v18z"/>
+<text class="tombt" x="356.7" y="485.0" text-anchor="middle">RIP</text>
+<text class="ts" x="376.7" y="485.0">two tombstones</text>
+<rect class="card" x="344.7" y="504" width="281" height="49" rx="6"/>
+<text class="t" x="354.7" y="524.0">The user works as a nurse.</text>
+<text class="ts" x="354.7" y="541.0">stays</text>
+<rect class="frame" x="653.4" y="8" width="308.7" height="563" rx="10"/>
+<circle class="numbg" cx="673.4" cy="29" r="11"/>
+<text class="num" x="673.4" y="33.5" text-anchor="middle">3</text>
+<text class="ftitle" x="691.4" y="34.0">Afterwards</text>
+<text class="who" x="667.4" y="63.0">assistant, later</text>
+<rect class="abub" x="667.4" y="68" width="281" height="50" rx="9"/>
+<path class="abub" d="M683.4 117l2 9l9-9z"/>
+<text class="t" x="678.4" y="89.0">You&#x27;re welcome! Good luck at</text>
+<text class="t" x="678.4" y="106.0">Ruijin Hospital.</text>
+<text class="okt" x="667.4" y="138.0">No memory is added from it.</text>
+<text class="who" x="667.4" y="169.0">search</text>
+<rect class="query" x="667.4" y="174" width="281" height="30" rx="6"/>
+<text class="t" x="678.4" y="194.0">Where does the user work?</text>
+<text class="tm" x="667.4" y="226.0">Search returns, #1 and #5 of 5:</text>
+<rect class="card" x="667.4" y="232" width="281" height="49" rx="6"/>
+<text class="t" x="677.4" y="252.0">The user works as a nurse.</text>
+<text class="ts" x="677.4" y="269.0">#1 · 0.78 · current</text>
+<text class="mono" x="667.4" y="305.0">I work as a nurse .</text>
+<text class="ts" x="667.4" y="325.0">#5 · 0.42 · the message of 8 Nov, with</text>
+<text class="ts" x="667.4" y="342.0">the forgotten words left out</text>
+<path class="arrow" d="M317.7 158.0L328.7 158.0" marker-end="url(#h)"/>
+<path class="arrow" d="M640.4 158.0L651.4 158.0" marker-end="url(#h)"/>
+<rect class="gone" x="12" y="583" width="26" height="15" rx="4"/>
+<text class="ts" x="44.0" y="595.0">forgotten memory</text>
+<rect class="redact" x="175.6" y="584" width="26" height="13" rx="2"/>
+<text class="ts" x="207.6" y="595.0">withheld words</text>
+<path class="tomb" d="M329.0 598v-11a8 8 0 0 1 16 0v11z"/>
+<text class="ts" x="351.0" y="595.0">tombstone</text>
+<rect class="chipj" x="432.9" y="580" width="118" height="21" rx="10.5"/>
+<text class="chipjt" x="491.7" y="595.0" text-anchor="middle">model&#x27;s answer</text>
+</svg>
