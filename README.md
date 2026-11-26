@@ -16,221 +16,16 @@ QuoteMem is a long-term memory service for AI agents that keeps the exact words 
 
 <p align="center"><img src="https://raw.githubusercontent.com/edsml-jz2321/QuoteMem/main/docs/images/how-quotemem-works.svg" width="900" alt="Conversation, extraction with a byte-range quote, review against the nearby memories, memory with versions, then recall with the quote, or forget with a tombstone"></p>
 
-## Demo
-
-[`examples/demo`](https://github.com/edsml-jz2321/QuoteMem/blob/main/examples/demo/README.md)
-tells one short story to a running service, for a new user. Chat 1:
-"I live in Beijing. My cat is called Bob. I work as a nurse." Chat 2:
-"I moved from Beijing to Shanghai last month." Chat 3: "Forget my cat's
-name." Chat 4 names the cat again: an old message imported without a date,
-a question, and the assistant's answer. Along the way it prints each
-memory's quote, the byte range of the update's quote, the review behind the
-update, the forget's receipt and its tombstone. It runs from a clone of the
-repository, after
-`npm install -g quotemem` and `quotemem setup`:
-
-```bash
-git clone https://github.com/edsml-jz2321/QuoteMem.git
-cd QuoteMem
-quotemem serve &
-node examples/demo/demo.mjs
-```
-
-This is one real run with the default preset. The first line, the model's
-own reason and the closing `quotemem memories` list are left out (`...`):
-
-```text
-$ node examples/demo/demo.mjs
-...
-0. The store: Add mode agent, review standard
-1. Chat 1, the user says: "I live in Beijing. My cat is called Bob. I work as a nurse."
-   stored: 4 added
-2. Chat 2, the user says: "I moved from Beijing to Shanghai last month."
-   stored: 1 corrected
-3. The memories, each with its quote:
-   [past] The user lives in Beijing.
-     quote: "I live in Beijing."
-   [current] The user moved from Beijing to Shanghai last month.
-     quote: "I moved from Beijing to Shanghai last month."
-   [current] The user has a cat.
-     quote: "My cat"
-   [current] The user's cat is named Bob.
-     quote: "My cat is called Bob"
-   [current] The user works as a nurse.
-     quote: "I work as a nurse."
-   history of the city, newest first:
-   update: The user moved from Beijing to Shanghai last month.
-   create: The user lives in Beijing.
-   it replaces: "The user lives in Beijing." (update, from 2026-10)
-   quote: bytes 0-44 of chat 2: "I moved from Beijing to Shanghai last month."
-   the review behind it:
-   update of "The user lives in Beijing." (corrected: updated)
-   reason: ...
-4. Recall:
-   search "Where does the user live now?", first hit:
-   The user moved from Beijing to Shanghai last month. (said on Wednesday, 25 November 2026)
-   Status: current
-   - user: "I moved from Beijing to Shanghai last month."
-5. Chat 3, the user says: "Forget my cat's name."
-   prepare, states the fact: The user's cat is named Bob.
-   prepare, notice: forget_keeps_unreadable_tombstone_v1
-   confirm: verified
-   receipt: tombstones written 1, sentences withheld 2, readable left 0
-   tombstone: kept to block relearning, readable: false
-6. After the forget:
-   [current] The user has a cat.
-     quote: "My cat"
-   [past] The user lives in Beijing.
-     quote: "I live in Beijing."
-   [current] The user moved from Beijing to Shanghai last month.
-     quote: "I moved from Beijing to Shanghai last month."
-   [current] The user works as a nurse.
-     quote: "I work as a nurse."
-   search "What is the name of the user's cat?", first hit:
-   The user has a cat. (said on Wednesday, 25 November 2026)
-   Status: current
-   - user: "My cat"
-   "Bob" in the memories or the search: no
-   history of a memory the forget deleted: 404 memory_not_found
-   "Bob" in any history: no
-7. Chat 4 names the cat again: an old chat imported without a date,
-   then a question and the assistant's answer:
-   user, no date: "My cat is called Bob."
-   user: "Is my cat called Bob?"
-   assistant: "Yes, your cat is called Bob."
-   stored: 1 rejected
-   reasons: denied_by_forget
-   "Bob" in the memories or the search: no
-...
-```
-
-- `stored: 1 corrected` is the Add's answer. It counts updates, corrections
-  and retractions together, and the reason code (`updated`) says which.
-- The receipt counts the tombstones written and the sentences of the saved
-  messages that now read `[withheld]`.
-- `readable left 0` is the service's own check that no read shows the fact.
-- The notice says that the forgotten statement is kept, unreadable, only to
-  block relearning. `quotemem delete-user` removes it.
-- In chat 4 only the undated user message gives a fact. It states the same
-  thing as the tombstone and is not dated after the forget, so it is
-  refused. A question and the assistant's reply never support a fact.
-
-The model's wording and how it splits chat 1 can differ between runs. So
-can the forget: it deletes the memory that names the cat, as here, or
-rewords it to "The user has a cat."
-([what differs](https://github.com/edsml-jz2321/QuoteMem/blob/main/examples/demo/README.md#what-differs-between-runs)).
-`node examples/demo/demo.mjs --relearn` adds a chat 5 in which the user
-states the name again, dated now: that brings it back.
-
-## Quick start
-
-You need Node 20.3 or later and [uv](https://docs.astral.sh/uv/) on `PATH`.
-The default preset uses one Alibaba Cloud Model Studio (DashScope) API key,
-from [bailian.console.aliyun.com](https://bailian.console.aliyun.com) (China region).
-
-1. Install the command and set it up once:
-
-   ```bash
-   npm install -g quotemem
-   quotemem setup
-   ```
-
-   Setup asks for the preset (Enter takes `default`), the review (Enter takes
-   `standard`) and your key, which is not shown as you type. It checks the
-   settings with one call to each model and ends with
-   `ok: the settings work. ...`. For scripts,
-   `quotemem setup --yes --preset default --review standard` takes the key
-   from `DASHSCOPE_API_KEY`.
-
-2. Install one tool, for example Cursor: `quotemem install cursor --write`.
-   It writes `~/.cursor/hooks.json` and `~/.cursor/mcp.json`, and prints the
-   rule to copy into each project. `quotemem doctor` checks the setup.
-
-3. Say something in a chat: "I live in Beijing. My cat is called Bob." The
-   first chat starts the memory service in the background (the first start
-   downloads it). The chat is saved in the background every few turns, and
-   once it has been idle for 5 minutes. Then `quotemem memories` lists each
-   memory with its quote:
-
-   ```text
-   [current] The user's cat is named Bob.
-     remembered 2026-11-24, changed 2026-11-24; id 01M86JY92FDXTXP53TJ1MRZ58D
-     - user, 2026-11-24: My cat is called Bob.
-   ```
-
-4. Ask in a new chat: "Where do I live?" The plugin adds the matching memory
-   to the prompt, with its quote from the first chat, in a line like
-   `- user: "I live in Beijing"`.
-
-5. Say "Forget my cat's name." The plugin forgets it and tells the agent.
-   Then `quotemem memories` shows `The user has a cat.` with the quote
-   `My cat`, and no name. A later "What is my cat called?" finds no name.
-
-`quotemem status` shows the service; `quotemem stop` stops it.
-
-## Works with your tools, and they share one memory
-
-Every tool's plugin talks to one local service, so what you tell one tool is
-recalled in the others, and what you ask one tool to forget is forgotten in
-all of them. They all use one memory by default: `QUOTEMEM_USER_ID`, which
-defaults to your OS user name.
-
-| Tool | Set it up |
-|---|---|
-| Claude Code | `claude plugin marketplace add edsml-jz2321/QuoteMem --sparse .claude-plugin integrations`, then `claude plugin install quotemem@quotemem` |
-| Codex CLI | `codex plugin marketplace add edsml-jz2321/QuoteMem --sparse .agents --sparse integrations/codex`, then `codex plugin add quotemem@quotemem`, then trust the hooks once with `/hooks` |
-| Cursor | `quotemem install cursor --write`, plus the rule it prints, in each project |
-| OpenCode | `quotemem install opencode` prints the block to merge into `opencode.jsonc` |
-| Gemini CLI | `quotemem install gemini` prints the `gemini extensions install` command |
-| Cline (VS Code) | `quotemem install cline --write`, then turn on Enable Hooks |
-| goose | `quotemem install goose --write`, then set `GOOSE_MOIM_MESSAGE_FILE` as it prints |
-| OpenClaw | `quotemem install openclaw` prints the `openclaw plugins install` command |
-| DSH | `dsh plugin --profile quotemem add quotemem` (needs [pnpm](https://pnpm.io) on `PATH`), then start `dsh --profile quotemem` |
-
-The service runs on `127.0.0.1:8765`. To use a port of your own, put
-`QUOTEMEM_URL=http://127.0.0.1:<port>` in `~/.quotemem/env` and in the
-environment Claude Code, Codex and DSH start in. The service keeps the proxy settings of the tool
-or shell that starts it; if your proxy is only for downloads, add the model
-host to `NO_PROXY` (`.aliyuncs.com` for the default preset). More tools and details:
-[Use with your agents](https://github.com/edsml-jz2321/QuoteMem/blob/main/docs/agents.md).
-
-## Use it from code
-
-The HTTP service takes a bearer token from its data folder:
-
-```bash
-TOKEN_FILE=~/.local/share/quotemem/token
-curl -s http://127.0.0.1:8765/memory/add \
-  -H "Authorization: Bearer $(cat "$TOKEN_FILE")" -H "Content-Type: application/json" \
-  -d '{"user_id": "u1", "session_id": "s1",
-       "messages": [{"role": "user", "content": "I moved to Lisbon last spring.",
-                     "timestamp": "2026-11-25T10:00:00Z"}]}'
-curl -s http://127.0.0.1:8765/memory/search \
-  -H "Authorization: Bearer $(cat "$TOKEN_FILE")" -H "Content-Type: application/json" \
-  -d '{"user_id": "u1", "query": "Where do I live?"}'
-```
-
-Any MCP client can use the memory tools (search, add, history, forget):
-
-```json
-{
-  "mcpServers": {
-    "quotemem": { "command": "npx", "args": ["-y", "quotemem", "mcp"] }
-  }
-}
-```
-
-Without Node: `uvx quotemem serve`, or `pip install "quotemem>=0.3"`, then
-`quotemem serve` ([what it needs](https://github.com/edsml-jz2321/QuoteMem/blob/main/docs/service.md#install)).
+To install it, go to the [Quick start](#quick-start). The next section shows
+what happens inside, step by step.
 
 ## How it works
 
 QuoteMem is one local service with one data folder. Every tool and every
-user goes through it, and each user's memories are kept apart. The
-[demo](#demo) shows what a user sees. This section shows what happens inside
-the store, for one user's story. The values come from one real run of
-`quotemem serve` (QuoteMem 0.3.1) with its defaults: the `agent` Add mode and
-the `standard` review (output shortened). The user said:
+user goes through it, and each user's memories are kept apart. This section
+shows what happens inside the store, for one user's story. The values come
+from one real run of `quotemem serve` (QuoteMem 0.3.1) with its defaults: the
+`agent` Add mode and the `standard` review (output shortened). The user said:
 
 | Date | The user said |
 |---|---|
@@ -291,8 +86,9 @@ Take the message of 20 November, "I moved from Beijing to Shanghai last month."
    answers agree. Here it was asked three times, and all three said `update`.
 6. **Write.** The new memory supersedes the old one, which stays as a past
    memory. The link between them records that the change took effect in
-   October 2026. The Add's reply counts this update under `corrected`, as the
-   demo prints.
+   October 2026. The Add's reply counts this update under `corrected`, which
+   covers updates, corrections and retractions; its reason code, `updated`,
+   says which.
 
 ### What each kind of message does
 
@@ -398,6 +194,125 @@ settings or a newer release.
 [How QuoteMem works](https://github.com/edsml-jz2321/QuoteMem/blob/main/docs/architecture.md)
 follows a message in nine steps, from the Add to reads and forgets, and
 covers every file, table, read route, forget and rebuild.
+
+## Quick start
+
+You need Node 20.3 or later and [uv](https://docs.astral.sh/uv/) on `PATH`.
+The default preset uses one Alibaba Cloud Model Studio (DashScope) API key,
+from [bailian.console.aliyun.com](https://bailian.console.aliyun.com) (China region).
+
+1. Install the command and set it up once:
+
+   ```bash
+   npm install -g quotemem
+   quotemem setup
+   ```
+
+   Setup asks for the preset (Enter takes `default`), the review (Enter takes
+   `standard`) and your key, which is not shown as you type. It checks the
+   settings with one call to each model and ends with
+   `ok: the settings work. ...`. For scripts,
+   `quotemem setup --yes --preset default --review standard` takes the key
+   from `DASHSCOPE_API_KEY`.
+
+2. Install one tool, for example Cursor: `quotemem install cursor --write`.
+   It writes `~/.cursor/hooks.json` and `~/.cursor/mcp.json`, and prints the
+   rule to copy into each project. `quotemem doctor` checks the setup.
+
+3. Say something in a chat: "I live in Beijing. My cat is called Bob." The
+   first chat starts the memory service in the background (the first start
+   downloads it). The chat is saved in the background every few turns, and
+   once it has been idle for 5 minutes. Then `quotemem memories` lists each
+   memory with its quote:
+
+   ```text
+   [current] The user's cat is named Bob.
+     remembered 2026-11-24, changed 2026-11-24; id 01M86JY92FDXTXP53TJ1MRZ58D
+     - user, 2026-11-24: My cat is called Bob.
+   ```
+
+4. Ask in a new chat: "Where do I live?" The plugin adds the matching memory
+   to the prompt, with its quote from the first chat, in a line like
+   `- user: "I live in Beijing"`.
+
+5. Say "Forget my cat's name." The plugin forgets it and tells the agent.
+   Then `quotemem memories` shows `The user has a cat.` with the quote
+   `My cat`, and no name. A later "What is my cat called?" finds no name.
+
+`quotemem status` shows the service; `quotemem stop` stops it.
+
+## Works with your tools, and they share one memory
+
+Every tool's plugin talks to one local service, so what you tell one tool is
+recalled in the others, and what you ask one tool to forget is forgotten in
+all of them. They all use one memory by default: `QUOTEMEM_USER_ID`, which
+defaults to your OS user name.
+
+| Tool | Set it up |
+|---|---|
+| Claude Code | `claude plugin marketplace add edsml-jz2321/QuoteMem --sparse .claude-plugin integrations`, then `claude plugin install quotemem@quotemem` |
+| Codex CLI | `codex plugin marketplace add edsml-jz2321/QuoteMem --sparse .agents --sparse integrations/codex`, then `codex plugin add quotemem@quotemem`, then trust the hooks once with `/hooks` |
+| Cursor | `quotemem install cursor --write`, plus the rule it prints, in each project |
+| OpenCode | `quotemem install opencode` prints the block to merge into `opencode.jsonc` |
+| Gemini CLI | `quotemem install gemini` prints the `gemini extensions install` command |
+| Cline (VS Code) | `quotemem install cline --write`, then turn on Enable Hooks |
+| goose | `quotemem install goose --write`, then set `GOOSE_MOIM_MESSAGE_FILE` as it prints |
+| OpenClaw | `quotemem install openclaw` prints the `openclaw plugins install` command |
+| DSH | `dsh plugin --profile quotemem add quotemem` (needs [pnpm](https://pnpm.io) on `PATH`), then start `dsh --profile quotemem` |
+
+The service runs on `127.0.0.1:8765`. To use a port of your own, put
+`QUOTEMEM_URL=http://127.0.0.1:<port>` in `~/.quotemem/env` and in the
+environment Claude Code, Codex and DSH start in. The service keeps the proxy settings of the tool
+or shell that starts it; if your proxy is only for downloads, add the model
+host to `NO_PROXY` (`.aliyuncs.com` for the default preset). More tools and details:
+[Use with your agents](https://github.com/edsml-jz2321/QuoteMem/blob/main/docs/agents.md).
+
+## Use it from code
+
+The HTTP service takes a bearer token from its data folder:
+
+```bash
+TOKEN_FILE=~/.local/share/quotemem/token
+curl -s http://127.0.0.1:8765/memory/add \
+  -H "Authorization: Bearer $(cat "$TOKEN_FILE")" -H "Content-Type: application/json" \
+  -d '{"user_id": "u1", "session_id": "s1",
+       "messages": [{"role": "user", "content": "I moved to Lisbon last spring.",
+                     "timestamp": "2026-11-25T10:00:00Z"}]}'
+curl -s http://127.0.0.1:8765/memory/search \
+  -H "Authorization: Bearer $(cat "$TOKEN_FILE")" -H "Content-Type: application/json" \
+  -d '{"user_id": "u1", "query": "Where do I live?"}'
+```
+
+Any MCP client can use the memory tools (search, add, history, forget):
+
+```json
+{
+  "mcpServers": {
+    "quotemem": { "command": "npx", "args": ["-y", "quotemem", "mcp"] }
+  }
+}
+```
+
+Without Node: `uvx quotemem serve`, or `pip install "quotemem>=0.3"`, then
+`quotemem serve` ([what it needs](https://github.com/edsml-jz2321/QuoteMem/blob/main/docs/service.md#install)).
+
+### Demo
+
+[`examples/demo`](https://github.com/edsml-jz2321/QuoteMem/blob/main/examples/demo/README.md)
+tells a short story to a running service, for a new user: three facts, a
+move, a forget of the cat's name and an attempt to teach the name again. It
+prints each memory's quote, the review behind the update, the forget's
+receipt and its tombstone. It runs from a clone of the repository:
+
+```bash
+git clone https://github.com/edsml-jz2321/QuoteMem.git
+cd QuoteMem
+quotemem serve &
+node examples/demo/demo.mjs
+```
+
+Its README shows
+[one run](https://github.com/edsml-jz2321/QuoteMem/blob/main/examples/demo/README.md#one-run).
 
 ## Result
 

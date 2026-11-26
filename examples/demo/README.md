@@ -33,9 +33,6 @@ memories are not touched.
    the counts, the reason codes and whether "Bob" is in the memories or the
    search.
 
-The Add answer counts updates, corrections and retractions together as
-`corrected`; the reason code (`updated` in step 3) says which.
-
 With `--relearn` it adds step 8: in chat 5 the user says, dated now, "For the
 record, my cat is called Bob.", with the current time as its `timestamp`. In
 the default `agent` Add mode that is the one way a forgotten fact comes back:
@@ -76,6 +73,86 @@ calls the chat and embedding models of your service a few times; saving
 takes a few seconds to a minute per chat.
 
 To remove the demo user afterwards: `quotemem delete-user --user-id <user id> --yes`.
+
+## One run
+
+This is one real run with the default preset. The first line, the model's
+own reason and the closing `quotemem memories` list are left out (`...`):
+
+```text
+$ node examples/demo/demo.mjs
+...
+0. The store: Add mode agent, review standard
+1. Chat 1, the user says: "I live in Beijing. My cat is called Bob. I work as a nurse."
+   stored: 4 added
+2. Chat 2, the user says: "I moved from Beijing to Shanghai last month."
+   stored: 1 corrected
+3. The memories, each with its quote:
+   [past] The user lives in Beijing.
+     quote: "I live in Beijing."
+   [current] The user moved from Beijing to Shanghai last month.
+     quote: "I moved from Beijing to Shanghai last month."
+   [current] The user has a cat.
+     quote: "My cat"
+   [current] The user's cat is named Bob.
+     quote: "My cat is called Bob"
+   [current] The user works as a nurse.
+     quote: "I work as a nurse."
+   history of the city, newest first:
+   update: The user moved from Beijing to Shanghai last month.
+   create: The user lives in Beijing.
+   it replaces: "The user lives in Beijing." (update, from 2026-10)
+   quote: bytes 0-44 of chat 2: "I moved from Beijing to Shanghai last month."
+   the review behind it:
+   update of "The user lives in Beijing." (corrected: updated)
+   reason: ...
+4. Recall:
+   search "Where does the user live now?", first hit:
+   The user moved from Beijing to Shanghai last month. (said on Wednesday, 25 November 2026)
+   Status: current
+   - user: "I moved from Beijing to Shanghai last month."
+5. Chat 3, the user says: "Forget my cat's name."
+   prepare, states the fact: The user's cat is named Bob.
+   prepare, notice: forget_keeps_unreadable_tombstone_v1
+   confirm: verified
+   receipt: tombstones written 1, sentences withheld 2, readable left 0
+   tombstone: kept to block relearning, readable: false
+6. After the forget:
+   [current] The user has a cat.
+     quote: "My cat"
+   [past] The user lives in Beijing.
+     quote: "I live in Beijing."
+   [current] The user moved from Beijing to Shanghai last month.
+     quote: "I moved from Beijing to Shanghai last month."
+   [current] The user works as a nurse.
+     quote: "I work as a nurse."
+   search "What is the name of the user's cat?", first hit:
+   The user has a cat. (said on Wednesday, 25 November 2026)
+   Status: current
+   - user: "My cat"
+   "Bob" in the memories or the search: no
+   history of a memory the forget deleted: 404 memory_not_found
+   "Bob" in any history: no
+7. Chat 4 names the cat again: an old chat imported without a date,
+   then a question and the assistant's answer:
+   user, no date: "My cat is called Bob."
+   user: "Is my cat called Bob?"
+   assistant: "Yes, your cat is called Bob."
+   stored: 1 rejected
+   reasons: denied_by_forget
+   "Bob" in the memories or the search: no
+...
+```
+
+- `stored: 1 corrected` is the Add's answer. It counts updates, corrections
+  and retractions together, and the reason code (`updated`) says which.
+- The receipt counts the tombstones written and the sentences of the saved
+  messages that now read `[withheld]`.
+- `readable left 0` is the service's own check that no read shows the fact.
+- The notice says that the forgotten statement is kept, unreadable, only to
+  block relearning. `quotemem delete-user` removes it.
+- In chat 4 only the undated user message gives a fact, and it is refused.
+  A question and the assistant's reply never support a fact.
 
 ## What differs between runs
 
