@@ -15,8 +15,15 @@ states a memory forgotten for it, is withdrawn, so not even a summary read deliv
 again. A request names the fact in the user's own words, so a stored "father has diabetes"
 goes with a request to forget "a family history of type 2 diabetes".
 
-A retryable refusal runs the Add's requests again, up to ``ATTEMPTS`` times in the
-Add's own budget (a fact already forgotten no longer matches). Requests still not
+A forget that meets another erasure of the scope waits for its turn inside the request
+(`quotemem.store.erasure_gate`, at most ``FORGET_WAIT_SECONDS`` and never past the Add's budget).
+A retryable refusal, a wait for a turn that passed its bound among them, runs the Add's
+requests again, up to ``ATTEMPTS`` times in the Add's own budget (a fact already forgotten
+no longer matches); a run that already waited for its turn is not paused before the next
+one, whose wait is bounded by what is left of the budget. A run that had withheld its
+targets and then failed showed them again, so the Add never runs its requests again in
+the same request: it answers ``delivery_busy`` at once and a forget never erases what it
+has shown again (`quotemem.store.erasure_gate.noting_holds`). Requests still not
 carried out fail the Add with the retryable ``delivery_busy``: the Add's memories are
 committed, and its exact replay answers the first result again and then carries out
 the requests once more. An Add is never acknowledged while a request is left undone.
@@ -27,9 +34,8 @@ the request sentence go with the fact, the sentences restating it are withheld r
 marked, and every Add, with requests or not, is checked for memories and sentences restating
 a forgotten fact, so an assistant reply recounting it in a later session is forgotten again;
 what the user states again in their own words after the forget is learned again.
-A request the plugin's forget by statement already handled is read only for
-what changed since. Its requests also
-take the Chinese forms the ``agent`` plugins' users write
+A request the plugin's forget by statement already handled is read only for what changed since.
+Its requests also take the Chinese forms the ``agent`` plugins' users write
 (``forget_requests``'s ``complete``).
 """
 
@@ -45,6 +51,7 @@ from quotemem.core.request_budget import RequestBudget
 from quotemem.ingestion.boundary import AddRequestV1
 from quotemem.ingestion.forget_requests import forget_requests
 from quotemem.service.forget_statement import ChatForgetOutcome, ChatForgetRequest
+from quotemem.store.erasure_gate import noting_holds, waiting_until
 
 ATTEMPTS: Final = 3
 """Runs of one Add's requests before the Add answers ``delivery_busy``."""
@@ -112,21 +119,36 @@ class ChatForget:
                       for found in forget_requests(request.messages, complete=complete)]
         if not statements and not complete:
             return None
+        waited = False
         for attempt in range(ATTEMPTS):
-            if attempt:
+            if attempt and not waited:
                 self._sleep(min(RETRY_SECONDS, budget.remaining()))
             budget.check()
-            try:
-                if complete:
-                    return self._operations.forget_in_chat(
-                        user_id=request.user_id, session_id=request.session_id,
-                        statements=statements, request_id=request.request_id)
-                return self._operations.forget_in_chat(
-                    user_id=request.user_id, session_id=request.session_id,
-                    statements=statements)
-            except QuoteMemError as error:
-                if error.code not in _RETRYABLE:
-                    raise
+            started = time.monotonic()
+            with noting_holds() as held:
+                try:
+                    # Every wait for the scope's erasure turn ends within the Add's own budget.
+                    with waiting_until(time.monotonic() + budget.remaining()):
+                        if complete:
+                            return self._operations.forget_in_chat(
+                                user_id=request.user_id, session_id=request.session_id,
+                                statements=statements, request_id=request.request_id)
+                        return self._operations.forget_in_chat(
+                            user_id=request.user_id, session_id=request.session_id,
+                            statements=statements)
+                except QuoteMemError as error:
+                    if error.code not in _RETRYABLE:
+                        raise
+                    if held():
+                        # The run withheld its targets and showed them again: they are never
+                        # erased later in this request.
+                        raise QuoteMemError(
+                            "delivery_busy",
+                            "An in-chat forget request is not carried out yet; retry",
+                        ) from error
+                    # A run that waited for its turn until the bound passed has paused already.
+                    waited = error.code == "erasure_in_progress" and (
+                        time.monotonic() - started >= RETRY_SECONDS)
         raise QuoteMemError("delivery_busy",
                             "An in-chat forget request is not carried out yet; retry")
 

@@ -105,7 +105,14 @@ function output(result, { empty = false } = {}) {
 
 function walk(dir) {
   const out = [];
-  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+  let entries = [];
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch (error) {
+    if (error.code === 'ENOENT') return out; // a folder a background flusher removed meanwhile
+    throw error;
+  }
+  for (const entry of entries) {
     const file = path.join(dir, entry.name);
     if (entry.isDirectory()) out.push(...walk(file));
     else if (entry.isFile()) out.push(file);
@@ -903,9 +910,13 @@ test('Cursor: a chat reopened with words already in its transcript: a forget kep
   // The CLI: sessionStart names no transcript; the file is found.
   const home = newHome();
   const run = cursorHooks(server, home, { version: CLI_VERSION });
+  // Said before the forget: its minute is read before the forget is kept (a
+  // stamp read after it would name the next minute when the minute turns
+  // between them, and so prove the words came after the forget).
+  const said = stampAt(Date.now());
   await toolForget(server, home, 'the locker code');
   const file = cliTranscript(home);
-  appendRun(file, transcriptTurn(stampAt(Date.now()), 'My locker code is HERON.', 'Noted.'));
+  appendRun(file, transcriptTurn(said, 'My locker code is HERON.', 'Noted.'));
   output(await run('sessionStart', cliFields()));
   output(await run('sessionEnd', cliEnd(file)));
   await waitFor(() => server.of('/memory/forget/prepare').length === 2, 8000, 'the forget applied to the older words');
@@ -1833,6 +1844,54 @@ function fakeApi(pluginConfig = {}) {
     on(name, handler, options) { handlers[name] = { handler, options }; },
   };
 }
+
+// The flushers that wait for idle chats under a state folder, by their locks
+// (one per service now; one per owner before).
+function idleWaiters(stateDir) {
+  const locks = [];
+  const add = (dir, pick) => {
+    let names = [];
+    try { names = fs.readdirSync(dir); } catch { return; }
+    for (const name of names) {
+      const file = pick(path.join(dir, name));
+      if (fs.existsSync(file)) locks.push(file);
+    }
+  };
+  add(path.join(stateDir, 'idle'), (file) => file);
+  add(path.join(stateDir, 'owners'), (dir) => path.join(dir, 'idle.lock'));
+  return locks.filter((file) => file.endsWith('.lock'));
+}
+
+test('OpenClaw userScope sender: one flusher waits for every sender\'s idle chat and saves each as its own user', async () => {
+  const server = await memoryServer();
+  const home = newHome();
+  const mod = await import(pathToFileURL(path.join(INTEGRATIONS, 'openclaw', 'index.mjs')).href);
+  const IDLE_MS = 1500;
+  const group = fakeApi({ userScope: 'sender', captureEvery: 10, idleFlushMs: IDLE_MS });
+  const childEnv = env(server, home);
+  delete childEnv.QUOTEMEM_IDLE_FLUSH_MS;
+  delete childEnv.QUOTEMEM_CAPTURE_EVERY;
+  const registered = mod.registerQuoteMem(group, { env: childEnv });
+  assert.ok(registered);
+  const senders = ['111', '222', '333', '444'];
+  for (const sender of senders) {
+    const gctx = { sessionKey: 'agent:main:discord:group:9', runId: `g${sender}`, channel: 'discord', senderId: sender, inputProvenance: { kind: 'external_user' } };
+    await group.handlers.before_prompt_build.handler({ currentUserMessage: `My lucky number is ${sender}.` }, gctx);
+    await group.handlers.agent_end.handler({ runId: `g${sender}`, success: true, messages: [{ role: 'assistant', content: 'Noted.' }] }, gctx);
+  }
+  const { stateDir } = registered.settings;
+  await waitFor(() => idleWaiters(stateDir).length > 0, 5000, 'a waiting flusher');
+  assert.equal(idleWaiters(stateDir).length, 1, `one waiting flusher for ${senders.length} senders`);
+  assert.equal(server.of('/memory/add').length, 0, 'nothing is saved before the idle time');
+  await waitFor(() => server.of('/memory/add').length === senders.length, IDLE_MS + 8000, 'every sender\'s idle save');
+  const adds = server.of('/memory/add').map((r) => r.body);
+  assert.deepEqual(adds.map((b) => b.user_id).sort(), senders.map((s) => `discord:${s}`));
+  for (const body of adds) {
+    assert.deepEqual(body.messages.filter((m) => m.role === 'user').map((m) => m.content), [`My lucky number is ${body.user_id.slice(8)}.`]);
+  }
+  await waitFor(() => idleWaiters(stateDir).length === 0, 8000, 'the waiting flusher to exit');
+  group.handlers.gateway_stop.handler({}, {});
+});
 
 test('OpenClaw plugin: prependContext recall, capture from agent_end, forget, provenance and per-sender memory', async () => {
   const server = await memoryServer();

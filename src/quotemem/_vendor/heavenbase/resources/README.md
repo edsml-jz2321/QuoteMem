@@ -7,7 +7,7 @@
 <p align="center">
   <a href="https://pypi.org/project/heavenbase/"><img src="https://img.shields.io/pypi/v/heavenbase?label=PyPI" alt="PyPI version"></a>
   <a href="https://pypi.org/project/heavenbase/"><img src="https://img.shields.io/pypi/pyversions/heavenbase" alt="Supported Python versions"></a>
-  <a href="https://github.com/Magolor/HeavenBase/actions/workflows/code-quality.yml"><img src="https://github.com/Magolor/HeavenBase/actions/workflows/code-quality.yml/badge.svg" alt="Code quality"></a>
+  <a href="https://github.com/Magolor/HeavenBase-legacy/actions/workflows/code-quality.yml"><img src="https://github.com/Magolor/HeavenBase-legacy/actions/workflows/code-quality.yml/badge.svg" alt="Code quality"></a>
   <a href="LICENSE"><img src="https://img.shields.io/pypi/l/heavenbase" alt="MIT license"></a>
 </p>
 
@@ -445,8 +445,8 @@ See the [changelog](CHANGELOG.md) for release-specific changes and [current goal
 Clone the repository and use the checked-in `uv` environment:
 
 ```bash
-git clone https://github.com/Magolor/HeavenBase.git
-cd HeavenBase
+git clone https://github.com/Magolor/HeavenBase-legacy.git
+cd HeavenBase-legacy
 uv sync --extra dev
 bash scripts/test.bash
 bash scripts/flake.bash --ci

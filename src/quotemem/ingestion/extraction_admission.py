@@ -964,6 +964,45 @@ def _gives_asked_number(fact: FactV12, group: _Group) -> bool:
         if (reach := request_reach(text[start:end])) is not None)
 
 
+_ASKED_CONTRAST = re.compile(
+    r",?\s+(?:not|rather than|instead of|no longer)\s+(?:(?:the|a|an|at|on)\s+)?"
+    r"(?P<value>[^\s,.;]*\d[^\s,.;]*(?:\s+\d[^\s,.;]*)*)(?=[\s.,;]|$)", re.IGNORECASE)
+"""A contrast tail naming the value the user replaced (", not 555-1234", "instead of 3pm")."""
+_ASKED_FROM = re.compile(
+    r"\s+from\s+(?:(?:the|a|an|at)\s+)?(?P<value>[^\s,.;]*\d[^\s,.;]*(?:\s+\d[^\s,.;]*)*)"
+    r"(?=\s+to\b)", re.IGNORECASE)
+"""A departure before the new value ("moved from 3pm to 4pm")."""
+
+
+def _asked_numbers(context: ExtractionContext) -> set[str]:
+    """The numbers the requests of the unit's fresh user messages give (`request_reach`)."""
+    return {number for source in context.sources
+            if source.fresh and source.attribution.authenticated_self
+            for start, end in request_sentences(source.text)
+            if (reach := request_reach(source.text[start:end])) is not None
+            for number in _numbers(source.text[start:start + reach])}
+
+
+def _without_asked_values(fact: FactV12, asked: Set[str]) -> FactV12:
+    """A fact told with a forget request, without the replaced value the request gives where
+    the fact names it only to contrast the new one: "The user's phone number is 555-9876."
+    of "The user's phone number is 555-9876, not 555-1234." for "Forget my old number
+    555-1234, my new number is 555-9876.", and without the keywords showing it. A fact
+    naming it anywhere else keeps it, and `_gives_asked_number` refuses it (fail closed)."""
+    if not asked:
+        return fact
+
+    def asked_value(match: re.Match[str]) -> str:
+        found = _numbers(match["value"])
+        return "" if found and found <= asked else match.group()
+
+    statement = _ASKED_FROM.sub(asked_value, _ASKED_CONTRAST.sub(asked_value, fact.statement))
+    keywords = [word for word in fact.keywords if not _numbers(word) & asked]
+    if statement == fact.statement and keywords == fact.keywords:
+        return fact
+    return fact.model_copy(update={"statement": statement, "keywords": keywords})
+
+
 def _request_grounded(
     position: int, fact: FactV12, groups: list[_Group], notes: _Notes, *, asking: bool,
 ) -> list[_Group]:
@@ -1644,7 +1683,9 @@ def admit(
         refused.append(RefusedFact(position, rule, REFUSALS[rule]))
 
     asking = question_support_rule and _asks_to_forget(context)
+    asked = _asked_numbers(context) if asking else set[str]()
     for position, fact in enumerate(reply.facts):
+        fact = _without_asked_values(fact, asked)
         if not fact.statement.strip():
             refuse(position, "statement_invalid")
             continue

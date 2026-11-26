@@ -58,6 +58,32 @@ export async function waitFor(check, ms = 5000, what = 'condition') {
   throw new Error(`timed out waiting for ${what}`);
 }
 
+/**
+ * The text of every file under `dir`, read while background processes
+ * (a flusher, an idle waiter) may still write and remove files there: a file
+ * or folder that vanished between the listing and the read is skipped.
+ * @returns {{file: string, text: string}[]}
+ */
+export function treeTexts(dir) {
+  const out = [];
+  const gone = (error) => {
+    if (error.code !== 'ENOENT') throw error;
+  };
+  const walk = (folder) => {
+    let entries = [];
+    try { entries = fs.readdirSync(folder, { withFileTypes: true }); } catch (error) { gone(error); return; }
+    for (const entry of entries) {
+      const file = path.join(folder, entry.name);
+      if (entry.isDirectory()) walk(file);
+      else if (entry.isFile()) {
+        try { out.push({ file, text: fs.readFileSync(file, 'utf8') }); } catch (error) { gone(error); }
+      }
+    }
+  };
+  walk(dir);
+  return out;
+}
+
 /** A fresh private temp folder, removed at exit. */
 export function tempDir(prefix = 'qm-core-') {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));

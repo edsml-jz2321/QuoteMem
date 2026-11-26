@@ -812,6 +812,15 @@ def _alias_only[K](annotations: Iterable[tuple[K, str]]) -> tuple[K, ...]:
     return tuple(key for key, found in kinds.items() if found == {"alias"})
 
 
+def _dated(view: AddReadView, spans: Iterable[QuoteSpanV1], sigma: Sigma) -> bool:
+    """Whether a version's σ takes its time from a stated source time, not a receipt."""
+    for span in spans:
+        evidence = view.evidence(span.evidence_id)
+        if evidence is not None and span_sigma(evidence, span.byte_start) == sigma:
+            return evidence.source_observed_at is not None
+    return True
+
+
 def _target(target: NominatedTargetV1, handles: Mapping[HandleKey, str],
             history: Mapping[str, str], view: AddReadView) -> TargetV1:
     handle = handles[target.handle_key]
@@ -835,6 +844,7 @@ def _target(target: NominatedTargetV1, handles: Mapping[HandleKey, str],
                           for entry in view.history(target.object_id)),
             aliases=_alias_only((row.entity_id, row.name_kind) for row in snapshot.naming),
             period=(snapshot.valid_from, snapshot.valid_to),
+            dated=_dated(view, snapshot.quote_spans, target.sigma),
         )
     older = [entry.version for entry in view.retired()
              if entry.version.memory_id == version.memory_id
@@ -845,6 +855,7 @@ def _target(target: NominatedTargetV1, handles: Mapping[HandleKey, str],
         retired=tuple(_version(row.memory_id, row.revision_id,
                                handle if row.revision_id == version.revision_id else None,
                                row.snapshot) for row in older),
+        dated=_dated(view, snapshot.quote_spans, target.sigma),
     )
 
 

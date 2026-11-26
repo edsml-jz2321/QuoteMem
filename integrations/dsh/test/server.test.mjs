@@ -829,7 +829,7 @@ test('forget prepare: a vetoed candidate the confirmation forgets all the same i
   await server.close();
 });
 
-test('quotemem_add: a user message is the user\'s own words; the result carries the store status and reasons', async () => {
+test('quotemem_add: a user message is the user\'s own words, no message carries a guessed time; the result carries the store status and reasons', async () => {
   const answers = [
     { success: true, outcome: { added: 3 }, agent: { status: 'stored', unresolved: 0, rejected: 0, reasons: {}, items: [] } },
     { success: true, outcome: { unresolved: 1 }, agent: { status: 'partial', unresolved: 1, rejected: 0, reasons: { identity_unresolved: 1 }, items: [] } },
@@ -842,10 +842,12 @@ test('quotemem_add: a user message is the user\'s own words; the result carries 
   const speaker = add.inputSchema.properties.messages.items.properties.speaker.description;
   assert.match(speaker, /^Assistant messages only/);
   assert.match(speaker, /A user message is always the user's own words, so a speaker on it is ignored/);
+  assert.equal(add.inputSchema.properties.messages.items.properties.timestamp, undefined, 'the model is not asked for a time it would guess');
   const calls = [
     [{ role: 'user', content: 'My cat is called Bob, and I live in Hangzhou.', speaker: 'me' }],
     [{ role: 'user', content: 'I moved to Shanghai last month.', speaker: 'User' }, { role: 'assistant', content: 'Noted.', speaker: 'Ada' }],
-    [{ role: 'user', content: 'I like green tea.' }],
+    // A time the model guessed ("today at midnight") is not sent: the service takes the time it receives it.
+    [{ role: 'user', content: 'I like green tea.', timestamp: Date.UTC(2026, 10, 24) }],
   ];
   const results = [];
   for (const [index, messages] of calls.entries()) {

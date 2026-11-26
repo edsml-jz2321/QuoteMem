@@ -109,7 +109,11 @@ const RECORD = new RegExp(String.raw`^${W}*${OPENER}${POLITE}(?<verb>(?:(?:do no
 const SPEAKER = /\b(?:i|i'm|i've|i'd|i'll|me|my|mine|myself)\b/i;
 const NAMES_MEMORY = new RegExp(String.raw`\b(?:from|in|into|out of) ${MEMORY}\b`, 'i');
 const TRAILING_MEMORY = new RegExp(String.raw`\s*,?\s*(?:from|out of|in) ${MEMORY}${W}*$`, 'iu');
-const TRAILING = new RegExp(String.raw`(?:[\s,]+(?:please|pls|plz|for me|thanks|thank you|thx))*${W}*$`, 'iu');
+// What ends a request's object besides its words: punctuation and spaces, but never a +, #
+// or % ("C++", "C#", "50%"): "forget C++" is not "forget C". As the service reads it, a
+// detached one stays too, with any courtesy word before it.
+const TAIL = String.raw`[^\p{L}\p{N}_+#%]`;
+const TRAILING = new RegExp(String.raw`(?:[\s,]+(?:please|pls|plz|for me|thanks|thank you|thx))*${TAIL}*$`, 'iu');
 const DISMISSAL = new RegExp(String.raw`^(?:about )?(?:it|this|that|them|everything)\b(?:${W}*$|\s*[,—–-].*$)`, 'isu');
 const RETRACTION = /^(?:that |what )?i (?:just |ever )?asked\b/i;
 // What a retraction names, after "I asked (you)": at least two content words.
@@ -773,10 +777,11 @@ export async function noteForgotten(env, owner, statement, at = Date.now()) {
  * forget paths for the same request apart from others: the plugin's forget
  * by statement keeps it with its result, and the service's in-chat outcome
  * of the request is given it (chatForgetsOf). A hash of the words folded,
- * lower-cased and without edge punctuation; no word is kept. Null for no words.
+ * lower-cased and without edge punctuation (a # or % right after a word stays:
+ * "C#" is not "C"); no word is kept. Null for no words.
  */
 export function requestKey(words) {
-  const text = fold(String(words ?? '')).normalize('NFKC').toLowerCase().replace(/\s+/g, ' ').replace(/^[\s\p{P}]+|[\s\p{P}]+$/gu, '');
+  const text = fold(String(words ?? '')).normalize('NFKC').toLowerCase().replace(/\s+/g, ' ').replace(/^[\s\p{P}]+|(?:\s|(?![#%])\p{P}|(?<![\p{L}\p{N}_#%])[#%])+$/gu, '');
   return text ? sha16(['forget-request', text]) : null;
 }
 

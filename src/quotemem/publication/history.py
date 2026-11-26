@@ -54,6 +54,7 @@ from quotemem.core.entities import (
     RevisionReason,
     SourceRole,
     SupersedeRelation,
+    WithheldSpanV1,
 )
 from quotemem.core.errors import QuoteMemError
 from quotemem.core.identity import ULID
@@ -70,6 +71,7 @@ from quotemem.store.domain import (
     RevisionRowV2,
     SupersedesLinkRowV2,
 )
+from quotemem.store.erasure_gate import Withheld, hold_generation, withheld_in
 from quotemem.store.indexed import MAX_PAGE_SIZE, IndexedQuery, LinkTargetRows, RevisionLinks
 from quotemem.store.metadata import StrictModel
 from quotemem.store.read_model import SnapshotReadGuard, StoreReadModel
@@ -346,6 +348,10 @@ class MemoryRows:
         self._rows: dict[tuple[str, str], tuple[str | None, dict[str, Any] | None]] = {}
         self._pages: dict[str, tuple[_Lookup, list[dict[str, Any]]]] = {}
         self._evidence: dict[str, EvidenceRowV1 | None] = {}
+        self._masked: dict[str, EvidenceRowV1 | None] = {}
+        # What accepted forgets of the scope withhold, read once: the read builds again
+        # when another forget is accepted before it is delivered (`MemoryReads`).
+        self._held: Withheld = withheld_in(writer, scope.scope_id)
 
     def authorize(self) -> None:
         """Recheck the guard's scoped borrow and the grant at the trusted clock."""
@@ -435,6 +441,21 @@ class MemoryRows:
         raw = self.row("item", memory_id)
         return None if raw is None else _parse(_MEMORY, raw, "Item")
 
+    def withheld(self, item: MemoryRow) -> bool:
+        """Whether an accepted forget takes the memory (`quotemem.store.erasure_gate`): it then
+        reads as it will once forgotten, gone, in every version. The bytes such a forget withholds
+        are unreadable through every Evidence row this read returns (`evidence`), so every
+        other memory reads as the erasure will leave it."""
+        return self.held_memory(item.object_id)
+
+    def held_memory(self, memory_id: str) -> bool:
+        """Whether an accepted forget takes the memory ``memory_id`` (`withheld`)."""
+        return memory_id in self._held.memory_ids
+
+    def quotes_withheld(self, spans: Sequence[QuoteSpanV1]) -> bool:
+        """Whether an accepted forget withholds any of ``spans`` from reads now."""
+        return any(self._held.covers(span) for span in spans)
+
     def revision(self, revision_id: str) -> RevisionRowV2 | None:
         """Read one revision, or None when it does not exist."""
         raw = self.row("revision", revision_id)
@@ -501,13 +522,32 @@ class MemoryRows:
         return tuple(_parse(_LINK, raw, "link") for raw in self.page(query))
 
     def evidence(self, evidence_id: str) -> EvidenceRowV1 | None:
-        """Read one Evidence part in any state and scope, or None when it does not exist."""
+        """Read one Evidence part in any state and scope, or None when it does not exist.
+
+        The bytes an accepted forget withholds are among the part's withheld ranges, as its
+        erasure will write them (`quotemem.store.erasure_gate`): every predicate and renderer that
+        reads the part, ``p_span``, ``p_ver``, quotes and masked text, then reads it as it will be.
+        The stored row is what the delivery recheck compares (`finish`)."""
         if evidence_id not in self._evidence:
             raw = self.row("evidence", evidence_id)
             self._evidence[evidence_id] = None if raw is None else _parse(
                 _EVIDENCE, raw, "Evidence",
             )
-        return self._evidence[evidence_id]
+        return self._held_view(evidence_id)
+
+    def _held_view(self, evidence_id: str) -> EvidenceRowV1 | None:
+        """The recorded part with the held bytes withheld (`evidence`)."""
+        if evidence_id not in self._masked:
+            row = self._evidence[evidence_id]
+            held = [span for span in self._held.spans if span.evidence_id == evidence_id]
+            if row is not None and held:
+                ranges = [*row.withheld_spans, *(WithheldSpanV1.model_construct(
+                    byte_start=span.byte_start, byte_end=span.byte_end, reason="forgotten",
+                    run_id="", remainder=None) for span in held)]
+                row = row.model_copy(update={"withheld_spans": sorted(
+                    ranges, key=lambda span: (span.byte_start, span.byte_end))})
+            self._masked[evidence_id] = row
+        return self._masked[evidence_id]
 
     def readability(self, now: int) -> Readability:
         """Bind the predicates to this read's scope, a clock and its recorded Evidence.
@@ -524,7 +564,7 @@ class MemoryRows:
         def lookup(evidence_id: str) -> EvidenceRowV1 | None:
             if evidence_id not in self._evidence:
                 raise QuoteMemError("binding_mismatch", "A predicate read unrecorded Evidence")
-            return self._evidence[evidence_id]
+            return self._held_view(evidence_id)
 
         return Readability(self.scope.scope_kind, self.scope.scope_id, now, lookup)
 
@@ -716,15 +756,20 @@ def _walk(rows: MemoryRows, item: MemoryRow) -> _Walk:
             links = rows.links(revision.object_id)
             chain.append((revision, links))
             for link in links:
-                if isinstance(link, SupersedesLinkRowV2):
+                # A memory an accepted forget takes is not reached: its erasure deletes the
+                # links to it, so History reads during the wait as after it.
+                if isinstance(link, SupersedesLinkRowV2) and not rows.held_memory(
+                        link.target_key):
                     queue.extend(_older(rows, current, link.target_key, ended_by))
             revision = rows.previous(revision)
         erased = erased_through([revision for revision, _ in chain])
         reworded = reworded_through([revision for revision, _ in chain])
+        # A memory an accepted forget takes reads, in every version, as once forgotten.
+        held = rows.held_memory(current.object_id)
         reached.extend(
             _Reached(
                 revision, links, via if position == 0 else "revision",
-                erased=revision.version <= erased or revision.version < reworded,
+                erased=held or revision.version <= erased or revision.version < reworded,
             )
             for position, (revision, links) in enumerate(chain)
         )
@@ -853,7 +898,8 @@ class _Builder:
                     effective_at=link.effective_at, recorded_at=link.created_at,
                 )
                 for link, head in self._successors
-                if read.p_ver(head.snapshot) and (at is None or link.created_at <= at)
+                if read.p_ver(head.snapshot) and not self.rows.held_memory(head.memory_id)
+                and (at is None or link.created_at <= at)
             ),
             key=lambda link: (link.memory_id, link.recorded_at),
         ))
@@ -871,6 +917,7 @@ class _Builder:
             )
             for correction in self._corrections[revision.object_id]
             if read.p_ver(correction.head.snapshot)
+            and not self.rows.held_memory(correction.item.object_id)
             and (at is None or correction.recorded_at <= at)
         ]
         return HistoryVersionV3(
@@ -885,16 +932,20 @@ class _Builder:
                         effective_at=link.effective_at, recorded_at=link.created_at,
                     )
                     for link in reached.links if isinstance(link, SupersedesLinkRowV2)
+                    and not self.rows.held_memory(link.target_key)
                 ),
                 key=lambda link: (link.memory_id, link.recorded_at),
             )),
             contradicts=tuple(sorted({
                 link.target_key for link in reached.links if link.link_type == "contradicts"
+                and not self.rows.held_memory(link.target_key)
             })),
             corrects_history=tuple(sorted(
                 (
-                    self._targets[link.target_key] for link in reached.links
+                    target for link in reached.links
                     if isinstance(link, CorrectsHistoryLinkRowV2)
+                    and not self.rows.held_memory(
+                        (target := self._targets[link.target_key]).memory_id)
                 ),
                 key=lambda target: (target.memory_id, target.revision_id),
             )),
@@ -944,7 +995,8 @@ def read_memory_history(
     """
     rows.authorize()
     item = rows.memory(memory_id)
-    if item is None:
+    if item is None or rows.withheld(item):
+        # A memory an accepted forget withholds reads as it will once forgotten.
         raise QuoteMemError("scope_denied", "History target is unavailable")
     walk = _walk(rows, item)
     ordered = _newest_first(walk.versions)
@@ -968,6 +1020,10 @@ def read_memory_history(
         entries=tuple(builder.version(reached, read, recorded_as_of) for reached in shown),
         completeness="complete" if complete else "truncated",
     )
+
+
+_READ_ATTEMPTS = 3
+"""How often a memory read is built again because a forget was accepted meanwhile."""
 
 
 class MemoryReads:
@@ -1023,8 +1079,16 @@ class MemoryReads:
         with self.publisher.pin([exact], completions=completions) as guard:
 
             def deliver() -> None:
-                consumer(read(MemoryRows(self.writer, exact, grant, guard, self.clock)))
-                check_add_grant(grant, exact, self.clock())
+                # A forget accepted while the result is built makes it build again, so a
+                # result never shows what a forget accepted before its delivery withholds.
+                for _ in range(_READ_ATTEMPTS):
+                    holds = hold_generation(self.writer, exact.scope_id)
+                    result = read(MemoryRows(self.writer, exact, grant, guard, self.clock))
+                    if hold_generation(self.writer, exact.scope_id) == holds:
+                        consumer(result)
+                        check_add_grant(grant, exact, self.clock())
+                        return
+                raise QuoteMemError("delivery_busy", "Forgets kept changing the read")
 
             guard.consume_operation(exact, deliver)
 

@@ -82,6 +82,7 @@ def memory_eligible(
     at: int | None = None,
     automatic: AutomaticRead | None = None,
     knowledge: KnowledgeSelection | None = None,
+    replaced: bool = False,
 ) -> bool:
     """Check one memory for an already resolved Search mode.
 
@@ -96,6 +97,8 @@ def memory_eligible(
             the reader that supplies knowledge.
         automatic: memory/head metadata, required for auto and core_hook.
         knowledge: Selected version and state at t, required for knowledge.
+        replaced: Whether a plain read also admits a memory an undated update replaced
+            (`Readability.p_replaced`): a listing of the scope's memories only.
 
     Returns:
         Whether the memory can participate in ranking or delivery. Plain
@@ -110,7 +113,7 @@ def memory_eligible(
     if mode == "plain":
         return p_mem(read, memory.lifecycle_state, memory.head) or (
             p_past(read, memory, index) is not None
-        )
+        ) or (replaced and read.p_replaced(memory, index))
     if mode == "auto" or mode == "core_hook":
         if automatic is None:
             raise ValueError("Automatic reads require pinned Item and head metadata")
@@ -407,6 +410,7 @@ def delivery_projections(
     speakers: Mapping[QuoteKey, str | None],
     as_of: int | None = None,
     remainders: bool = False,
+    replaced: bool = False,
 ) -> tuple[DeliveryProjection, ...]:
     """Validate exact locators, eligibility, ends and quote lines at one pin.
 
@@ -426,6 +430,8 @@ def delivery_projections(
             delivered by its current remainder (the interactive Search of an ``agent``
             workspace, ``core.forget_remainder``): its source then shows its readable bytes
             alone.
+        replaced: Whether a plain read also delivers a memory an undated update replaced,
+            with no end (`memory_eligible`'s ``replaced``): a listing of the scope's memories.
 
     Returns:
         Ordered, guard-owned presentations for rendering and equality rechecks.
@@ -543,6 +549,7 @@ def delivery_projections(
                 tuple(version.sensitivity_classes),
             ),
             knowledge=KnowledgeSelection(version, row.lifecycle_state),
+            replaced=replaced,
         ):
             raise QuoteMemError("delivery_stale", "Delivery memory is no longer eligible")
         quotes = rendered_quotes(
@@ -556,9 +563,10 @@ def delivery_projections(
         end = None
         if mode == "plain" and not p_mem(read, row.lifecycle_state, version):
             past = p_past(read, document.world, corpus)
-            if past is None or past.end is None:
+            if past is not None and past.end is not None:
+                end = past.end
+            elif not (replaced and read.p_replaced(document.world, corpus)):
                 raise QuoteMemError("delivery_stale", "A past memory lost its witnessed end")
-            end = past.end
         elif mode == "world":
             intervals = world_intervals(read, document.world, corpus)
             visible = [

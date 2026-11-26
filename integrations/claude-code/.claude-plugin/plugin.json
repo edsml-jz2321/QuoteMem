@@ -1,7 +1,7 @@
 {
   "name": "quotemem",
   "displayName": "QuoteMem",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Auditable long-term memory: saves the conversation every few turns, recalls memories with their source quotes when you ask about the past, and forgets on request, all without extra steps.",
   "author": {
     "name": "Quei"

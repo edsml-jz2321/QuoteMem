@@ -12,7 +12,11 @@
 //   owners/<owner>/state.json                      {pausedUntil} after a refused token, {storedAt},
 //                                                  {cappedUntil} the spend cap's last reset
 //   owners/<owner>/flusher.lock                    the one running flusher of this owner
-//   owners/<owner>/idle.lock                       the one flusher that waits for idle chats
+//   owners/<owner>/owner.json                      {url, userId, credential (a hash), settings
+//                                                  without the token}: an owner whose chats a waiting
+//                                                  flusher saves (hook hosts)
+//   idle/<sha16(['idle', url, credential])>.lock   the one flusher that waits for the idle chats
+//                                                  of every owner of one service with one credential
 //   owners/<owner>/results/<sha16(request_id)>.json   outcome of a forget job
 //   owners/<owner>/chat-forgets.json               what the service's in-chat forget did while
 //                                                  storing a batch: counts and a hash of a request's
@@ -51,23 +55,26 @@
 // hook starts a flusher for it. A probe uses no attempt, and a job the
 // service held back (busy, its spend cap) is never probed for.
 //
-// A hook host's flusher also keeps the idle rule (`idleWait`): while this
-// owner's chats hold unsent turns, one flusher per owner takes idle.lock and
-// stays until the oldest chat has been idle for QUOTEMEM_IDLE_FLUSH_MS, then
-// queues those turns as a later hook's sweep would and sends them (see
+// A hook host's flusher also keeps the idle rule (`idleWait`): while chats
+// hold unsent turns, one flusher per service and state folder (all its
+// owners: OpenClaw keeps one owner per channel sender) takes the idle lock
+// and stays until the oldest chat has been idle for QUOTEMEM_IDLE_FLUSH_MS,
+// then queues those turns as a later hook's sweep would and sends them (see
 // runIdleWaiter in hooks.mjs). It does not hold flusher.lock while it
 // waits: a hook still starts a sender at once for a new batch or forget.
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createHmac } from 'node:crypto';
 
 import { ownerKey, sha16 } from './capture.mjs';
 import { CAPTURE_BUSY_MAX_WAIT_MS, publicSettings } from './config.mjs';
 import { carryOnDisk, effectCounts, requestKey, runForget } from './forget.mjs';
 import { errKind, healthOk } from './http.mjs';
-import { handLock, lockHeld, readJson, releaseLock, touchLock, tryLock, withLock, writeFileAtomic } from './lock.mjs';
+import { handLock, lockHeld, readJson, releaseLock, stateKey, touchLock, tryLock, withLock, writeFileAtomic } from './lock.mjs';
 import { DIRECT_START_FILE, spawnDetached, spawnDetachedAsync } from './proc.mjs';
 import { AUTH_PAUSE_MS, backoffMs, pollDelayMs, rotateJob, sendAdd, validJob } from './send.mjs';
+import { serviceToken } from './token.mjs';
 
 export const FLUSHER_PATH = path.join(path.dirname(fileURLToPath(import.meta.url)), 'flusher.mjs');
 const JOB_FILE = /^(\d{15})-(\d+)-(\d{6})-([0-9a-f]{16})-([0-9a-f]{16})\.json$/;
@@ -76,7 +83,7 @@ const LEGACY_JOB_FILE = /^\d{15}-\d+-\d{6}-[0-9a-f]{16}\.json$/;
 // How often one queue object looks for files of the earlier layout.
 const LEGACY_CHECK_MS = 3_600_000;
 const FLUSHER_STALE_MS = 60_000;
-// The waiting flusher refreshes idle.lock at every wake (at most a minute
+// The waiting flusher refreshes the idle lock at every wake (at most a minute
 // apart): a lock older than this is taken as left by a crash or a sleep.
 export const IDLE_LOCK_STALE_MS = 180_000;
 const HEARTBEAT_MS = 10_000;
@@ -138,6 +145,21 @@ function ownerOfJob(job, url) {
 }
 
 /**
+ * What tells owners with the same credential apart: an HMAC, under the
+ * state folder's own key (stateKey), of the auth mode and the token (for a
+ * service on this computer started on demand, the token as a request reads
+ * it); never the token, nor a value a copy of the folder could test guesses
+ * against or match elsewhere.
+ */
+export function ownerCredential(settings) {
+  let token = settings.token ?? '';
+  if (!token && settings.localService) {
+    try { token = serviceToken(process.env, settings.localService) ?? ''; } catch { token = ''; }
+  }
+  return createHmac('sha256', stateKey(settings.stateDir)).update(`quotemem-owner\0${settings.authMode ?? ''}\0${token}`).digest('hex');
+}
+
+/**
  * The queue of one state folder, as one owner (the settings' user at the
  * settings' service) sees it. All methods are synchronous, small and never
  * throw on a missing folder.
@@ -150,7 +172,11 @@ export class DiskQueue {
     this.dir = path.join(settings.stateDir, 'queue');
     this.ownerDir = path.join(settings.stateDir, 'owners', this.owner);
     this.lockFile = path.join(this.ownerDir, 'flusher.lock');
-    this.idleLockFile = path.join(this.ownerDir, 'idle.lock');
+    // One waiting flusher for every owner of this service with the same
+    // credential (token and auth mode) in this state folder.
+    this.credential = ownerCredential(settings);
+    this.idleLockFile = path.join(settings.stateDir, 'idle', `${sha16(['idle', String(settings.url ?? ''), this.credential])}.lock`);
+    this.ownerFile = path.join(this.ownerDir, 'owner.json');
     this.resultsDir = path.join(this.ownerDir, 'results');
     this.chatForgetsFile = path.join(this.ownerDir, 'chat-forgets.json');
     this.contactFile = path.join(this.ownerDir, 'contact.json');
@@ -301,7 +327,7 @@ export class DiskQueue {
     return lockHeld(this.lockFile, { staleMs: FLUSHER_STALE_MS });
   }
 
-  /** Whether a live flusher waits for this owner's idle chats (idle.lock). */
+  /** Whether a live flusher waits for the idle chats of this service's owners (the idle lock). */
   idleWaiting() {
     return lockHeld(this.idleLockFile, { staleMs: IDLE_LOCK_STALE_MS });
   }

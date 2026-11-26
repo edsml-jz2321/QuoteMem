@@ -29,7 +29,10 @@ records, indexes) is made again by this release:
    the user's withheld markers
    (``AgentStore.forget_withheld``, a forget of sentences seeded with it), so the new
    store holds the old one's tombstones and forget shadow (a later restatement is
-   treated as the old store treated it) and reads a part holding a marker, as the old
+   treated as the old store treated it: the shadow's names take the old forget's time, or
+   the latest date of its user's earlier messages when later (``restamp_times``,
+   ``AgentStore.restamp_names``), which a restatement dated after it lifts) and reads a
+   part holding a marker, as the old
    store read the part whose words it withheld, as no Search hit. An Add after the
    user's forget whose words the old store withheld as a restatement, or whose part an
    erasure emptied, has that tombstoning repeated right after it (``late_markers``), so
@@ -74,12 +77,14 @@ import time
 from collections import deque
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass
+from functools import partial
 from pathlib import Path
 from typing import Any, Final, Literal, cast
 
 import httpx
 from pydantic import ConfigDict, Field
 
+from quotemem.agent.admin import AgentStore
 from quotemem.agent.export import export_store
 from quotemem.agent.journal import (
     Forget,
@@ -246,7 +251,7 @@ RESTATED_FORGOTTEN: Final = "restated_forgotten"
 """The reason of a range an Add withheld as a restatement of a forgotten fact."""
 
 
-def late_markers(entries: tuple[ReplayEntry, ...]) -> dict[int, tuple[str, str]]:
+def late_markers(entries: tuple[ReplayEntry, ...]) -> dict[int, Forget]:
     """The Adds whose withheld markers no replayed forget reaches, by replay position.
 
     A forget tombstoned over withheld markers (``AgentStore.forget_withheld``) withholds
@@ -254,19 +259,19 @@ def late_markers(entries: tuple[ReplayEntry, ...]) -> dict[int, tuple[str, str]]
     after a forget, the words of a later Add that restated the forgotten fact (reason
     ``restated_forgotten``) and the parts a privacy erasure emptied; replayed in time
     order, such an Add comes after every forget that could withhold its markers. Each
-    one after a forget of its user maps to (user id, the statement of the user's latest
-    forget before it), whose replay is repeated right after the Add, so its markers are
-    withheld as the old store withheld those words, under a tombstone the user already
-    has. ``entries`` are in replay order (``in_time_order``).
+    one after a forget of its user maps to the user's latest forget before it, whose last
+    statement's replay is repeated right after the Add, so its markers are withheld as the
+    old store withheld those words, under a tombstone the user already has.
+    ``entries`` are in replay order (``in_time_order``).
     """
-    latest: dict[str, str] = {}
-    found: dict[int, tuple[str, str]] = {}
+    latest: dict[str, Forget] = {}
+    found: dict[int, Forget] = {}
     for index, entry in enumerate(entries):
         if isinstance(entry, Forget):
-            latest[entry.user_id] = entry.statements[-1]
+            latest[entry.user_id] = entry
         elif entry.user_id in latest and (entry.erased_parts or any(
                 span.reason == RESTATED_FORGOTTEN for span in entry.withheld)):
-            found[index] = (entry.user_id, latest[entry.user_id])
+            found[index] = latest[entry.user_id]
     return found
 
 
@@ -475,9 +480,33 @@ class _Forgotten:
     tombstoned: int = 0
 
 
+def restamp_times(entries: tuple[ReplayEntry, ...]) -> dict[int, int]:
+    """The time each replayed forget stamps its shadow names with, by replay position.
+
+    A name is lifted only by a restatement received after its stamp and dated after it
+    (``core/relearn.after``). In a rebuilt store every part is received on the rebuild's
+    clock, after any journal time, so only the date tells a restatement from a message the
+    old store took before the forget. The stamp is therefore the later of the forget's own
+    time and the latest date among its user's messages replayed before it: a message dated
+    ahead of the forget by a client clock running ahead never lifts the name, as the old
+    store's receipt check kept it from doing. ``entries`` are in replay order.
+    """
+    latest: dict[str, int] = {}
+    found: dict[int, int] = {}
+    for index, entry in enumerate(entries):
+        if isinstance(entry, Forget):
+            found[index] = max(entry.at_ms, latest.get(entry.user_id, entry.at_ms))
+            continue
+        dates = [message.timestamp for message in entry.messages if message.timestamp is not None]
+        if dates:
+            latest[entry.user_id] = max(latest.get(entry.user_id, dates[0]), *dates)
+    return found
+
+
 async def _forget(
     http: httpx.AsyncClient, entry: Forget, *, record: int,
     withheld: Callable[[str, str], int] | None = None,
+    store: AgentStore | None = None, stamp: tuple[int, int] | None = None,
 ) -> _Forgotten:
     """Forget each statement of one journal forget; what that did.
 
@@ -490,7 +519,11 @@ async def _forget(
     store (a later Add may state the fact again, and a rebuild's chat model may pick it
     as the forgotten one): every journal statement is one of the old store's
     tombstones. Without ``withheld`` (a store whose forgets do not forget sentences
-    alone) it is done.
+    alone) it is done. With ``store`` and ``stamp`` (since, at), the names stamped since
+    ``since`` (the end of the previous record, so also by an attempt a crash cut short)
+    are then stamped with ``at`` (`restamp_times`, ``AgentStore.restamp_names``): the
+    rebuild's clock is later than every replayed message's date, and a name is lifted
+    only by a restatement dated after its stamp.
     """
     done_by = _Forgotten()
     for number, statement in enumerate(entry.statements):
@@ -518,6 +551,9 @@ async def _forget(
             )
         if withheld is not None and await asyncio.to_thread(withheld, entry.user_id, statement):
             done_by.tombstoned += 1
+    if store is not None and stamp is not None:
+        await asyncio.to_thread(partial(store.restamp_names, entry.user_id, since=stamp[0],
+                                        at=stamp[1]))
     return done_by
 
 
@@ -583,6 +619,7 @@ async def replay(
 
     ending = retirements(entries)
     rewithholding = late_markers(entries)
+    stamps = restamp_times(entries)
     target = service.options.data_dir
     runtime = bench_runtime(
         service.workspace, service.config, ROUTED_ENVIRONMENT, job_id=AGENT_JOB_ID,
@@ -620,9 +657,17 @@ async def replay(
                         retired += await asyncio.to_thread(
                             _retire, service, ending[state.next])
                     if withheld is not None and state.next in rewithholding:
-                        await asyncio.to_thread(withheld, *rewithholding[state.next])
+                        late = rewithholding[state.next]
+                        await asyncio.to_thread(partial(
+                            service.store.forget_withheld, late.user_id, late.statements[-1],
+                            enforces=late.at_ms))
                 else:
-                    done_by = await _forget(http, entry, record=state.next, withheld=withheld)
+                    # The previous record ended at updated_at_ms: every name stamped since
+                    # is this forget's, an interrupted attempt's included.
+                    done_by = await _forget(
+                        http, entry, record=state.next, withheld=withheld,
+                        store=None if withheld is None else service.store,
+                        stamp=(state.updated_at_ms, stamps[state.next]))
                     forgotten += done_by.memories
                     tombstoned += done_by.tombstoned
                 state = state.model_copy(update={
@@ -637,11 +682,16 @@ async def replay(
                             "statements_tombstoned": tombstoned})
             if not state.complete and withheld is not None:
                 # The safety pass, run again whole by a resumed rebuild (it is idempotent).
+                # A repeat adds to what the replay forgot: the forget shadow keeps the stamps
+                # the replay gave it, and what it adds takes the forget's own time.
                 for forget, sources in safety_pass(entries):
                     for statement in forget.statements:
-                        forgotten += await asyncio.to_thread(
-                            service.store.forget_earlier, forget.user_id, statement, sources)
-                        if await asyncio.to_thread(withheld, forget.user_id, statement):
+                        forgotten += await asyncio.to_thread(partial(
+                            service.store.forget_earlier, forget.user_id, statement, sources,
+                            enforces=forget.at_ms))
+                        if await asyncio.to_thread(partial(
+                                service.store.forget_withheld, forget.user_id, statement,
+                                enforces=forget.at_ms)):
                             tombstoned += 1
                 notice({"status": "safety_pass", "memories_forgotten": forgotten,
                         "statements_tombstoned": tombstoned})

@@ -9,7 +9,7 @@ can leave the rest of the statement current. ``StatementForget`` forgets a state
     2. Its candidates are the memory hits whose memory is current (``p_mem``) in the scope,
        in rank order, each read by its current statement under the Writer mutex.
     3. The product's judge picks the targets (`quotemem.core.forget_pick`, prompt
-       ``memory-forget-pick-v1``); every vote is a call outside every lock.
+       ``memory-forget-pick-v2``); every vote is a call outside every lock.
     4. The plan names each target's exact head, each candidate's head, the scope's
        ``erase_epoch`` and an expiry ``INTENT_TTL_MS`` away, under the workspace's keyed
        ``forget-statement-plan`` binding. Preparing writes nothing; the Search records
@@ -142,9 +142,10 @@ import hashlib
 import json
 import re
 import time
+import unicodedata
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence, Set
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
-from contextlib import AbstractContextManager, contextmanager
+from contextlib import AbstractContextManager, ExitStack, contextmanager
 from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import Any, Final, Literal, cast, overload
@@ -178,6 +179,7 @@ from quotemem.core.controls import (
     MAX_FORGET_KEPT_PLANS,
     MAX_FORGET_MARKS,
     MAX_FORGET_WITHDRAWN,
+    MAX_HANDLED_ASKED,
     ForgetAddEntryV1,
     ForgetAddRequestV1,
     ForgetAddV1,
@@ -252,6 +254,7 @@ from quotemem.core.forget_pick import (
 from quotemem.core.forget_remainder import readable_text, stored_remainder
 from quotemem.core.forget_reword import (
     MAX_REWORDINGS,
+    aligned_values,
     asked_kinds,
     asked_sources,
     asked_values,
@@ -338,6 +341,7 @@ from quotemem.providers.contracts import (
     StructuredInferenceProvider,
 )
 from quotemem.store.entity_ops import TxnRows, requoted_from
+from quotemem.store.erasure_gate import background, gate_for, hold_generation
 from quotemem.store.forget_admission import (
     asks_modifier,
     echoes,
@@ -424,6 +428,9 @@ AGENT_PICK_TIMEOUT_MS = 20_000
 """A complete forget's vote timeout: a vote is a short classification."""
 AGENT_PICK_HEDGE_SECONDS = 4.0
 """When a complete forget sends a still unanswered vote again."""
+PREPARE_ATTEMPTS: Final = 3
+"""How often a prepare builds its plan again because a forget of its scope was accepted or
+finished while it was built."""
 PHRASE_CACHE = 64
 """Prepared statements whose vector a complete prepare keeps for the confirmation."""
 class _Delivery:
@@ -672,6 +679,50 @@ def _words(statement: str) -> str:
     return " ".join(token_seq(statement))
 
 
+_SENTENCE_MARKS: Final = frozenset(
+    ".,!?;:'\"()[]{}-"
+    "\u2013\u2014\u2026\u3001\u3002\uff0c\uff01\uff1f\uff1b\uff1a\uff08\uff09"
+    "\u201c\u201d\u2018\u2019\u300a\u300b\u300c\u300d")
+"""Punctuation that only marks a sentence, which a request's key does not read."""
+
+
+def _symbol(char: str) -> bool:
+    """Whether a character is a symbol of a request's key: no letter, digit, combining mark,
+    underscore or space, and no mark that only ends a sentence (`_SENTENCE_MARKS`)."""
+    return not (char.isspace() or char == "_" or char in _SENTENCE_MARKS
+                or unicodedata.category(char)[0] in "LNM")
+
+
+def _symbol_runs(statement: str) -> list[tuple[int, str]]:
+    """Each run of symbols in a statement (`_symbol`) with its place: how many of its tokens
+    (`token_seq`) come before it, so the "+" after "a" and the "+" after "b" are told apart,
+    as are "C++" and "C#"; `_words` leaves them all out."""
+    runs: list[tuple[int, str]] = []
+    index = 0
+    while index < len(statement):
+        if not _symbol(statement[index]):
+            index += 1
+            continue
+        end = index
+        while end < len(statement) and _symbol(statement[end]):
+            end += 1
+        runs.append((len(token_seq(statement[:index])), statement[index:end]))
+        index = end
+    return runs
+
+
+_PLUGIN_TRAILING: Final = re.compile(r"[^\w]+$")
+"""What the released plugins (0.3.0, 0.3.1) strip from the end of a request: every mark that
+is no letter, digit or underscore, the "++" of "C++" with the full stop."""
+
+
+def _plugin_reading(statement: str) -> str | None:
+    """A request as the released plugins send it when it ends in a symbol ("I write code in
+    C" for "I write code in C++"); None when they send it as it is."""
+    stripped = _PLUGIN_TRAILING.sub("", statement.strip())
+    return stripped if stripped and stripped != statement.strip() else None
+
+
 def _about(snapshot: MemorySnapshotV2) -> set[str]:
     """The non-user entities a naming tie of ``snapshot`` may name: its primary entity, else
     the entities its naming annotations name."""
@@ -716,7 +767,10 @@ _OLD_JUDGED: Final[Mapping[str, str]] = MappingProxyType({
     "邮箱": "email address", "房子": "house", "公寓": "apartment", "手机": "phone"})
 """The English words a Chinese old-value kind is judged by (`StatementForget._old_values`)."""
 _OLD_KIND_WORDS: Final[Mapping[str, re.Pattern[str]]] = MappingProxyType({
-    "car": re.compile(r"\b(?:car|cars|drives?|drove|vehicle|SUV)\b", re.IGNORECASE),
+    "car": re.compile(
+        r"(?<!\bhard )(?<!\bflash )(?<!\bdisk )(?<!\bdisc )(?<!\btest )"
+        r"\b(?:car|cars|drives?|drove|vehicle|SUV)\b(?!\s+(?:insurance|park|parking|seat|wash|"
+        r"loan|rental|keys?|payment|dealer|charger)\b)", re.IGNORECASE),
     "job": re.compile(r"\b(?:job|works? (?:as|at|for)|working (?:as|at|for)|employed|position|"
                       r"profession|career)\b", re.IGNORECASE),
     "company": re.compile(r"\b(?:company|works? (?:at|for)|employer)\b", re.IGNORECASE),
@@ -1070,6 +1124,30 @@ def _rewordable(row: _Candidate, cover: Sequence[QuoteSpanV1]) -> bool:
                   for span in row.quotes)
 
 
+def _old_car(statement: str, sentence: str) -> bool:
+    """Whether ``statement`` asks plainly for an old car of the user's ("我以前那辆车", "my old
+    car"), with no new one told in the words it was said in (``sentence``): a request the
+    prepare and the in-chat forget answer as matching nothing."""
+    plain = old_value(statement)
+    if plain is None or tells_new(sentence):
+        return False
+    reach = request_reach(sentence)
+    if reach is not None and reach < len(sentence.rstrip()):
+        return False
+    kind = plain.split("的", 1)[-1] if not plain.isascii() else plain.split(maxsplit=1)[-1]
+    return _OLD_KIND_WORDS["car"].search(_OLD_JUDGED.get(kind, kind)) is not None
+
+
+def _unshown(texts: Sequence[str], values: Sequence[str]) -> bool:
+    """Whether no quote text shows any of ``values`` in any script (fail closed): the quotes
+    and the values are all written in Latin letters and none of the quotes shows a value. A
+    quote with Han characters may show a Latin value in its own script ("上海" of "Shanghai"),
+    and a Han value may be spelled in Latin ("Li Wei" of 李伟): either is never unshown."""
+    return bool(texts) and bool(values) and all(
+        text.isascii() for text in (*texts, *values)) and all(
+        value.casefold() not in text.casefold() for value in values for text in texts)
+
+
 def _mostly_own(text: str) -> bool:
     """Whether a text is mostly Han, Kana or Hangul (more such characters than Latin words)."""
     tokens = token_seq(text)
@@ -1284,6 +1362,16 @@ def _merged_sentences(
             list(judged.values()))
 
 
+
+type _Asked = tuple[str, str, str]
+"""One prepared plan of a forget by statement: its session, ``request_id`` and binding."""
+
+
+def _asked_of(request: MemoryForgetStatementRequestV1) -> _Asked:
+    """The prepared plan a confirmation names (`StatementForget._asked_key`)."""
+    return request.client_session_id, request.request_id, request.plan_binding
+
+
 class StatementForget:
     """Prepare and confirm forget by statement for one workspace.
 
@@ -1338,7 +1426,75 @@ class StatementForget:
         if self._search is None or self._provider is None:
             raise QuoteMemError("service_unhealthy", "Forget by statement has no Search or judge")
         if self._complete():
-            return self._prepare_complete(scope, grant, request)
+            asked = requested(request.statement, complete=True)
+            if _old_car(asked[0] if len(asked) == 1 else request.statement, request.statement):
+                # A plain request for an old car matches nothing: a car is told in several
+                # memories and sentences (its make, its colour, its sale, the one that replaced
+                # it), no rule tells the old one from the current one, and a pick of some of
+                # them would report a forget that leaves the rest readable (`_old_car`).
+                return MemoryForgetStatementPreparedV1(
+                    status="nothing_matched", confirmation=None, expires_at=None,
+                    candidates=[], decision=None)
+            # The request is the one operation of its words in this session: an in-chat
+            # forget of the same request already running is joined (`ErasureGate.operation`).
+            key = self._handled_key(scope, request.client_session_id,
+                                    asked[0] if len(asked) == 1 else request.statement)
+            with gate_for(self._writer).operation(scope.scope_id, [key]) as joined:
+                return self._unraced(scope, lambda: self._prepare_complete(
+                    scope, grant, request, joined=joined))
+        return self._unraced(scope, lambda: self._prepare_plain(scope, grant, request))
+
+    def _unraced(
+        self, scope: ScopeV1, build: Callable[[], MemoryForgetStatementPreparedV1],
+    ) -> MemoryForgetStatementPreparedV1:
+        """A plan never read from what an accepted forget of the scope is taking.
+
+        The prepare waits for such a forget (`ForgetOwner.wait_unheld`), which gives the
+        scope's hold generation at the instant nothing was withheld; it notes it with the
+        ``erase_epoch``, builds its answer and compares them again: a forget accepted or
+        finished meanwhile, or a candidate no longer at the head the plan read, makes it build
+        again, up to `PREPARE_ATTEMPTS` times. A confirmation of the request this prepare runs
+        that is accepted meanwhile refuses the prepare at once (``erasure_in_progress``): it
+        is never answered from what that confirmation withholds, and never waits for it.
+
+        Raises:
+            QuoteMemError: ``erasure_in_progress`` when forgets of the scope kept changing it.
+        """
+        for _ in range(PREPARE_ATTEMPTS):
+            noted = (self._owner.wait_unheld(scope), self._epoch(scope))
+            prepared = build()
+            if self._marks(scope) == noted and self._at_heads(scope, prepared):
+                return prepared
+        raise QuoteMemError("erasure_in_progress", "Forgets of the scope kept changing the plan")
+
+    def _epoch(self, scope: ScopeV1) -> int:
+        """The scope's ``erase_epoch``; -1 for a scope nothing was received in yet."""
+        writer = self._writer
+        key = f"erase_epoch:{scope.scope_id}"
+        with writer.write_scope():
+            return -1 if writer.get_control(key) is None else writer.get_counter(key)
+
+    def _marks(self, scope: ScopeV1) -> tuple[int, int]:
+        """The scope's hold generation and ``erase_epoch``: a change of either means a forget
+        was accepted or finished."""
+        return hold_generation(self._writer, scope.scope_id), self._epoch(scope)
+
+    def _at_heads(self, scope: ScopeV1, prepared: MemoryForgetStatementPreparedV1) -> bool:
+        """Whether every candidate a plan read is still at the head it read."""
+        writer = self._writer
+        with writer.write_scope():
+            for row in prepared.candidates:
+                item = writer.get_row("item", row.memory_id)
+                if item is None or item["scope_id"] != scope.scope_id or (
+                        item["current_revision_id"] != row.revision_id):
+                    return False
+        return True
+
+    def _prepare_plain(
+        self, scope: ScopeV1, grant: PrincipalGrant,
+        request: MemoryForgetStatementPrepareRequestV1,
+    ) -> MemoryForgetStatementPreparedV1:
+        """A prepare that is not complete: Search, one pick, the plan."""
         hits = self._hits(scope, request.user_id, request.statement, MAX_FORGET_CANDIDATES)
         candidates, erase_epoch = self._candidates(scope, hits)
         if not candidates:
@@ -1381,7 +1537,7 @@ class StatementForget:
 
     def _prepare_complete(
         self, scope: ScopeV1, grant: PrincipalGrant,
-        request: MemoryForgetStatementPrepareRequestV1,
+        request: MemoryForgetStatementPrepareRequestV1, *, joined: str | None = None,
     ) -> MemoryForgetStatementPreparedV1:
         """A complete prepare (``explicit-request-v2``; module docstring): memories and
         sentences, by words and by vector, the judge's picks less what states another fact.
@@ -1402,7 +1558,10 @@ class StatementForget:
         statement = asked[0] if len(asked) == 1 else request.statement
         sender = self._pick_sender()
         handled = self._handled_key(scope, request.client_session_id, statement)
-        earlier = self._earlier(scope, handled)
+        # A prepare that joined an in-chat request ending in a symbol under its plugin reading
+        # (``joined``) reports that request's record when it has none of its own.
+        earlier = self._earlier(scope, handled) or (
+            None if joined is None else self._earlier(scope, joined))
         entry = self._entry(scope, key=handled)
         # The plugin's whole statement keys the request; the judge and the
         # matching read only what it asks to forget, never the new value told after it
@@ -1646,6 +1805,7 @@ class StatementForget:
                 detail=detail)
             calls += used
             located: dict[str, ForgetRewordPlanV1] = {}
+            unshown_ids: set[str] = set()
             for row in self._rows(scope, [*plans, *attributes]):
                 if row.memory_id in attributes:
                     plan, forms = attributes[row.memory_id]
@@ -1663,14 +1823,27 @@ class StatementForget:
                         span for other in targets.values() if other.memory_id != row.memory_id
                         for span in other.quotes])]))
                 # Every group of its support must lose a byte, or its present wording, which
-                # shows the detail, would stay readable should its rewording fail.
-                if plan.statement != row.statement and parts and _rewordable(row, parts):
+                # shows the detail, would stay readable should its rewording fail. A target whose
+                # quotes show none of it ("My boss works from the Berlin office." of "The user's
+                # boss Henrik works from the Berlin office.") loses none: only its statement
+                # shows the detail, and a failed rewording forgets it whole.
+                unshown = not parts and _unshown(self._quote_texts(row.quotes), removed)
+                if unshown:
+                    unshown_ids.add(row.memory_id)
+                if plan.statement != row.statement and ((parts and _rewordable(row, parts))
+                                                        or unshown):
                     # What it leaves out goes from every other readable sentence showing it,
                     # as its forget whole would have withheld it there too.
                     parts = [*parts, *self._value_token_spans(scope, [
                         value for value in removed if name_norm(value) not in {
                             name_norm(name) for _, name in target_names}])]
                     located[row.memory_id], bundle_parts[row.memory_id] = plan, parts
+            # The plan's forgets write its rewordings: one with nothing to withhold needs
+            # another target or a sentence left to forget, else it goes whole.
+            if not spans and all(memory_id in located for memory_id in targets):
+                for memory_id in unshown_ids:
+                    located.pop(memory_id, None)
+                    bundle_parts.pop(memory_id, None)
             found_bundles, used = self._embedded(scope, located)
             embedded += used
             wordings.update(found_bundles)
@@ -1892,7 +2065,7 @@ class StatementForget:
                 bundled=False) for index, row in enumerate(candidates)] if pick is not None \
                 else []
             self._record_handled(scope, handled, statement="nothing_matched",
-                                 statement_seq=read_seq, asked=request.request_id)
+                                 statement_seq=read_seq)
             return MemoryForgetStatementPreparedV1(
                 status="nothing_matched", confirmation=None, expires_at=None,
                 candidates=rows, decision=None if pick is None else _decision(pick, statement),
@@ -2022,7 +2195,7 @@ class StatementForget:
                 keywords=list(wording.keywords)) for wording in wordings.values()],
             asked=asked_names, name_asked=asks)
         self._record_handled(scope, handled, statement="prepared", statement_seq=read_seq,
-                             asked=request.request_id)
+                             asked=(request.client_session_id, request.request_id, binding))
         return MemoryForgetStatementPreparedV1(
             status="confirmation_required", confirmation=confirmation, expires_at=expires_at,
             candidates=rows, decision=decision, spans=sentences,
@@ -2354,6 +2527,14 @@ class StatementForget:
                 # ("Pinecrest Bakery" of "The user is a pastry chef at Pinecrest Bakery.").
                 *(workplace_values(text) if workplace and memory_id in exists_ids
                   else ())]))
+            if not values and not given and not all(source.isascii() for source in sources):
+                # A Han request names the value an English statement tells in Latin ("Shanghai"
+                # of "The user moved from Shanghai to Hangzhou last month." for "我在上海住过"):
+                # it is read off the memory's Han quote (`aligned_values`).
+                values = [value for value in aligned_values(
+                    text, self._quote_texts(list(snapshot.quote_spans)),
+                    [source for source in sources if source != text])
+                          if name_norm(value) not in {name_norm(name) for _, name in names}]
             if not given and not values:
                 # Kept as it is only when it shares no word with what is forgotten: a later
                 # memory taken for its link alone ("The user joined Fabrikam last week.").
@@ -2364,7 +2545,8 @@ class StatementForget:
                         memory_id=memory_id, base_digest=snapshot.statement_digest,
                         statement=text), ())
                 continue
-            found = reworded_statement(text, names=given, values=values, kinded=kinded)
+            found = reworded_statement(text, names=given, values=values, kinded=kinded,
+                                       apposed=given_request(statement) is not None)
             if found is not None and any(
                     (kind := kind_of(value)) is not None
                     and (noun := kind.split(" ", 1)[1]) not in asked_kinds(statement)
@@ -2399,7 +2581,7 @@ class StatementForget:
         if not asked:
             return plans, 0
         told = tells(statement, [plan.statement for plan, _ in asked.values()], sender,
-                     rounds=_rounds)
+                     rounds=_rounds, rewordings=True)
         if told is None:
             return {memory_id: plan for memory_id, plan in plans.items()
                     if memory_id not in asked}, 0
@@ -3927,17 +4109,49 @@ class StatementForget:
         words without case, punctuation or pointing words (`forget_match.probe`), and without
         the asking words a plugin's forget by statement may still carry ("请忘掉我的猫的名字",
         "forget my cat's name"): what the Add's in-chat forget reads of the same turn
-        ("我的猫的名字", "my cat's name", `forget_requests.requested`), so
-        both paths name it alike."""
-        asked = requested(statement, complete=True)
-        return self._writer.bind_content(HANDLED_PURPOSE, {
-            "scope": scope.scope_id, "session": session_id,
-            "words": _words(probe(asked[0] if len(asked) == 1 else statement))})
+        ("我的猫的名字", "my cat's name", `forget_requests.requested`), so both paths name it
+        alike.
 
-    def _asked_key(self, scope: ScopeV1, request_id: str) -> str:
-        """The keyed digest of a forget by statement's ``request_id``."""
+        Order and uniqueness: the key is the scope, the session and the words, with each run
+        of symbols (`_symbol_runs`: a character that is no letter, digit, combining mark,
+        underscore or space and no sentence mark) attached at its place, after the token it
+        follows or before the first one. Two requests told apart only by a symbol or its
+        place are two requests. A request with no symbol keeps, byte for byte, the
+        words-only key the records of 0.3.x have.
+
+        The handled record (``forget_handled:{s}``) is read and written only under a
+        request's own exact key, never under another: a record this version writes for
+        words without a symbol never answers a request with one. A record 0.3.x wrote for a
+        request with a symbol (whose words it read without the symbol) is not found by that
+        request after the upgrade, so it runs once more and forgets nothing new; the same
+        words without the symbol, in the same session, still find that record, as on 0.3.x,
+        and read only what changed after it, so they forget nothing taught before it. The
+        same key names the request's
+        running operation (`ErasureGate.operation`); an in-chat request ending in a symbol
+        is also joined there as the released plugins send it (`chat_forget`)."""
+        asked = requested(statement, complete=True)
+        words = probe(asked[0] if len(asked) == 1 else statement)
+        named: dict[str, object] = {"scope": scope.scope_id, "session": session_id,
+                                    "words": _words(words)}
+        if runs := _symbol_runs(words):
+            named["symbols"] = [[place, run] for place, run in runs]
+        return self._writer.bind_content(HANDLED_PURPOSE, named)
+
+    def _asked_key(self, scope: ScopeV1, asked: _Asked) -> str:
+        """The keyed digest of one prepared plan of a forget by statement: its session, its
+        ``request_id`` and its plan binding. A confirmation finds only the request its own
+        plan was prepared for: never another session's, never other words prepared under the
+        same ``request_id``."""
+        session_id, request_id, binding = asked
         return self._writer.bind_content(HANDLED_PURPOSE, {
-            "scope": scope.scope_id, "request": request_id})
+            "scope": scope.scope_id, "session": session_id, "request": request_id,
+            "plan": binding})
+
+    def _alias_key(self, scope: ScopeV1, asked: str) -> str:
+        """The ``request`` of the alias entry that leads an earlier plan's digest (``asked``)
+        to its request (`_record_handled`)."""
+        return self._writer.bind_content(HANDLED_PURPOSE, {
+            "scope": scope.scope_id, "plan_of": asked})
 
     def _handled_entries(self, scope: ScopeV1) -> list[ForgetHandledEntryV1]:
         stored = self._writer.get_control(f"forget_handled:{scope.scope_id}")
@@ -3945,16 +4159,23 @@ class StatementForget:
             ForgetHandledV1.model_validate(stored["value"]).entries)
 
     def _entry(self, scope: ScopeV1, *, key: str | None = None,
-               asked: str | None = None) -> ForgetHandledEntryV1 | None:
-        """The handled record of a request, by its words' key or its ``request_id``."""
-        wanted = None if asked is None else self._asked_key(scope, asked)
-        for entry in reversed(self._handled_entries(scope)):
-            if entry.request == key or (wanted is not None and entry.asked == wanted):
-                return entry
-        return None
+               asked: _Asked | None = None) -> ForgetHandledEntryV1 | None:
+        """The handled record of a request, by its words' key or by any plan prepared for it
+        (``asked``: the latest one's digest is the entry's ``asked``, an earlier one's leads to
+        it through its alias entry)."""
+        entries = self._handled_entries(scope)
+        if asked is not None:
+            wanted = self._asked_key(scope, asked)
+            alias = self._alias_key(scope, wanted)
+            found = next((entry for entry in reversed(entries)
+                          if entry.asked == wanted or entry.request == alias), None)
+            if found is None:
+                return None
+            key = found.request if found.request != alias else found.asked
+        return next((entry for entry in reversed(entries) if entry.request == key), None)
 
     def _earlier(self, scope: ScopeV1, key: str | None = None, *,
-                 asked: str | None = None) -> ForgetStatementEarlierV1 | None:
+                 asked: _Asked | None = None) -> ForgetStatementEarlierV1 | None:
         """What both paths did for a request, as a response reports it (complete only)."""
         if not self._complete():
             return None
@@ -3963,14 +4184,17 @@ class StatementForget:
             statement=entry.statement, in_chat=entry.in_chat, forgotten=entry.forgotten,
             withheld=entry.withheld, at=entry.at)
 
-    def earlier(self, scope: ScopeV1, request_id: str) -> ForgetStatementEarlierV1 | None:
-        """Both paths' record of the request a confirmation names (``agent`` mode)."""
-        return self._earlier(scope, asked=request_id)
+    def earlier(self, scope: ScopeV1,
+                request: MemoryForgetStatementRequestV1) -> ForgetStatementEarlierV1 | None:
+        """Both paths' record of the request a confirmation's plan was prepared for
+        (``agent`` mode)."""
+        return self._earlier(scope, asked=_asked_of(request))
 
     def _record_handled(
         self, scope: ScopeV1, key: str, *, statement_seq: int | None = None,
         chat_seq: int | None = None, statement: HandledStatement | None = None,
-        in_chat: HandledInChat | None = None, asked: str | None = None, forgotten: int = 0,
+        in_chat: HandledInChat | None = None, asked: _Asked | None = None,
+        forgotten: int = 0,
         withheld: int = 0,
     ) -> None:
         """Record what a path did for one request (complete forgets only): a prepare's or a
@@ -3999,12 +4223,29 @@ class StatementForget:
                                       ("chat_seq", chat_seq)):
                 if value is not None:
                     update[field_name] = value
+            aliases: list[ForgetHandledEntryV1] = []
             if asked is not None:
-                update["asked"] = self._asked_key(scope, asked)
+                digest = self._asked_key(scope, asked)
+                update["asked"] = digest
+                if found is not None and found.asked is not None and found.asked != digest:
+                    # Each plan the request was prepared under still finds it: the earlier
+                    # plan's digest becomes an alias entry naming the request in ``asked``,
+                    # a shape the released record already reads (no new field).
+                    aliases.append(ForgetHandledEntryV1.model_validate({
+                        "request": self._alias_key(scope, found.asked), "asked": key,
+                        "at": now}))
             row = (ForgetHandledEntryV1.model_validate({"request": key, **update})
                    if found is None else found.model_copy(update=update))
-            kept = [other for other in entries if other.request != row.request]
-            value = ForgetHandledV1(entries=[*kept, row][-MAX_FORGET_HANDLED:])
+            replaced = {row.request, *(alias.request for alias in aliases)}
+            kept = [other for other in entries if other.request not in replaced]
+            # At most `MAX_HANDLED_ASKED` plans find one request: its latest and the newest
+            # alias entries leading to it.
+            linked = [*(other for other in kept if other.asked == key and other.request != key),
+                      *aliases]
+            dropped = {other.request for other in linked[:-(MAX_HANDLED_ASKED - 1)]}
+            kept = [other for other in kept if other.request not in dropped]
+            aliases = [alias for alias in aliases if alias.request not in dropped]
+            value = ForgetHandledV1(entries=[*kept, *aliases, row][-MAX_FORGET_HANDLED:])
             control = writer.materialize_control(
                 control_key, value.model_dump(mode="json"),
                 0 if stored is None else stored["version"] + 1, now)
@@ -4672,7 +4913,7 @@ class StatementForget:
 
     def forget_sentences(
         self, scope: ScopeV1, grant: PrincipalGrant, *, session_id: str, statement: str,
-        spans: Sequence[QuoteSpanV1],
+        spans: Sequence[QuoteSpanV1], enforces: int | None = None,
     ) -> ForgetStatementOutcomeV1:
         """Forget ``spans`` under one tombstone of ``statement`` and its vector.
 
@@ -4680,15 +4921,18 @@ class StatementForget:
         (``quotemem.agent.rebuild``): no judge is asked, the statement is embedded once (else the
         first sentence's vector stands for it), and the sentences are withheld by one
         forget of sentences, so the tombstone, its forget shadow and the withheld ranges are
-        made as the old store's forget made them.
+        made as the old store's forget made them. ``enforces`` is as `_forget`'s: the
+        admission time of the old store's forget this one stands for, when it adds to what
+        the new store already forgot (the safety pass, a late marker).
         """
         phrase, _ = self._phrase(statement)
         return self._forget_spans(scope, grant, session_id, spans,
-                                  seed=self._seed(scope, statement, spans, phrase))
+                                  seed=self._seed(scope, statement, spans, phrase),
+                                  enforces=enforces)
 
     def forget_earlier(
         self, scope: ScopeV1, authorize: Callable[[], PrincipalGrant], *, session_id: str,
-        statement: str, sources: Set[tuple[str, str]],
+        statement: str, sources: Set[tuple[str, str]], enforces: int | None = None,
     ) -> int:
         """Forget ``statement`` again over the Evidence of ``sources`` alone; how many
         memories went (a rebuild's safety pass, ``quotemem.agent.rebuild``).
@@ -4710,7 +4954,8 @@ class StatementForget:
         it states it or part of it and states no other fact (`forget_match.exclusion`).
         Each target goes, which withholds what it quotes, then every memory
         known only from what was forgotten (`_cascade`). A repeat finds nothing left to
-        forget.
+        forget. ``enforces`` is as `_forget`'s: the old store's forget's admission time, so
+        the forget shadow keeps the stamps the replay gave it.
 
         Raises:
             QuoteMemError: ``provider_unavailable`` when a pick decision got fewer than two
@@ -4746,12 +4991,12 @@ class StatementForget:
             target = ForgetStatementTargetV1(
                 memory_id=row.memory_id, expected_revision_id=row.revision_id,
                 expected_content_hash=IntegrityDigest(row.content_hash))
-            if self._forget(scope, authorize(), session_id, target,
+            if self._forget(scope, authorize(), session_id, target, enforces=enforces,
                             modifier=self._modifier([statement])).outcome == "verified":
                 forgotten += 1
         return forgotten + (self._cascade(
             scope, authorize, session_id, [span for row in targets.values()
-                                           for span in row.quotes],
+                                           for span in row.quotes], enforces=enforces,
             requests=[statement], modifier=self._modifier([statement])) if forgotten else 0)
 
     def _shadowed(
@@ -4793,6 +5038,28 @@ class StatementForget:
         self, scope: ScopeV1, authorize: Callable[[], PrincipalGrant], *, user_id: str,
         session_id: str, statements: Sequence[str], request_id: str | None = None,
     ) -> ChatForgetOutcome:
+        """`_chat_forget` as the one operation of each of its requests: a forget by
+        statement of the same request of the session already running is joined, not run
+        again beside it (`ErasureGate.operation`)."""
+        # A request ending in a symbol is also named as the released plugins send it, while
+        # it runs only, so their forget by statement of the same sentence joins it; it is
+        # never a record's key (`_handled_key`). The plugins send no version saying they
+        # keep the symbol, so this holds for every forget by statement.
+        keys: list[str] = []
+        aliases: dict[str, str] = {}
+        if self._complete():
+            for statement in statements:
+                keys.append(key := self._handled_key(scope, session_id, statement))
+                if (plain := _plugin_reading(statement)) is not None:
+                    aliases[self._handled_key(scope, session_id, plain)] = key
+        with gate_for(self._writer).operation(scope.scope_id, keys, aliases=aliases):
+            return self._chat_forget(scope, authorize, user_id=user_id, session_id=session_id,
+                                     statements=statements, request_id=request_id)
+
+    def _chat_forget(
+        self, scope: ScopeV1, authorize: Callable[[], PrincipalGrant], *, user_id: str,
+        session_id: str, statements: Sequence[str], request_id: str | None = None,
+    ) -> ChatForgetOutcome:
         """Forget what one Add's in-chat requests ask to forget, and mark what still states it.
 
         Every statement is Searched (``CHAT_SEARCH_TOP_K``). Its memory candidates are the
@@ -4801,7 +5068,7 @@ class StatementForget:
         sharing the most. The record of a request is neither: a memory every quote of which
         is a forget request ("The user asked to forget that ...") and a sentence that is one
         stay as they are, so what the user asked stays known. The judge
-        (``memory-forget-pick-v1``, at ``CHAT_FORGET_REASONING_EFFORT``) classifies both
+        (``memory-forget-pick-v2``, at ``CHAT_FORGET_REASONING_EFFORT``) classifies both
         lists of every statement, all picks concurrent, and every candidate it decides
         states the statement or part of it (``same_fact``, ``part``) is a target. Each
         memory target, a paraphrase as much as the matched statement, goes through the forget one
@@ -4945,7 +5212,13 @@ class StatementForget:
                     None)
         fresh, told_since = (self._fresh(scope, ran.values(), request_id) if complete and ran
                              else (set[str](), set[str]()))
+        # A plain request for an old car matches nothing here, as in the prepare (`_old_car`).
+        blocked = {position for position, statement in enumerate(statements)
+                   if complete and _old_car(statement, said[position])}
         for position, statement in enumerate(statements):
+            if position in blocked:
+                picks.append((statement, [], [], [], []))
+                continue
             if complete:
                 hit_ids = self._hits(scope, user_id, probe(statement), CHAT_SEARCH_TOP_K)
                 candidates = [row for row in self._matched(
@@ -5067,7 +5340,10 @@ class StatementForget:
                     -1 if key[0] is None else key[0], key[1], key[2])):
                 group = [position for position in range(len(statements))
                          if (covered.get(position), position if position in confirmed else -1,
-                             position in ran) == (after, alone, done)]
+                             position in ran) == (after, alone, done)
+                         and position not in blocked]
+                if not group:
+                    continue
                 since = confirmed.get(alone)
                 asked_now = [statements[position] for position in group]
                 changed = None if after is None else {
@@ -5271,73 +5547,94 @@ class StatementForget:
                        if not any(_states_new(row.statement, words) for words in sentences)}
         # The sentences withheld as stating the fact: a bare name quoted in one is the
         # forgotten fact's residue as one a forgotten memory quotes is (`_leftovers`).
-        sentences_held: list[QuoteSpanV1] = []
-        for row in targets.values():
-            target = ForgetStatementTargetV1(
-                memory_id=row.memory_id, expected_revision_id=row.revision_id,
-                expected_content_hash=IntegrityDigest(row.content_hash))
-            batch = carry[:MAX_RESTATING_SPANS]
-            if self._forget(scope, authorize(), session_id, target, restating=batch,
-                            seed=seeds.get(row.memory_id), allowed=allowed,
-                            modifier=self._modifier(statements),
-                            enforces=None if row.memory_id in requested
-                            else enforced.get(row.memory_id, enforced_at)
-                            ).outcome == "verified":
-                forgotten += 1
-                done_ids.add(row.memory_id)
-                withheld += len(batch)
-                told |= self._facts(batch)
-                sentences_held += batch
-                carry = carry[len(batch):]
-            else:
-                changed += 1
-        unattached: list[QuoteSpanV1] = []
-        while complete and carry:
-            # With no memory left to forget, a complete forget withholds the sentences alone,
-            # the request sentences with them: under the request's words, or
-            # under the tombstone a sentence of this Add restated; a bound's worth at a time.
-            batch, carry = carry[:MAX_RESTATING_SPANS], carry[MAX_RESTATING_SPANS:]
-            done = self._forget_spans(
-                scope, authorize(), session_id, batch,
-                statement=statements[0] if statements else None,
-                seed=None if statements or stone is None else stone.seed(),
-                enforces=enforced_at)
-            if done.outcome == "verified":
-                withheld += len(batch)
-                told |= self._facts(batch)
-                unattached += batch
-                sentences_held += batch
-        asked_only = bool(unattached) and all(
-            self._quoted_request(span) for span in unattached)
-        # With no memory forgotten, no forget withholds the sentences: the judged ones are
-        # marked, the request sentences are left as the benchmark rule leaves them.
-        for span in carry:
-            if not self._quoted_request(span):
-                marked[span.evidence_id, span.byte_start, span.byte_end] = span
-        if complete and active and asks and not uncertain and not nick:
-            # A memory this forget left unreadable that ties a name by the asked description
-            # gives it too, as a target would: the request was answered by its sentence alone
-            # ("Priya is the user's manager." under "forget my manager's name").
-            lost = sorted(before - {row.memory_id for row in self._memories(scope, past=True)}
-                          - set(targets))
-            extra = self._asked_names(scope, lost, active)
-            if extra - names:
-                names = names | self._forgotten_names(scope, given_names, extra,
-                                                      uncertain=False, within=within)
-                every_name |= extra
-                name_ties = {**self._tie_words(scope, lost), **name_ties}
-        # A request the forget by statement already ran for was cascaded by its confirmation,
-        # within what its prepare named: an in-chat forget of it that forgot no memory of its
-        # own takes no other, and one that forgot this Add's own takes only this Add's.
-        inherited = bool(statements) and not active and not done_ids
-        cascaded = self._cascade(
-            scope, authorize, session_id,
-            [span for row in targets.values() for span in row.quotes],
-            enforces=enforced_at, names=names, ties=name_ties, sentences=sentences_held,
-            allowed=fresh if statements and not active else None,
-            told=[row.statement for row in targets.values()], within=within,
-            requests=statements, modifier=self._modifier(statements),
-        ) if complete and not inherited else 0
+        # The forgets run in the scope's erasure turn and hide their targets from reads from
+        # here until they finish (`quotemem.store.erasure_gate`); an Add that only restates
+        # forgotten facts enforces them in the background turn, after waiting users. What
+        # the cascade takes by the names the targets give is withheld with them: every
+        # memory showing such a name (`_name_readers`' holders), and the memories a request
+        # named.
+        holders = [row.memory_id for row in self._name_readers(
+            scope, names, ties=name_ties, within=within)[0]] if names and targets else []
+        with ExitStack() as holds:
+            holds.enter_context(background(not statements))
+            holds.enter_context(self._owner.withhold(
+                scope, list(targets), carry, allowed=allowed,
+                also=sorted({*holders, *requested} - set(targets)) if targets else ()))
+            if targets or carry:
+                # The Add waits for the turn while its budget lasts (`waiting_until`), its
+                # picks and what it withholds kept, so nothing runs twice.
+                holds.enter_context(self._owner.erasure_turn(scope, patient=True))
+            sentences_held: list[QuoteSpanV1] = []
+            for row in targets.values():
+                target = ForgetStatementTargetV1(
+                    memory_id=row.memory_id, expected_revision_id=row.revision_id,
+                    expected_content_hash=IntegrityDigest(row.content_hash))
+                batch = carry[:MAX_RESTATING_SPANS]
+                if self._forget(scope, authorize(), session_id, target, restating=batch,
+                                seed=seeds.get(row.memory_id), allowed=allowed,
+                                modifier=self._modifier(statements),
+                                enforces=None if row.memory_id in requested
+                                else enforced.get(row.memory_id, enforced_at)
+                                ).outcome == "verified":
+                    forgotten += 1
+                    done_ids.add(row.memory_id)
+                    withheld += len(batch)
+                    told |= self._facts(batch)
+                    sentences_held += batch
+                    carry = carry[len(batch):]
+                else:
+                    changed += 1
+            unattached: list[QuoteSpanV1] = []
+            while complete and carry:
+                # With no memory left to forget, a complete forget withholds the sentences alone,
+                # the request sentences with them: under the request's words, or
+                # under the tombstone a sentence of this Add restated; a bound's worth at a time.
+                batch, carry = carry[:MAX_RESTATING_SPANS], carry[MAX_RESTATING_SPANS:]
+                done = self._forget_spans(
+                    scope, authorize(), session_id, batch,
+                    statement=statements[0] if statements else None,
+                    seed=None if statements or stone is None else stone.seed(),
+                    enforces=enforced_at)
+                if done.outcome == "verified":
+                    withheld += len(batch)
+                    told |= self._facts(batch)
+                    unattached += batch
+                    sentences_held += batch
+            asked_only = bool(unattached) and all(
+                self._quoted_request(span) for span in unattached)
+            # With no memory forgotten, no forget withholds the sentences: the judged ones are
+            # marked, the request sentences are left as the benchmark rule leaves them.
+            for span in carry:
+                if not self._quoted_request(span):
+                    marked[span.evidence_id, span.byte_start, span.byte_end] = span
+            if complete and active and asks and not uncertain and not nick:
+                # A memory this forget left unreadable that ties a name by the asked description
+                # gives it too, as a target would: the request was answered by its sentence alone
+                # ("Priya is the user's manager." under "forget my manager's name").
+                lost = sorted(before - {row.memory_id for row in self._memories(scope, past=True)}
+                              - set(targets))
+                extra = self._asked_names(scope, lost, active)
+                if extra - names:
+                    names = names | self._forgotten_names(scope, given_names, extra,
+                                                          uncertain=False, within=within)
+                    every_name |= extra
+                    name_ties = {**self._tie_words(scope, lost), **name_ties}
+                    # What the grown names take is withheld before the cascade writes.
+                    holds.enter_context(self._owner.withhold(scope, [
+                        row.memory_id for row in self._name_readers(
+                            scope, names, ties=name_ties, within=within)[0]]))
+            # A request the forget by statement already ran for was cascaded by its confirmation,
+            # within what its prepare named: an in-chat forget of it that forgot no memory of its
+            # own takes no other, and one that forgot this Add's own takes only this Add's.
+            inherited = bool(statements) and not active and not done_ids
+            cascaded = self._cascade(
+                scope, authorize, session_id,
+                [span for row in targets.values() for span in row.quotes],
+                enforces=enforced_at, names=names, ties=name_ties, sentences=sentences_held,
+                allowed=fresh if statements and not active else None,
+                told=[row.statement for row in targets.values()], within=within,
+                requests=statements, modifier=self._modifier(statements),
+            ) if complete and not inherited else 0
         if complete and active and withheld and not (asked_only and not cascaded):
             # The request sentences went with the fact: Search reads what they asked to
             # forget from the shadow instead (``ForgetOwner.record_shadow``). Requests that
@@ -5925,8 +6222,10 @@ class StatementForget:
                     sentence = readable_text(sentence, first, [
                         (max(low, first), min(high, last)) for low, high in withheld
                         if first < high and low < last])
+                # What a message making a forget request says besides restates nothing anew.
                 if told_after is not None and restates(told_quote(
-                        _Part.of(row), first, last, asserts), told_after):
+                        _Part.of(row), first, last, asserts), told_after) and not (
+                        row["role"] == "user" and requested(row["text"], complete=True)):
                     continue
                 terms = content_terms(sentence)
                 share = max((len(terms & probe) / len(probe) for probe in wanted
@@ -6009,13 +6308,32 @@ class StatementForget:
             return [], [], None, 0, {}
         written = self._memories(scope, after=max(
             0, min(row["ingested_commit_seq"] for row in parts) - 1))
+        # A user message making a forget request restates nothing anew of the fact it asks to
+        # forget: "Please forget my locker code. It was 4521 anyway." tells the code, never a
+        # relearn. What it teaches of anything else is told anew as ever ("Forget my gym
+        # schedule. Also, my locker code is 4521 again.").
+        asking = {part["object_id"]: frozenset(
+            term for statement in requested(part["text"], complete=True)
+            for term in content_terms(statement))
+            for part in parts if part["role"] == "user"}
+        asking = {evidence_id: terms for evidence_id, terms in asking.items() if terms}
+
+        def asked(evidence_ids: Sequence[str], stone: _Stone) -> bool:
+            """Whether every one of the Evidence parts is a message asking to forget the
+            tombstone's fact (a request sharing a term with its statement)."""
+            stated = content_terms(stone.statement)
+            return bool(evidence_ids) and all(
+                evidence_id in asking and asking[evidence_id] & stated
+                for evidence_id in evidence_ids)
+
         # What the user told again, in their own words, after a tombstone's
         # forget states the fact anew and is not taken for that tombstone.
         told = {row.memory_id: self._tolds(row) for row in written}
         exact = {_words(stone.statement): stone for stone in stones}
         found = {row.memory_id: row for row in written
                  if (stone := exact.get(_words(row.statement))) is not None
-                 and not relearns(told[row.memory_id], stone.forgotten(), row.statement)}
+                 and (not relearns(told[row.memory_id], stone.forgotten(), row.statement)
+                      or asked([span.evidence_id for span in row.quotes], stone))}
         enforced = {memory_id: exact[_words(row.statement)].created_at
                     for memory_id, row in found.items()}
         rest: list[tuple[_Candidate | tuple[QuoteSpanV1, str], str, UnitVector | None,
@@ -6039,7 +6357,9 @@ class StatementForget:
                 # A memory the user's later words state in full is relearned for the part
                 # of the tombstone it tells; a sentence only when its words restate it.
                 if relearns(when, forgotten,
-                            text if isinstance(entry, _Candidate) else None):
+                            text if isinstance(entry, _Candidate) else None) and not asked(
+                        [span.evidence_id for span in entry.quotes]
+                        if isinstance(entry, _Candidate) else [entry[0].evidence_id], stone):
                     continue
                 score = _LEXICAL if _restates(text, [terms]) else (
                     cosine(vector, unit) if vector is not None and unit is not None
@@ -6767,6 +7087,37 @@ class StatementForget:
                          span_intent=request.span_intent, bundled=request.bundled,
                          statement=request.statement) != request.plan_binding:
             raise QuoteMemError("operation_conflict", "The statement plan was not prepared here")
+        # The plan is the one this workspace prepared: reads hide what its forgets take (each
+        # target still as the plan read it, with the chain its erasure takes) from now until
+        # the confirmation ends, also while it waits for the scope's erasure turn, in which
+        # every check below runs (`quotemem.store.erasure_gate`).
+        # The confirmation is the one operation of its request: an in-chat forget of the
+        # same request already running is joined, outside the erasure turn it waits for. Its
+        # key is the one its prepare recorded.
+        entry = self._entry(scope, asked=_asked_of(request)) if self._complete() else None
+        joined = None if entry is None else entry.request
+        record = self._planned(scope, request.plan_binding) if self._complete() else None
+        pending = [target.memory_id for target in request.targets
+                   if self._state(scope, target)[0] == "pending"]
+        # A complete plan takes, besides its targets, only what its prepare named: the
+        # memories it listed (its cascade takes no other, by names, ties or support), those it
+        # rewords and the bare names it takes as residue. All of them are withheld with the
+        # targets, the reworded ones under their old wording too.
+        named = sorted(record.listed | record.residue | {
+            plan.memory_id for plan in record.rewordings}) if (
+            record is not None and record.held) else []
+        with self._owner.withhold(
+                scope, pending, request.spans,
+                allowed=frozenset() if record is None else record.allowed, also=named), \
+                gate_for(self._writer).operation(
+                    scope.scope_id, [] if joined is None else [joined]), \
+                self._owner.erasure_turn(scope):
+            return self._confirm_report(scope, grant, request)
+
+    def _confirm_report(
+        self, scope: ScopeV1, grant: PrincipalGrant, request: MemoryForgetStatementRequestV1,
+    ) -> StatementConfirmed:
+        """`confirm_report` in the scope's erasure turn, its plan's binding checked."""
         states = [self._state(scope, target)[0] for target in request.targets]
         writer = self._writer
         with writer.write_scope():
@@ -6921,7 +7272,7 @@ class StatementForget:
         # (The memories gone already are no longer current: `_memories` reads none of them.)
         affected += [ForgetStatementAffectedV1(memory_id=row.memory_id, effect="unreadable")
                      for row in hidden if row.memory_id in before]
-        entry = self._entry(scope, asked=request.request_id)
+        entry = self._entry(scope, asked=_asked_of(request))
         if entry is not None:
             # The statement stays read up to the prepare's commit: what another Add wrote
             # between the prepare and this confirmation is left to the in-chat forget.
@@ -7085,21 +7436,84 @@ class StatementForget:
         return "pending", head["object_id"], head["content_hash"]
 
     def _check_unchanged(self, scope: ScopeV1, request: MemoryForgetStatementRequestV1) -> None:
-        """Before any target is forgotten, the scope must read as the plan read it."""
+        """Before any target is forgotten, the scope must read as the plan read it.
+
+        Another forget that finished after the prepare moves the scope's ``erase_epoch``. That
+        alone does not cancel the plan: it stands when it is still exactly what was prepared
+        (`ForgetOwner.plan_still_exact`): every memory it read, targets and every memory the
+        prepare listed, judged allowed, kept as residue or rewords, unchanged since the
+        prepare, with the same heads; no byte its sentences and memories quote withheld
+        since; no tombstone or memory of its facts written since. A candidate the judge
+        passed over may have been erased meanwhile; any other change to one refuses. The
+        prepare's time is ``expires_at - INTENT_TTL_MS``, which the plan binding seals with
+        the epoch, so a forged or replayed plan fails the binding before this, and a stale
+        one fails here.
+        """
         writer = self._writer
         # A target a complete prepare read past (a promoted one, ``_promoted``) need not be
         # current: its own forget checks its head as every target's does. Any other memory
         # the plan read, and in every other mode every one, must still be current.
-        past = (self._planned(scope, request.plan_binding).past if self._complete()
-                else frozenset[str]())
+        record = self._planned(scope, request.plan_binding) if self._complete() else None
+        past = record.past if record is not None else frozenset[str]()
         with writer.write_scope():
-            if writer.get_counter(f"erase_epoch:{scope.scope_id}") != request.erase_epoch:
+            epoch = writer.get_counter(f"erase_epoch:{scope.scope_id}")
+            moved = epoch != request.erase_epoch
+            if moved and not self._plan_stands(scope, request, record):
                 raise QuoteMemError("operation_conflict", "The scope changed since the plan")
+            # A candidate the judge read and passed over that another forget erased since
+            # (its memory is gone) does not change what the plan forgets; any other change to
+            # a candidate does, as does the loss of one the plan acts on.
+            acted = _acted_on(request, record)
             for row in request.candidates:
                 item = writer.get_row("item", row.memory_id)
+                if item is None and moved and row.memory_id not in acted:
+                    continue
                 if item is None or item["current_revision_id"] != row.revision_id or (
                         item["lifecycle_state"] != "active" and row.memory_id not in past):
                     raise QuoteMemError("operation_conflict", "The scope changed since the plan")
+
+    def _plan_stands(self, scope: ScopeV1, request: MemoryForgetStatementRequestV1,
+                     record: _PlanRecord | None) -> bool:
+        """Whether a plan read at an older ``erase_epoch`` is still exact (`_check_unchanged`).
+
+        A complete workspace's plan stands only with its prepare's record (``held``), so the
+        memories the prepare listed are compared too; the targets' heads are compared with
+        the plan's expected heads.
+        """
+        if self._complete() and (record is None or not record.held):
+            return False
+        writer = self._writer
+        for target in request.targets:
+            item = writer.get_row("item", target.memory_id)
+            head = None if item is None else writer.get_row(
+                "revision", item["current_revision_id"])
+            if head is None or (item is not None and (
+                    item["current_revision_id"] != target.expected_revision_id)) or (
+                    head["content_hash"] != target.expected_content_hash):
+                return False
+        # The candidates the judge passed over are checked by `_check_unchanged`.
+        memories = set(_acted_on(request, record))
+        digests: set[str] = set()
+        entities: set[str] = set()
+        for target in request.targets:
+            item = writer.get_row("item", target.memory_id)
+            if item is not None:
+                digests.add(item["statement_digest"])
+                if item["entity_id"]:
+                    entities.add(item["entity_id"])
+        return self._owner.plan_still_exact(
+            scope, since_ms=request.expires_at - INTENT_TTL_MS,
+            since_epoch=request.erase_epoch, memories=memories,
+            spans=request.spans, digests=digests, entities=entities)
+
+
+def _acted_on(request: MemoryForgetStatementRequestV1, record: _PlanRecord | None) -> set[str]:
+    """The memories a statement plan forgets, lists, allows, keeps as residue or rewords."""
+    acted = {row.memory_id for row in request.targets}
+    if record is not None:
+        acted.update(record.listed, record.allowed, record.residue,
+                     (plan.memory_id for plan in record.rewordings))
+    return acted
 
 
 def _target(message: str) -> str:
@@ -7108,6 +7522,14 @@ def _target(message: str) -> str:
         return str(cast(dict[str, object], json.loads(message))["target"])
     except (KeyError, TypeError, ValueError):
         raise QuoteMemError("binding_mismatch", "A forget-pick vote lost its target") from None
+
+
+def _rewordings(message: str) -> bool:
+    """Whether a ``tells`` vote's user message asks of rewordings (`forget_pick.tells`)."""
+    try:
+        return json.loads(message).get("rewordings") is True
+    except (AttributeError, ValueError):
+        return False
 
 
 def _decision(pick: ForgetPickV1, statement: str) -> ForgetStatementDecisionV1:
@@ -7131,7 +7553,7 @@ def forget_pick_sender(
 ) -> Send:
     """Send forget-pick votes through the judge's provider under its binding.
 
-    Each vote is one ``memory-forget-pick-v1`` request with the judge binding's
+    Each vote is one ``memory-forget-pick-v2`` request with the judge binding's
     provider, model and reasoning effort, the timeout and retries, and the pinned
     prompt. A call that ends ``provider_unavailable`` or ``schema_invalid`` is an
     unanswered vote; any other error propagates.
@@ -7160,7 +7582,8 @@ def forget_pick_sender(
                   "tells": FORGET_PICK_TELLS_SCHEMA_ID}[stage]
         # A complete forget's ``tells`` votes send their own prompt, and a detail request's
         # votes theirs; the pick's stays pinned for every other target.
-        prompt, version, digest = forget_prompt(stage, _target(message))
+        prompt, version, digest = forget_prompt(stage, _target(message),
+                                                rewordings=_rewordings(message))
         request = InferenceRequest(
             purpose="judge", provider=cast(Literal["openai"], binding.provider),
             requested_model=binding.requested_model, schema_id=schema,

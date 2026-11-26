@@ -304,20 +304,17 @@ async function cmdDoctor() {
       : `service unreachable at ${settings.url} (${health.error}); start it with \`${startHint(settings.url)}\`${settings.localService ? ', or run `quotemem setup` once so it starts by itself' : ''}`;
     line(health.status >= 200 && health.status < 300 ? true : settings.localService?.autostart ? null : false, health.status ? `service answers /health with ${health.status}` : down);
     if (health.status && settings.token) {
-      // An empty search is refused after the token check, so no search runs.
-      const headers = { 'content-type': 'application/json' };
-      if (settings.authMode === 'x-api-key') headers['x-api-key'] = settings.token;
-      else headers.authorization = `${settings.authMode === 'token' ? 'Token' : 'Bearer'} ${settings.token}`;
-      const auth = await probe(`${settings.url}/memory/search`, { method: 'POST', headers, body: '{}' });
+      // GET /agent/status needs the token and touches no memory.
+      const { authHeaders } = await import(pathToFileURL(path.join(here, '..', 'core', 'http.mjs')).href);
+      const auth = await probe(`${settings.url}/agent/status`, { method: 'GET', headers: authHeaders(settings) });
       if (auth.status === 401 && settings.localService) {
         // Two people signed in at once share 127.0.0.1:8765: the first one's service refuses the second one's token.
         const { portOwner, userPort } = await import(pathToFileURL(path.join(here, '..', 'core', 'proc.mjs')).href);
         const owner = portOwner(settings.localService.port);
         line(false, `the service refused the token: it must equal the service's own (its <data-dir>/token), or the service at ${settings.url} is another user's QuoteMem on this computer${owner && !owner.mine ? ` (it runs as ${owner.owner})` : ''} (two people signed in at once). Then give this user a port of its own: QUOTEMEM_URL=http://127.0.0.1:${userPort(env)} in ~/.quotemem/env and in the environment Claude Code, Codex and DSH start in (its plugins then start its own service there)`);
       } else if (auth.status === 401) line(false, 'the service refused the token (it must equal the service\'s token: the QUOTEMEM_TOKEN it was started with, or its <data-dir>/token)');
-      else if (auth.status === 403) line(false, 'the token is not allowed to search');
-      else if (auth.status >= 400 && auth.status < 500) line(true, 'the service accepts the token');
-      else line(null, `could not check the token (search answered ${auth.status || auth.error})`);
+      else if (auth.status >= 200 && auth.status < 300) line(true, 'the service accepts the token');
+      else line(null, `could not check the token (/agent/status answered ${auth.status || auth.error})`);
     }
   }
   const folders = stateFolders(env, envFilePath, parseEnvFile);

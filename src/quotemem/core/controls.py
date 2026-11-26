@@ -339,6 +339,9 @@ class ForgetShadowV1(StrictModel):
 
 MAX_FORGET_HANDLED: Final = 256
 """Forget requests one scope's handled record keeps; the oldest go first."""
+MAX_HANDLED_ASKED: Final = 8
+"""Prepared plans that find one handled request: its latest (``asked``) and the newest alias
+entries leading to it (`ForgetHandledEntryV1`)."""
 type HandledStatement = Literal["nothing_matched", "prepared", "forgotten"]
 type HandledInChat = Literal["nothing_matched", "forgotten"]
 
@@ -349,8 +352,12 @@ class ForgetHandledEntryV1(StrictModel):
     Attributes:
         request: The keyed digest of the session and the request's words
             (``forget-handled-request``); nothing of what they say is copied.
-        asked: The keyed digest of the forget by statement's ``request_id``, which a
-            confirmation names; None when only the in-chat forget ran.
+        asked: The keyed digest of the session, the ``request_id`` and the plan binding of
+            the latest plan the forget by statement prepared for it, which a confirmation
+            names; None when only the in-chat forget ran. An earlier plan of the same request
+            is found through an alias entry: its ``request`` is a keyed digest of that plan's
+            digest and its ``asked`` is the ``request`` of the entry it leads to; the alias
+            carries nothing else (`MAX_HANDLED_ASKED`).
         statement_seq: The commit up to which the forget by statement's prepare read the
             scope: once it is confirmed or matched nothing, a later in-chat forget of the same
             request reads only what changed after it (an unconfirmed plan settles nothing).

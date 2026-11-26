@@ -21,15 +21,25 @@ statement of it in the `agent` Add mode.
   (see [Forgetting](forgetting.md)).
 - **Recorded review decisions.** Before a new memory is written, a review step
   compares it with the existing memories it may update. Each decision is
-  stored with the snapshot of neighbours it was made against, so it can be
-  audited and replayed.
-- **Review modes.** `agent` (the default of `quotemem serve`) sends a new
-  memory to a judge model only when it may repeat, update or correct a stored
-  one, and reviews the rest with local rules. `lean-local` (the default of
-  `quotemem bench serve`) reviews with deterministic local rules. `full` sends
-  every candidate to a judge model. The mode is fixed when a store is created.
-  In the `agent` mode you choose how strongly it reviews: `fast`, `standard`
-  (the default) or `full` (`QUOTEMEM_REVIEW`, see [Review](configuration.md#review)).
+  stored with a record of the neighbours it was made against (their ids and
+  scores), so it can be audited and replayed. `POST /memory/provenance` shows
+  the decision behind any version of a memory.
+- **Add modes and reviews.** By default `quotemem serve` creates a new store
+  in the `agent` Add mode. In it you choose how strongly it reviews
+  (`QUOTEMEM_REVIEW`, see [Review](configuration.md#review)):
+  - `standard` (the default) sends a new memory to a judge model when it may
+    repeat or change a stored one, or in the other cases
+    [Review](architecture.md#review) lists, and reviews the rest with local
+    rules;
+  - `fast` reviews with local rules only;
+  - `full` sends every new memory to a judge model.
+
+  The benchmark Add modes of `quotemem bench serve` are `lean-local` (local
+  rules, its default) and `full` (a judge model for every candidate). The Add
+  mode and the review are fixed when a store is created.
+
+[How QuoteMem works](architecture.md) explains each step of an Add, a read and
+a forget, and what each file and table of a store holds.
 
 ## How it differs
 
@@ -42,6 +52,7 @@ the conversation.
 
 | Page | What it covers |
 |---|---|
+| [How QuoteMem works](architecture.md) | A store's files and tables, an Add, reads, forgets |
 | [Run the memory service](service.md) | Install, `quotemem serve`, the HTTP routes |
 | [Configuration](configuration.md) | The review, and every setting of `quotemem serve` and `quotemem bench serve` |
 | [Forgetting](forgetting.md) | Prepare and confirm, tombstones, what stays |

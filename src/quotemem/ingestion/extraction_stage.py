@@ -154,6 +154,7 @@ from quotemem.ingestion.statement_settlement import (
 from quotemem.ingestion.units import StorageBudget, Unit, plan_units
 from quotemem.providers.bindings import inference_binding_for_policy
 from quotemem.providers.contracts import EmbeddingProvider, StructuredInferenceProvider
+from quotemem.store.erasure_gate import withheld_versions
 from quotemem.store.extraction_erasure import erased_extraction_records
 from quotemem.store.memory_commit import (
     DispositionV1,
@@ -870,6 +871,7 @@ def build_unit_context(owner: ExtractionOwner, unit: Unit) -> ExtractionContext 
         bind=owner.writer.bind_content, preceding=preceding, previous=owner.previous_batch(unit),
         tail_words=parameters.tail_words, previous_words=parameters.previous_batch_words,
         withdrawn=withdrawn_memories(owner.writer, owner.view.scope_id),
+        hidden=withheld_versions(owner.writer, owner.view.scope_id),
     )
 
 

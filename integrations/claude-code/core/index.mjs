@@ -11,7 +11,7 @@ export { FORGET_HEADER, RECALL_HEADER, SETUP_HEADER, UNAVAILABLE_HEADER, chatFor
 export { authHeaders, callJson, codeOf, errKind, healthOk, postJson, retryAfterMs, retryable } from './http.mjs';
 export { buildJobs, cutBatch, newCaptureState, recordTurn, sha16, textOf, timeOf, wireMessage } from './capture.mjs';
 export { ADD_HEADERS, AUTH_PAUSE_MS, backoffMs, chatForgetsOf, deferMs, pollDelayMs, rotateJob, sendAdd, validJob } from './send.mjs';
-export { DIRECT_START_FILE, FOREIGN_STALE_MS, alive, bootTime, homeDir, hostName, launcherCheck, ownerGone, ownerRecord, portOwner, settleLaunches, spawnDetached, spawnDetachedAsync, userPort } from './proc.mjs';
+export { DIRECT_START_FILE, FOREIGN_STALE_MS, STARTED_DIRECTLY_VAR, alive, bootTime, homeDir, hostName, launcherCheck, ownerGone, ownerRecord, portOwner, settleLaunches, spawnDetached, spawnDetachedAsync, userPort } from './proc.mjs';
 export { adoptLock, handLock, lockHeld, readJson, releaseLock, touchLock, tryLock, withLock, writeFileAtomic } from './lock.mjs';
 export { fileSink, makeLog } from './log.mjs';
 export { ACCEPTED_MAX_WAIT_MS, ACCEPTED_READ_TIMEOUT_MS, DiskQueue, FORGET_CONFLICT_ATTEMPTS, FORGET_EARLIER_WAIT_MS, FORGET_TOOL_WAIT_MS, FLUSHER_PATH, IDLE_LOCK_STALE_MS, PROBE_EVERY_MS, jobKey, ownerKey, runFlusher } from './diskqueue.mjs';

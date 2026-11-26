@@ -34,11 +34,18 @@ from quotemem.api.memory_forget import (
 )
 from quotemem.core.bootstrap import InitializedWorkspace
 from quotemem.core.entities import QuoteSpanV1
+from quotemem.core.errors import QuoteMemError
 from quotemem.core.identity import ArtifactId, IntegrityDigest, integrity_digest, scope_id
 from quotemem.core.query import ScopeV1
 from quotemem.providers.auth import AuthRequest, PrincipalGrant
 from quotemem.service.auth import BenchExactUserAuth
-from quotemem.service.forget_statement import ChatForgetOutcome, ChatForgetRequest, StatementForget
+from quotemem.service.forget_statement import (
+    PREPARE_ATTEMPTS,
+    ChatForgetOutcome,
+    ChatForgetRequest,
+    StatementForget,
+)
+from quotemem.store.erasure_gate import hold_generation
 from quotemem.store.forget_run import ForgetOwner, workspace_embedding
 from quotemem.store.read_model import StoreReadModel
 from quotemem.store.writer import Writer
@@ -128,6 +135,30 @@ class ForgetService:
         with the retryable ``provider_unavailable`` when the judge cannot settle what else
         tells the fact (``StatementForget.memory_plan``)."""
         scope, grant = self._scope(request.user_id)
+        # Never a preview of what an accepted forget of the scope is taking: the prepare
+        # waits for it, and builds again when another is accepted or finishes meanwhile.
+        for _ in range(PREPARE_ATTEMPTS):
+            # The generation is the one read when nothing was withheld (`wait_unheld`).
+            noted = (self._owner.wait_unheld(scope), self._epoch(scope))
+            prepared = self._prepare_memory(scope, grant, request)
+            if self._marks(scope) == noted:
+                return prepared
+        raise QuoteMemError("erasure_in_progress", "Forgets of the scope kept changing the plan")
+
+    def _epoch(self, scope: ScopeV1) -> int:
+        """The scope's ``erase_epoch``; -1 for a scope nothing was received in yet."""
+        key = f"erase_epoch:{scope.scope_id}"
+        with self._writer.write_scope():
+            return -1 if self._writer.get_control(key) is None else self._writer.get_counter(key)
+
+    def _marks(self, scope: ScopeV1) -> tuple[int, int]:
+        """The scope's hold generation and ``erase_epoch`` (`prepare_memory_forget`)."""
+        return hold_generation(self._writer, scope.scope_id), self._epoch(scope)
+
+    def _prepare_memory(
+        self, scope: ScopeV1, grant: PrincipalGrant, request: MemoryForgetPrepareRequestV1,
+    ) -> MemoryForgetPreparedV2:
+        """One build of `prepare_memory_forget`'s answer."""
         complete = self._owner.forgets_completely()
         plan = (self._statement_forget().memory_plan(scope, request.memory_id)
                 if complete else None)
@@ -224,7 +255,7 @@ class ForgetService:
             request_digest=integrity_digest(request.model_dump(mode="json")),
             outcomes=list(outcomes),
             scope_state="maintenance_pending" if self._scope_state(scope) else "ready",
-            earlier=statements.earlier(scope, request.request_id),
+            earlier=statements.earlier(scope, request),
             forgotten=report.forgotten, withheld_spans=report.withheld,
             affected=list(report.affected),
         )

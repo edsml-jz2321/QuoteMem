@@ -128,7 +128,8 @@ def add_agent_commands(
         help="The environment variable holding a journal file's passphrase",
     )
     repair = operations.add_parser(
-        "repair", help="Inspect, resume or skip one user's stopped or quarantined Add owner",
+        "repair", help="Inspect, resume or skip one user's stopped or quarantined Add owner; "
+                       "a forget that needs repair runs again first",
     )
     delete = operations.add_parser(
         "delete-user", help="Erase one user's memories and sources from the running service",
@@ -162,7 +163,8 @@ def add_agent_commands(
     memories.add_argument("--html", type=Path, default=None, metavar="FILE",
                           help="Write one read-only HTML snapshot (mode 0600)")
     repair.add_argument("--skip", action="store_true",
-                        help="Skip the quarantined cycle instead of resuming its owner")
+                        help="Skip the quarantined cycle instead of resuming its owner "
+                             "(a forget that needs repair is run again, never skipped)")
     repair.add_argument("--inspect", action="store_true", help="Only report the owner's state")
     delete.add_argument("--yes", action="store_true", help="Do not ask for confirmation")
     for name, command in (("serve", serve), ("check", check), ("export", export),

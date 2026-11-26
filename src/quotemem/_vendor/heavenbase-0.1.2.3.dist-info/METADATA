@@ -4,7 +4,7 @@ Version: 0.1.2.3
 Summary: HeavenBase: an agent-native polyglot engine for structured data management. Your data, speakable by agents.
 Author: Magolor
 License-Expression: MIT
-Project-URL: Repository, https://github.com/Magolor/HeavenBase
+Project-URL: Repository, https://github.com/Magolor/HeavenBase-legacy
 Keywords: semantic-layer,entity,vector-db,agents,heavenbase,hvnb
 Classifier: Development Status :: 3 - Alpha
 Classifier: Intended Audience :: Developers

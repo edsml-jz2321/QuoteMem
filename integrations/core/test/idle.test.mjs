@@ -7,6 +7,7 @@
 //
 //   node --test integrations/core/test/idle.test.mjs
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { execFileSync, spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -114,16 +115,16 @@ function setup(server, env = {}) {
     await call('reply', { session, turn: `p${n}`, text: reply });
     return at;
   };
-  const queue = new DiskQueue({ stateDir, url: server.url, userId: base.QUOTEMEM_USER_ID }, quiet);
+  const queue = new DiskQueue({ stateDir, url: server.url, userId: base.QUOTEMEM_USER_ID, token: base.QUOTEMEM_TOKEN, authMode: 'bearer' }, quiet);
   const log = () => { try { return fs.readFileSync(path.join(stateDir, 'quotemem.log'), 'utf8'); } catch { return ''; } };
   return { stateDir, env: base, call, turn, queue, log, lock: () => readJson(queue.idleLockFile) };
 }
 
 function idleLocks(stateDir) {
-  const owners = path.join(stateDir, 'owners');
+  const dir = path.join(stateDir, 'idle');
   let names = [];
-  try { names = fs.readdirSync(owners); } catch { /* none */ }
-  return names.map((name) => path.join(owners, name, 'idle.lock')).filter((file) => fs.existsSync(file));
+  try { names = fs.readdirSync(dir); } catch { /* none */ }
+  return names.filter((name) => name.endsWith('.lock')).map((name) => path.join(dir, name));
 }
 
 const users = (request) => request.body.messages.filter((m) => m.role === 'user').map((m) => m.content);
@@ -245,6 +246,54 @@ test('idle: the waiting flusher saves only its own user\'s chats of its own serv
   const waiting = states.filter((state) => state?.capture?.pending?.length > 0).map((state) => state.capture.pending.map((m) => m.content).join(' '));
   assert.ok(waiting.some((text) => text.includes('red car')), 'the other user\'s turn waits');
   assert.ok(waiting.some((text) => text.includes('green boat')), 'the other service\'s turn waits');
+});
+
+test('idle: one waiting flusher serves the owners of its credential, each with its own settings; another credential gets its own', async () => {
+  const server = await serve({ '/memory/add': stored });
+  const hooks = setup(server, { QUOTEMEM_IDLE_FLUSH_MS: '1200' });
+  // Same token, another user, who keeps no assistant text; then another user with a token of its own.
+  const plain = { QUOTEMEM_USER_ID: 'plain', QUOTEMEM_CAPTURE_ASSISTANT: 'none' };
+  const keyed = { QUOTEMEM_USER_ID: 'keyed', QUOTEMEM_TOKEN: 'another-token-2' };
+  await hooks.turn('A', 1, 'My kite is orange.');
+  const pid = hooks.lock()?.pid;
+  assert.ok(Number.isInteger(pid), 'a flusher waits');
+  for (const [env, words] of [[plain, 'I keep bees.'], [keyed, 'I sail on Sundays.']]) {
+    await hooks.call('prompt', { session: env.QUOTEMEM_USER_ID, turn: 'p1', text: words }, env);
+    await hooks.call('reply', { session: env.QUOTEMEM_USER_ID, turn: 'p1', text: `Noted, ${env.QUOTEMEM_USER_ID}.` }, env);
+  }
+  assert.equal(idleLocks(hooks.stateDir).length, 2, 'one waiting flusher per credential');
+  await waitFor(() => server.of('/memory/add').length === 3, 8000, 'every idle save');
+  const byUser = Object.fromEntries(server.of('/memory/add').map((r) => [r.body.user_id, r]));
+  assert.equal(byUser.quei.headers.authorization, `Bearer ${TOKEN}`);
+  assert.equal(byUser.plain.headers.authorization, `Bearer ${TOKEN}`);
+  assert.equal(byUser.keyed.headers.authorization, 'Bearer another-token-2', 'its own token, from its own flusher');
+  assert.deepEqual(byUser.plain.body.messages.map((m) => m.role), ['user'], 'its own setting: no assistant text');
+  assert.deepEqual(byUser.quei.body.messages.map((m) => m.role), ['user', 'assistant']);
+  // owner.json keeps an HMAC of the credential under the state folder's own key (0600),
+  // never the token nor a bare hash a copy of the folder could test guesses against.
+  const owners = path.join(hooks.stateDir, 'owners');
+  const bare = createHash('sha256').update(`quotemem-owner\0bearer\0${TOKEN}`).digest('hex');
+  for (const name of fs.readdirSync(owners)) {
+    const text = fs.readFileSync(path.join(owners, name, 'owner.json'), 'utf8');
+    assert.ok(!text.includes(TOKEN) && !text.includes('another-token-2') && !text.includes(bare));
+  }
+  const key = path.join(hooks.stateDir, 'state.key');
+  assert.equal(fs.readFileSync(key).length, 32);
+  if (!windows) assert.equal(fs.statSync(key).mode & 0o777, 0o600);
+});
+
+test('idle: an owner registered again is not unregistered as idle for a week', async () => {
+  const server = await serve({ '/memory/add': stored });
+  const hooks = setup(server, { QUOTEMEM_IDLE_FLUSH_MS: '1200' });
+  await hooks.call('prompt', { session: 'W', turn: 'p1', text: 'My kite is orange.' });
+  const file = path.join(hooks.queue.ownerDir, 'owner.json');
+  const weekAgo = new Date(Date.now() - 8 * 86_400_000);
+  fs.utimesSync(file, weekAgo, weekAgo);
+  // The same registration again (nothing changed): it still marks the owner in use.
+  await hooks.call('reply', { session: 'W', turn: 'p1', text: 'Noted.' });
+  assert.ok(Date.now() - fs.statSync(file).mtimeMs < 60_000, 'touched by its hook');
+  await waitFor(() => server.of('/memory/add').length === 1, 8000, 'the idle save');
+  assert.ok(fs.existsSync(file));
 });
 
 test('idle: a chat with a turn in flight keeps that turn; its closed turns go as sweep sends them; the turn goes after its reply', async () => {
@@ -414,32 +463,51 @@ test('idle: the token is in no argument and no log line; a piped caller sees the
   for (const file of files) assert.ok(!fs.readFileSync(file, 'utf8').includes(TOKEN), `no token in ${path.relative(hooks.stateDir, file)}`);
 });
 
-test('idle: the Windows way of starting is chosen for win32, and falls back to a direct start without PowerShell', { skip: windows && 'not on Windows (it would start through PowerShell)' }, async () => {
+test('idle: the Windows way of starting is chosen for win32; without PowerShell a direct start does not wait for idle chats', { skip: windows && 'not on Windows (it would start through PowerShell)' }, async () => {
   const server = await serve({ '/memory/add': stored });
   const stateDir = tempDir();
   stateDirs.add(stateDir);
-  const settings = await testSettings(server.url, stateDir, {}, { QUOTEMEM_IDLE_FLUSH_MS: '800' });
+  const IDLE_MS = 3000;
+  const settings = await testSettings(server.url, stateDir, {}, { QUOTEMEM_IDLE_FLUSH_MS: String(IDLE_MS), QUOTEMEM_DEBUG: '1' });
+  const logOf = () => { try { return fs.readFileSync(path.join(stateDir, 'quotemem.log'), 'utf8'); } catch { return ''; } };
+  const said = (sync) => `Started ${sync ? 'at once' : 'later'}.`;
+  const saved = (text) => server.of('/memory/add').some((r) => users(r)[0] === text);
   for (const sync of [true, false]) {
     const lines = [];
     const log = { warn() {}, warnOnce(_key, message) { lines.push(message); }, debug() {} };
     const memory = new HookMemory({ settings, log, host: 'test-host', idleWait: true });
-    await memory.prompt({ session: `W${sync}`, turn: 'p1', text: `Started ${sync ? 'at once' : 'later'}.` });
+    await memory.prompt({ session: `W${sync}`, turn: 'p1', text: said(sync) });
     await memory.reply({ session: `W${sync}`, turn: 'p1', text: 'Noted.' });
+    const at = Date.now();
     fs.rmSync(path.join(stateDir, DIRECT_START_FILE), { force: true });
     const missing = path.join(root, 'no-powershell.exe');
-    assert.equal(memory.queue.startFlusher({ env: process.env, sync, idle: 'pending', launch: { platform: 'win32', powershell: missing } }), true);
+    const launch = { platform: 'win32', powershell: missing };
+    assert.equal(memory.queue.startFlusher({ env: process.env, sync, idle: 'pending', launch }), true);
     await core.settleLaunches(5000);
     assert.ok(lines.some((line) => /PowerShell could not start a background process/.test(line)), 'PowerShell was tried');
     assert.ok(fs.existsSync(path.join(stateDir, DIRECT_START_FILE)), 'the direct start is recorded');
-    await waitFor(() => server.of('/memory/add').some((r) => JSON.stringify(r.body).includes(`W${sync}`) || users(r)[0] === `Started ${sync ? 'at once' : 'later'}.`), 6000, 'the idle save');
-    await waitFor(() => !fs.existsSync(memory.queue.idleLockFile), 6000, 'the flusher to exit');
+    // It holds this process's handles: it sends the queue and exits, and
+    // gives the idle lock back, long before the idle time is over.
+    const given = () => !fs.existsSync(memory.queue.idleLockFile) && /started directly: sends the queue only/.test(logOf());
+    await waitFor(given, IDLE_MS - 1000, 'the direct start to give the idle wait back');
+    assert.ok(Date.now() - at < IDLE_MS, 'no process waits for the idle time');
+    assert.equal(saved(said(sync)), false, 'the idle chat is not saved by the direct start');
+    // The next hook after the idle time saves it.
+    await sleep(Math.max(0, at + IDLE_MS + 200 - Date.now()));
+    assert.equal(await memory.sweep(), 1);
+    await core.runFlusher(settings, quiet);
+    assert.equal(saved(said(sync)), true, 'a later hook saves the idle chat');
   }
-  // On other platforms the plain detached start is used: no PowerShell, nothing recorded.
+  // On other platforms the plain detached start is used: no PowerShell, nothing recorded,
+  // and the started flusher waits for the idle chat and saves it.
   fs.rmSync(path.join(stateDir, DIRECT_START_FILE), { force: true });
   const memory = new HookMemory({ settings, log: quiet, host: 'test-host', idleWait: true });
   await memory.prompt({ session: 'P', turn: 'p1', text: 'Started plainly.' });
   await memory.reply({ session: 'P', turn: 'p1', text: 'Noted.' });
-  assert.equal(memory.queue.startFlusher({ env: process.env, sync: true, idle: 'pending', launch: { platform: 'linux', powershell: path.join(root, 'no-powershell.exe') } }), true);
-  await waitFor(() => server.of('/memory/add').some((r) => users(r)[0] === 'Started plainly.'), 6000, 'the idle save');
+  const launch = { platform: 'linux', powershell: path.join(root, 'no-powershell.exe') };
+  // A mark of a direct start in this process's environment is not passed on.
+  const env = { ...process.env, [core.STARTED_DIRECTLY_VAR]: '1' };
+  assert.equal(memory.queue.startFlusher({ env, sync: true, idle: 'pending', launch }), true);
+  await waitFor(() => saved('Started plainly.'), IDLE_MS + 6000, 'the idle save');
   assert.equal(fs.existsSync(path.join(stateDir, DIRECT_START_FILE)), false);
 });

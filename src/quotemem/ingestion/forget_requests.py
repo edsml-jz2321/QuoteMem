@@ -112,10 +112,13 @@ _ZH = re.compile(
     r"^\W*(?:请|麻烦|能不能|可以)?(?:你)?(?:帮我)?(?:(?P<verb>忘记|忘掉|(?:不要|别|不用)(?:再)?"
     r"(?:记住|记得|记录|保存))(?P<object>.*)|(?:删除|删掉|清除)(?P<deleted>.*?)(?:的)?"
     r"(?:记忆|记录))\W*$", re.DOTALL)
+_END: Final = r"[^\w+#%]*$"
+"""The marks after a request's last word, which its statement leaves out: sentence
+punctuation, never the symbols that end a word ("C++", "C#", "100%")."""
 _ZH_COMPLETE = re.compile(
     r"^\W*(?:请|麻烦|能不能|可以)?(?:你)?(?:帮我)?(?:把(?P<object>.+?)(?:给)?"
     r"(?P<baverb>忘掉|忘了|忘记|删掉|删除|去掉)(?:吧|了|啊|呀)*|(?:不要|别|不用)(?:再)?"
-    r"记(?![住得录错混反岔乱])(?P<bare>.+?))\W*$", re.DOTALL)
+    r"记(?![住得录错混反岔乱])(?P<bare>.+?))" + _END, re.DOTALL)
 # The agent mode's forms (``complete``). They follow the plugins' own reading of a request
 # (``integrations/core/forget.mjs``, ``detectForget``), so the statement a plugin sends and the
 # one the in-chat forget reads of the same sentence agree; where the two differ,
@@ -442,7 +445,8 @@ _ZH_EDGES = " \t，,：:。！？.!?；;、"
 _SPEAKER = re.compile(r"\b(?:i|i'm|i've|i'd|i'll|me|my|mine|myself)\b", re.IGNORECASE)
 _NAMES_MEMORY = re.compile(rf"\b(?:from|in|into|out of) {_MEMORY}\b", re.IGNORECASE)
 _TRAILING_MEMORY = re.compile(rf"\s*,?\s*(?:from|out of|in) {_MEMORY}\W*$", re.IGNORECASE)
-_TRAILING = re.compile(r"(?:[\s,]+(?:please|for me|thanks|thank you))*\W*$", re.IGNORECASE)
+_TRAILING = re.compile(r"(?:[\s,]+(?:please|for me|thanks|thank you))*" + _END,
+                       re.IGNORECASE)
 _DISMISSAL = re.compile(r"^(?:about )?(?:it|this|that|them|everything)\b(?:\W*$|\s*[,—–-].*$)",
                         re.IGNORECASE | re.DOTALL)
 _RETRACTION = re.compile(r"^(?:that |what )?i (?:just |ever )?asked\b", re.IGNORECASE)

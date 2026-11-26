@@ -103,6 +103,7 @@ from quotemem.service.request_measurement import MeasurementCollector
 from quotemem.service.search_priority import SearchActivity
 from quotemem.service.traffic import JobTraffic
 from quotemem.service.traffic_worker import JobTrafficWorker, TrafficDrainResult
+from quotemem.store.erasure_gate import known_gate
 from quotemem.store.read_model import StoreReadModel
 from quotemem.store.row_cache import (
     INTERACTIVE_ROW_BINDING_BYTES,
@@ -392,6 +393,8 @@ class BenchRuntime:
         self._owner = WorkspaceOwner(root, profile="bench")
         self._workspace: InitializedWorkspace | None = None
         self._publisher: StoreReadModel | None = None
+        # The store whose erasure waits `withdraw` ends (`quotemem.store.erasure_gate`).
+        self._erasure_store: object | None = None
         self._controller: BenchController | None = None
         self._traffic: JobTrafficWorker | None = None
         self._listener: BenchListener | None = None
@@ -563,6 +566,7 @@ class BenchRuntime:
             if not isinstance(job.value, JobValueV1):
                 raise QuoteMemError("service_unhealthy", "Bench job binding has another kind")
             publisher = self._publisher = StoreReadModel(ready.writer)
+            self._erasure_store = ready.writer
             # A check inside a Writer section cannot renew, so each uses a grant
             # resolved outside it: an owner's borrow renews its grant once half
             # the lifetime has passed, a commit resolves one for its whole
@@ -735,6 +739,11 @@ class BenchRuntime:
         self._withdrawn = True
         if self._followups is not None:
             self._followups.stop()
+        # A forget or read waiting for its scope's erasure turn answers at once now; a
+        # turn already given runs to its end.
+        gate = None if self._erasure_store is None else known_gate(self._erasure_store)
+        if gate is not None:
+            gate.close()
         # Attempt every owned withdrawal even when one reports failure.
         failed = False
         for owner in (self._listener, self._controller):

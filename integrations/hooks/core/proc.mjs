@@ -90,7 +90,7 @@ function powershellPath(env) {
 // reused-pid check read it).
 function windowsLaunch(command, args, { env, cwd, logFile, label, started, claim, pidFile, wmi, wmiDecoy, wmiSlow }) {
   const words = [command, ...args].map(String);
-  const launchEnv = { ...env };
+  const launchEnv = startEnv(env);
   for (const name of Object.keys(launchEnv)) if (name.toUpperCase().startsWith(`${LAUNCH_VAR}_`)) delete launchEnv[name];
   const extra = [started, claim, ...(cwd ? [cwd] : []), ...(logFile ? [logFile] : [])];
   const names = [];
@@ -151,6 +151,20 @@ function readVia(file) {
 
 /** Where a host records that it had to start a process directly (doctor reads it). */
 export const DIRECT_START_FILE = 'direct-start.json';
+/**
+ * Set to 1 in the environment of a process started directly: it holds the
+ * starter's handles, so it keeps its life short (the background flusher then
+ * sends the queue and exits instead of waiting for idle chats).
+ */
+export const STARTED_DIRECTLY_VAR = 'QUOTEMEM_STARTED_DIRECTLY';
+
+// The environment of a start: never the mark of a direct start this process
+// itself may carry (only startDirectly sets it, for its own child).
+function startEnv(env) {
+  const out = { ...env };
+  delete out[STARTED_DIRECTLY_VAR];
+  return out;
+}
 
 // A detached process spawned by Node itself: its own process group on
 // POSIX, NUL or the log file as its output.
@@ -178,7 +192,8 @@ function startDirectly(command, args, { env, cwd, logFile, log, mark, reason }) 
       // the warning is in the log
     }
   }
-  return { ...spawnPlain(command, args, { env, cwd, logFile }), direct: true };
+  const marked = { ...startEnv(env), [STARTED_DIRECTLY_VAR]: '1' };
+  return { ...spawnPlain(command, args, { env: marked, cwd, logFile }), direct: true };
 }
 
 /**
@@ -207,7 +222,7 @@ function startDirectly(command, args, { env, cwd, logFile, log, mark, reason }) 
  */
 export function spawnDetached(command, args = [], options = {}) {
   const { env = process.env, cwd, logFile = null, platform = process.platform } = options;
-  if (platform !== 'win32') return spawnPlain(command, args, { env, cwd, logFile });
+  if (platform !== 'win32') return spawnPlain(command, args, { env: startEnv(env), cwd, logFile });
   const launch = prepareLaunch(command, args, options);
   const run = spawnSync(launch.shell, launch.argv, { env: launch.env, encoding: 'utf8', windowsHide: true, timeout: LAUNCH_TIMEOUT_MS, stdio: ['ignore', 'pipe', 'pipe'] });
   // PowerShell never ran (missing, blocked): nothing started.

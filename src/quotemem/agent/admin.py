@@ -251,6 +251,13 @@ class AgentStore:
                 "user_id": users.get(scope), "scope_id": scope, "stage": value.get("stage"),
                 "error_code": value.get("error_code"), "since_ms": row.get("updated_at"),
             })
+        from quotemem.store.forget_run import attended_forgets
+
+        attention: list[dict[str, object]] = []
+        for scope, user_id in sorted(users.items()):
+            stuck = attended_forgets(writer, ScopeV1(scope_kind="user", scope_id=scope))
+            if stuck:
+                attention.append({"user_id": user_id, "scope_id": scope, "controllers": stuck})
         reader = writer.indexed_reader()
         owners = 0
         after: str | None = None
@@ -264,6 +271,7 @@ class AgentStore:
         return {
             "registered_scopes": scopes, "users": len(users),
             "active_add_owners": owners, "quarantined_users": quarantined,
+            "forget_attention_users": attention,
             "embedding": {
                 "canary_state": ready.drift_state,
                 "mean_cosine_deviation": round(ready.mean_cosine_deviation, 6),
@@ -287,12 +295,15 @@ class AgentStore:
 
     # Repair ----------------------------------------------------------------------
     def repair(self, user_id: str, action: RepairAction) -> dict[str, object]:
-        """Inspect, resume or skip one user's stopped Add owner.
+        """Inspect, resume or skip one user's stopped Add owner, or resume a stopped forget.
 
         ``resume`` resumes the owner the observed budget names: it lifts a
         quarantine once the fault's cause is cleared, and also renews an exhausted
         or refused allowance. ``skip`` skips a quarantined cycle; its requests
-        complete as skipped and nothing committed is lost.
+        complete as skipped and nothing committed is lost. A forget refused for good
+        holds the user until it completes (``forget_attention``, its controllers): it comes
+        first, since nothing of the user can be repaired around it, and both ``resume`` and
+        ``skip`` run it again (`resume_attended`); it is never skipped.
 
         Raises:
             QuoteMemError: ``operation_conflict`` when there is nothing to resume or skip,
@@ -307,10 +318,22 @@ class AgentStore:
             CompletionRecoveryRequestV3(schema_version=3, user_id=user_id),
         ))
         scope = self._scope(captured, user_id)
+        from quotemem.store.forget_run import ForgetOwner, attended_forgets, resume_attended
+
+        stuck = attended_forgets(captured.ready.writer, scope)
+        if stuck and action != "inspect":
+            done = self._admitted(lambda ready: resume_attended(ForgetOwner(
+                ready.ready.writer, ready.publisher, clock=self._clock_ms), scope))
+            with self._lock:
+                self._details = None
+            return {"user_id": user_id, "action": action, "forget_attention": stuck,
+                    "forgets_resumed": done,
+                    "forget_attention_after": attended_forgets(captured.ready.writer, scope)}
         quarantined = captured.ready.writer.is_scope_quarantined(scope.scope_id)
         budget = observed.budget
         report: dict[str, object] = {
             "user_id": user_id, "quarantined": quarantined, "action": action,
+            "forget_attention": stuck,
             "failure_cause": observed.failure_cause,
             "budget_state": None if budget is None else budget.state,
             "recovery_count": None if budget is None else budget.recovery_count,
@@ -462,7 +485,8 @@ class AgentStore:
 
         return self._admitted(run)
 
-    def forget_withheld(self, user_id: str, statement: str) -> int:
+    def forget_withheld(self, user_id: str, statement: str, *,
+                        enforces: int | None = None) -> int:
         """Tombstone ``statement`` over the user's withheld markers; how many were withheld.
 
         A rebuild's replay of a forget whose words its journal replaced by the withheld
@@ -470,10 +494,12 @@ class AgentStore:
         holds is withheld by a forget of sentences seeded with ``statement``
         (``StatementForget.forget_sentences``), so the new store holds the old one's
         tombstone and forget shadow, and Search reads a part holding a marker as the old
-        store read the part whose words it withheld: as no hit. Markers already withheld
-        are withheld again, which changes nothing, so every forgotten statement gets its
-        tombstone and a resumed rebuild repeats it harmlessly. Nothing is done, and 0
-        returned, when the user's Evidence holds no marker.
+        store read the part whose words it withheld: as no hit. ``enforces`` is the old
+        store's admission time of the forget a repeat stands for (the safety pass, a late
+        marker): the forget shadow keeps its stamps (``ForgetOwner.prepare``). Markers
+        already withheld are withheld again, which changes nothing, so every forgotten
+        statement gets its tombstone and a resumed rebuild repeats it harmlessly. Nothing
+        is done, and 0 returned, when the user's Evidence holds no marker.
 
         Raises:
             QuoteMemError: ``operation_conflict`` when a forget of sentences did not complete;
@@ -505,7 +531,7 @@ class AgentStore:
             for part in chunks:
                 outcome = forget.forget_sentences(
                     scope, self._grant(captured, scope), session_id="quotemem-rebuild",
-                    statement=statement, spans=part)
+                    statement=statement, spans=part, enforces=enforces)
                 if outcome.outcome != "verified":
                     raise QuoteMemError("operation_conflict",
                                         "A replayed forget did not complete; run again")
@@ -514,7 +540,7 @@ class AgentStore:
         return self._admitted(run)
 
     def forget_earlier(self, user_id: str, statement: str,
-                       sources: Set[tuple[str, str]]) -> int:
+                       sources: Set[tuple[str, str]], *, enforces: int | None = None) -> int:
         """Forget ``statement`` again over the Evidence of ``sources`` alone; how many
         memories went.
 
@@ -523,6 +549,8 @@ class AgentStore:
         a current memory drawn from their Evidence alone is forgotten
         (``StatementForget.forget_earlier``), so whatever the rebuild's chat model decided,
         nothing said before a forget stays current, and a later restatement is untouched.
+        ``enforces`` is the old store's admission time of that forget: the forget shadow
+        keeps the stamps the replay gave it.
 
         Raises:
             QuoteMemError: ``provider_unavailable`` when a pick decision got fewer than two
@@ -542,9 +570,24 @@ class AgentStore:
             )
             return forget.forget_earlier(
                 scope, lambda: self._grant(captured, scope), session_id="quotemem-rebuild",
-                statement=statement, sources=sources)
+                statement=statement, sources=sources, enforces=enforces)
 
         return self._admitted(run)
+
+    def restamp_names(self, user_id: str, *, since: int, at: int) -> int:
+        """Stamp the user's forget shadow names stamped since ``since`` with ``at``, the old
+        store's admission time of the forget a rebuild just replayed
+        (``ForgetOwner.restamp_names``); how many were."""
+        from quotemem.store.forget_run import ForgetOwner
+
+        def run(captured: _Captured) -> int:
+            writer = captured.ready.writer
+            return ForgetOwner(writer, captured.publisher, clock=self._clock_ms).restamp_names(
+                self._scope(captured, user_id), since=since, at=at)
+
+        return self._admitted(run)
+
+
 
     def _markers(self, captured: _Captured, scope: ScopeV1) -> list[QuoteSpanV1]:
         """Each withheld marker in the active Evidence of ``scope``, in message bytes."""

@@ -958,6 +958,21 @@ def _user_said_first(
     return said_by_user_first(selected, assistant_only=assistant_only)
 
 
+Hidden = Callable[[MemoryDocument | EvidenceDocument], bool]
+"""Whether an accepted forget withholds a document from reads until its erasure ends: a
+memory it takes or one quoting a sentence it withholds, an Evidence part holding such a
+sentence (``quotemem.store.erasure_gate``). Such a document is ranked out; the ranking's other
+inputs (corpus statistics, links, contradiction and outdated signals) still count it until
+the erasure ends, so the order of the other hits follows the scores before the forget."""
+
+
+def _shown(documents: Iterable[MemoryDocument | EvidenceDocument],
+           hidden: Hidden | None) -> tuple[_Document, ...]:
+    """The ranking documents of ``documents`` that ``hidden`` does not withhold."""
+    return tuple(_Document(document) for document in documents
+                 if hidden is None or not hidden(document))
+
+
 def _rollups_first(
     selected: list[_Scored], rollups: Iterable[MemoryDocument], count: int,
     sources: Mapping[str, SourceRowV2], excluded: Collection[_Key], withdrawn: Collection[str],
@@ -1172,6 +1187,7 @@ def recall_pure(
     rerank: Rerank | None = None,
     withdrawn: Collection[str] = (),
     lexical_only: bool = False,
+    hidden: Hidden | None = None,
 ) -> tuple[ReturnedItemV1, ...]:
     """Rank a frozen query on a read-only snapshot with an explicit v4 policy.
 
@@ -1210,6 +1226,9 @@ def recall_pure(
         lexical_only: The query freezes the policy's routes without the vector routes,
             the interactive Search's keyword fallback (``api/interactive_search.py``);
             every other read freezes them all.
+        hidden: What an accepted forget of the scope withholds until its erasure ends
+            (`Hidden`); None when nothing is withheld, the read then ranking exactly as
+            without it.
 
     Returns:
         Bound locators in authoritative delivery order, with six-decimal scores.
@@ -1232,11 +1251,20 @@ def recall_pure(
     )
     parameters = policy.parameters
     excluded = {(entry.kind, entry.object_id) for entry in (*query.exclude, *query.session_lru)}
-    memories = tuple(_Document(document) for document in prepared.memories)
-    evidence = tuple(_Document(document) for document in prepared.evidence)
+    # What an accepted forget withholds never enters a channel, the re-rank pool or a
+    # rollup: the top k are filled as if it were already erased.
+    memories = _shown(prepared.memories, hidden)
+    evidence = _shown(prepared.evidence, hidden)
+    rollups = prepared.rollups if hidden is None else tuple(
+        document for document in prepared.rollups if not hidden(document))
     with localcontext() as context:
         context.prec = 40
         scores = _route_scores(prepared)
+        if hidden is not None:
+            # A withheld document casts no route vote and takes no route quota.
+            shown = {document.key for document in (*memories, *evidence)}
+            for route, values in scores.items():
+                scores[route] = {key: value for key, value in values.items() if key in shown}
         dated: frozenset[_Key] = frozenset(
             {("memory", memory_id) for memory_id in prepared.dated_memories}
             | {("evidence", evidence_id) for evidence_id in prepared.dated_evidence},
@@ -1352,7 +1380,7 @@ def recall_pure(
             selected = [*_time_order(selected, order), *_time_order(secondary, order)]
         if (mode in {"plain", "current"} and len(evidence) > ROLLUP_MIN_PARTS
                 and (summary or order_query(query.query))):
-            selected = _rollups_first(selected, prepared.rollups, query.top_k, sources, excluded,
+            selected = _rollups_first(selected, rollups, query.top_k, sources, excluded,
                                       withdrawn, prepared.vector)
         returned: list[ReturnedItemV1] = []
         for rank, member in enumerate(selected, 1):
@@ -1438,7 +1466,7 @@ class _AgentScope:
 def _agent_scope(
     memories: Sequence[_Document], evidence: Sequence[_Document],
     sources: Mapping[str, SourceRowV2], context: AgentContext, asks_assistant: bool,
-    kept: dict[int, object], now: int,
+    kept: dict[int, object], now: int, not_holders: Collection[str] = (),
 ) -> _AgentScope:
     """The candidates an agent read may show and the scope it reads statuses from.
 
@@ -1447,7 +1475,8 @@ def _agent_scope(
     recorded one, the marked sentences' and the requests' terms, less names two surviving
     memories still hold; a request whose in-chat forget matched nothing adds no terms,
     ``AgentContext.unmatched``). `recall_interactive` and `agent_listing` both read this, so a
-    listing hides what Search hides and labels each memory from the same scope.
+    listing hides what Search hides and labels each memory from the same scope; the memories
+    only a listing reads (``not_holders``, `listed_memories`) hold no name for it.
     """
     withheld: list[tuple[str, int, int]] = list(context.marks)
     forgotten = ForgetShadowTerms()
@@ -1508,7 +1537,8 @@ def _agent_scope(
     if shadow.names:
         survivors = surviving_names(shadow, (
             frozenset(map(shadow.digest, _terms(document, quotes)))
-            for document in open_documents if document.key[0] == "memory"))
+            for document in open_documents
+            if document.key[0] == "memory" and document.key[1] not in not_holders))
         shadow = shadow.without_names(survivors)
         bare = bare.without_names(survivors) if bare.names else bare
 
@@ -1620,6 +1650,7 @@ def recall_interactive(
     cache: SnapshotRecallCache | None = None,
     withdrawn: Collection[str] = (),
     lexical_only: bool = False,
+    hidden: Hidden | None = None,
 ) -> InteractiveRanking:
     """Rank a frozen query for an agent plugin (the interactive profile, ``agent-v2``).
 
@@ -1669,6 +1700,8 @@ def recall_interactive(
         cache: Optional same-root corpus cache.
         withdrawn: The scope's withdrawn summary-only memories.
         lexical_only: The keyword fallback of a late query embedding.
+        hidden: What an accepted forget of the scope withholds (`Hidden`), as `recall_pure`
+            reads it.
 
     Returns:
         The locators in delivery order and each delivered memory's status.
@@ -1681,11 +1714,10 @@ def recall_interactive(
     parameters = policy.parameters
     depth = max(depth, query.top_k)
     excluded = {(entry.kind, entry.object_id) for entry in (*query.exclude, *query.session_lru)}
-    memories = tuple(_Document(document) for document in prepared.memories)
+    memories = _shown(prepared.memories, hidden)
     # A part a complete forget withheld bytes of ranks by its remainder alone, and shows its
     # readable bytes alone (``core.forget_remainder``).
-    evidence = tuple(_Document(document)
-                     for document in (*prepared.evidence, *prepared.remainders))
+    evidence = _shown((*prepared.evidence, *prepared.remainders), hidden)
     sources = {row.object_id: row for row in root.source_corpus(prepared.scope_id)}
     sources.update((document.row.object_id, document.row) for document in prepared.remainders)
     asks_assistant = recalls_assistant(query.query) or asks_back(query.query)
@@ -2086,8 +2118,8 @@ def agent_listing(
         The memories, in corpus order.
     """
     cache = SnapshotRecallCache(root) if cache is None else cache
-    found, readable = listed_memories(root, cache, scope_kind=scope_kind, scope_id=scope_id,
-                                      now=now)
+    found, readable, replaced = listed_memories(root, cache, scope_kind=scope_kind,
+                                                scope_id=scope_id, now=now)
     memories = tuple(_Document(document) for document in found)
     evidence = tuple(_Document(document) for document in readable)
     sources = {row.object_id: row for row in root.source_corpus(scope_id)}
@@ -2095,7 +2127,7 @@ def agent_listing(
     # builds it: a withdrawn overview still counts as a holder of a shadow name
     # (`surviving_names`). Only the listing itself leaves it out, as Search's candidates do.
     scope = _agent_scope(memories, evidence, sources, context, False,
-                         _scope_hits(cache, scope_id), now)
+                         _scope_hits(cache, scope_id), now, replaced)
     listed = [(document, value) for document in scope.allowed
               if isinstance(value := document.value, MemoryDocument)
               and (_ordinary(_Scored(document, _ZERO)) or document.key[1] not in withdrawn)]

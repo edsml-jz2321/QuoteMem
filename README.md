@@ -6,11 +6,13 @@ QuoteMem is a long-term memory service for AI agents that keeps the exact words 
 
 - **Every memory keeps its exact quote.** Each memory is a short statement
   tied by byte range to the words it came from.
-- **Updates keep the old version.** When a fact changes, a new version is
-  written and the old one is kept and marked as replaced.
+- **Updates keep the old memory.** When a fact changes, a new memory replaces
+  the old one. The old one is kept, marked `past`, and linked to the new one.
 - **"Forget" is carried out and stays forgotten.** The memories the request
-  matches are taken out of reads and are not learned again later, except
-  from the user's own later, dated statement of it in the `agent` Add mode.
+  matches are taken out of reads and are not learned again later. The one
+  way back is the user stating the fact again in a message dated after the
+  forget. The plugins send each prompt with the time it was said, so
+  telling the fact again in a later chat counts.
 
 <p align="center"><img src="https://raw.githubusercontent.com/edsml-jz2321/QuoteMem/main/docs/images/how-quotemem-works.svg" width="900" alt="Conversation, extraction with a byte-range quote, review against the nearby memories, memory with versions, then recall with the quote, or forget with a tombstone"></p>
 
@@ -20,8 +22,12 @@ QuoteMem is a long-term memory service for AI agents that keeps the exact words 
 tells one short story to a running service, for a new user. Chat 1:
 "I live in Beijing. My cat is called Bob. I work as a nurse." Chat 2:
 "I moved from Beijing to Shanghai last month." Chat 3: "Forget my cat's
-name." It runs from a clone of the repository, after `npm install -g quotemem`
-and `quotemem setup`:
+name." Chat 4 names the cat again: an old message imported without a date,
+a question, and the assistant's answer. Along the way it prints each
+memory's quote, the byte range of the update's quote, the review behind the
+update, the forget's receipt and its tombstone. It runs from a clone of the
+repository, after
+`npm install -g quotemem` and `quotemem setup`:
 
 ```bash
 git clone https://github.com/edsml-jz2321/QuoteMem.git
@@ -30,39 +36,91 @@ quotemem serve &
 node examples/demo/demo.mjs
 ```
 
-This is a real run with the default preset (output shortened):
+This is one real run with the default preset. The first line, the model's
+own reason and the closing `quotemem memories` list are left out (`...`):
 
 ```text
 $ node examples/demo/demo.mjs
+...
+0. The store: Add mode agent, review standard
+1. Chat 1, the user says: "I live in Beijing. My cat is called Bob. I work as a nurse."
+   stored: 4 added
 2. Chat 2, the user says: "I moved from Beijing to Shanghai last month."
    stored: 1 corrected
 3. The memories, each with its quote:
    [past] The user lives in Beijing.
+     quote: "I live in Beijing."
    [current] The user moved from Beijing to Shanghai last month.
      quote: "I moved from Beijing to Shanghai last month."
-   ...
+   [current] The user has a cat.
+     quote: "My cat"
+   [current] The user's cat is named Bob.
+     quote: "My cat is called Bob"
+   [current] The user works as a nurse.
+     quote: "I work as a nurse."
    history of the city, newest first:
    update: The user moved from Beijing to Shanghai last month.
    create: The user lives in Beijing.
+   it replaces: "The user lives in Beijing." (update, from 2026-10)
+   quote: bytes 0-44 of chat 2: "I moved from Beijing to Shanghai last month."
+   the review behind it:
+   update of "The user lives in Beijing." (corrected: updated)
+   reason: ...
 4. Recall:
    search "Where does the user live now?", first hit:
-   The user moved from Beijing to Shanghai last month. (said on ...)
+   The user moved from Beijing to Shanghai last month. (said on Wednesday, 25 November 2026)
    Status: current
    - user: "I moved from Beijing to Shanghai last month."
 5. Chat 3, the user says: "Forget my cat's name."
-   prepare, goes: The user's cat is named Bob.
+   prepare, states the fact: The user's cat is named Bob.
+   prepare, notice: forget_keeps_unreadable_tombstone_v1
    confirm: verified
+   receipt: tombstones written 1, sentences withheld 2, readable left 0
+   tombstone: kept to block relearning, readable: false
 6. After the forget:
    [current] The user has a cat.
      quote: "My cat"
-   ...
+   [past] The user lives in Beijing.
+     quote: "I live in Beijing."
+   [current] The user moved from Beijing to Shanghai last month.
+     quote: "I moved from Beijing to Shanghai last month."
+   [current] The user works as a nurse.
+     quote: "I work as a nurse."
    search "What is the name of the user's cat?", first hit:
-   The user has a cat. (said on ...)
+   The user has a cat. (said on Wednesday, 25 November 2026)
+   Status: current
+   - user: "My cat"
    "Bob" in the memories or the search: no
+   history of a memory the forget deleted: 404 memory_not_found
+   "Bob" in any history: no
+7. Chat 4 names the cat again: an old chat imported without a date,
+   then a question and the assistant's answer:
+   user, no date: "My cat is called Bob."
+   user: "Is my cat called Bob?"
+   assistant: "Yes, your cat is called Bob."
+   stored: 1 rejected
+   reasons: denied_by_forget
+   "Bob" in the memories or the search: no
+...
 ```
 
-These lines came out the same in ten runs, each with a new user. The script
-ends with the same list from `quotemem memories`.
+- `stored: 1 corrected` is the Add's answer. It counts updates, corrections
+  and retractions together, and the reason code (`updated`) says which.
+- The receipt counts the tombstones written and the sentences of the saved
+  messages that now read `[withheld]`.
+- `readable left 0` is the service's own check that no read shows the fact.
+- The notice says that the forgotten statement is kept, unreadable, only to
+  block relearning. `quotemem delete-user` removes it.
+- In chat 4 only the undated user message gives a fact. It states the same
+  thing as the tombstone and is not dated after the forget, so it is
+  refused. A question and the assistant's reply never support a fact.
+
+The model's wording and how it splits chat 1 can differ between runs. So
+can the forget: it deletes the memory that names the cat, as here, or
+rewords it to "The user has a cat."
+([what differs](https://github.com/edsml-jz2321/QuoteMem/blob/main/examples/demo/README.md#what-differs-between-runs)).
+`node examples/demo/demo.mjs --relearn` adds a chat 5 in which the user
+states the name again, dated now: that brings it back.
 
 ## Quick start
 
@@ -145,7 +203,8 @@ TOKEN_FILE=~/.local/share/quotemem/token
 curl -s http://127.0.0.1:8765/memory/add \
   -H "Authorization: Bearer $(cat "$TOKEN_FILE")" -H "Content-Type: application/json" \
   -d '{"user_id": "u1", "session_id": "s1",
-       "messages": [{"role": "user", "content": "I moved to Lisbon last spring."}]}'
+       "messages": [{"role": "user", "content": "I moved to Lisbon last spring.",
+                     "timestamp": "2026-11-25T10:00:00Z"}]}'
 curl -s http://127.0.0.1:8765/memory/search \
   -H "Authorization: Bearer $(cat "$TOKEN_FILE")" -H "Content-Type: application/json" \
   -d '{"user_id": "u1", "query": "Where do I live?"}'
@@ -166,10 +225,12 @@ Without Node: `uvx quotemem serve`, or `pip install "quotemem>=0.3"`, then
 
 ## How it works
 
-The [demo](#demo) shows what a user sees. This section shows what happens
-inside the store, for one user's story. The values come from one real run of
-`quotemem serve` with its defaults: the `agent` Add mode and the `standard`
-review, QuoteMem 0.3.1 (output shortened). The user said:
+QuoteMem is one local service with one data folder. Every tool and every
+user goes through it, and each user's memories are kept apart. The
+[demo](#demo) shows what a user sees. This section shows what happens inside
+the store, for one user's story. The values come from one real run of
+`quotemem serve` (QuoteMem 0.3.1) with its defaults: the `agent` Add mode and
+the `standard` review (output shortened). The user said:
 
 | Date | The user said |
 |---|---|
@@ -218,7 +279,7 @@ Take the message of 20 November, "I moved from Beijing to Shanghai last month."
    similarity) and by word match (BM25). It also adds the memory that
    `revises` names and the tombstones of similar facts. Here it picked five of
    the six stored memories, with "The user lives in Beijing." first on both
-   rankings. This input is saved before any decision, so every decision can be
+   rankings. This input is saved with each decision, so every decision can be
    checked and replayed later.
 5. **The judge reviews.** With the default `standard` review, a fact that may
    repeat, update or correct a stored memory goes to a judge model; local rules
@@ -252,9 +313,27 @@ Take the message of 20 November, "I moved from Beijing to Shanghai last month."
 
 | What happens | What QuoteMem does |
 |---|---|
-| The user says "Please forget that I have a dentist appointment." | A forget said in chat. Before the Add answers, QuoteMem forgets the appointment memory, withholds both messages and writes a tombstone. |
+| The user says "Please forget that I have a dentist appointment." | A forget said in chat, carried out with that Add. QuoteMem forgets the appointment memory, withholds both messages and writes a tombstone. Once it has started erasing, it runs to the end, even if the Add has already answered. |
 | A forget through the API: "Forget that I work at Ruijin Hospital." | The prepare step returns a plan and changes nothing. The plan names "The user works at Ruijin Hospital." as the target and lists "A hospital is named Ruijin Hospital." as affected and the nurse memory as unrelated. The confirm step forgets both, withholds "at Ruijin Hospital" in the message of 8 November, and writes two tombstones. The nurse memory stays. |
 | Later, the assistant says "Good luck at Ruijin Hospital." | The message is kept, but no memory is added. An assistant message does not bring a forgotten fact back. |
+
+A forget deletes each memory that states the fact, or rewords it without the
+forgotten detail: after "Forget my cat's name", "The user's cat is named
+Bob." can become "The user has a cat." The tombstone keeps the forgotten
+statement and its vector, and no read returns it. A new fact with the same
+subject and the same words, up to case, spacing and closing punctuation, is
+refused, unless it is the way back below. A close one goes to review, which
+decides whether it restates the forgotten fact. As a second check, Search
+drops any hit that names a forgotten name, holds two of its topic words, or
+is a memory close in meaning to the forgotten statement.
+`quotemem delete-user` removes a user's tombstones with the rest of their
+data.
+
+**The one way back** is the user stating the fact again, in their own words,
+in a message dated after the forget: the service receives it after the
+forget, and the message's own `timestamp` is later. The plugins send each
+prompt with the time it was said. Over HTTP, a message counts only with a
+`timestamp`; the MCP add tool sends none.
 
 ### What Search returns
 
@@ -286,11 +365,12 @@ returns `correct` "The user's cat is named Max, not Bob." and then `create`
 
 ### Where it is kept
 
-The memories, their versions, their quotes and every review decision live in
-one SQLite file, `memory.db`, in the service's data folder. The vectors are
-stored in the rows:
+The store is two SQLite files in the `workspace/` folder of the service's
+data folder. The memories, their versions, their quotes and every review
+decision live in `memory.db`, with the vectors in the rows. Back up the whole
+data folder, with the service stopped.
 
-| Table | One row is |
+| Table or place | One row is, or it holds |
 |---|---|
 | `agent_memory_evidence` | a part of a stored message (at most 1,000 bytes): its text, session, time, vector and the byte ranges a forget withheld |
 | `agent_memory_item` | a memory: its current version and status |
@@ -300,9 +380,24 @@ stored in the rows:
 | `agent_memory_entity`, `agent_memory_entity_name` | a person or thing the memories are about, and its names |
 | `agent_memory_tombstone` | a forgotten fact, kept to check later Adds |
 | `agent_memory_artifact` | model outputs, the saved comparison inputs, decisions and receipts |
-| `agent_memory_evolution_run` | one step of an Add, a forget or a review |
-| `agent_memory_control` | counters, locks and settings |
-| `agent_memory_recall` | one search: the question and what it returned |
+| `agent_memory_evolution_run` | one run: an Add, a forget or a start-up task, with its status |
+| `agent_memory_control` | a setting or counter: the store binding, counters, per-user forget state |
+| `agent_memory_recall` | one Search answer: which memories and message parts it returned |
+| `hb-system.db` | the registry of HeavenBase, the included storage engine; no user data |
+| RAM, not a file | a read copy of each user's memories and messages, for Search and the list |
+| an export, outside the store | the messages, and the forgotten statements encrypted |
+
+**Rebuild.** The saved messages and the forgets are the source. The memories,
+versions and review records are made from them. A store's Add mode, review
+and embedding model are fixed when it is created. `quotemem export` writes
+the messages and the forgets as a journal. `quotemem rebuild` replays it
+with the current code into a new, empty data folder
+(`--from <old dir> --to <new dir>`). That is how a store takes other
+settings or a newer release.
+
+[How QuoteMem works](https://github.com/edsml-jz2321/QuoteMem/blob/main/docs/architecture.md)
+follows a message in nine steps, from the Add to reads and forgets, and
+covers every file, table, read route, forget and rebuild.
 
 ## Result
 
@@ -315,7 +410,9 @@ with a link to this repository:
 ## Documentation
 
 The [docs](https://github.com/edsml-jz2321/QuoteMem/blob/main/docs/README.md) have the full guides:
-[what it does](https://github.com/edsml-jz2321/QuoteMem/blob/main/docs/README.md#what-it-does), [the service and its routes](https://github.com/edsml-jz2321/QuoteMem/blob/main/docs/service.md),
+[what it does](https://github.com/edsml-jz2321/QuoteMem/blob/main/docs/README.md#what-it-does),
+[how it works](https://github.com/edsml-jz2321/QuoteMem/blob/main/docs/architecture.md),
+[the service and its routes](https://github.com/edsml-jz2321/QuoteMem/blob/main/docs/service.md),
 [configuration and review](https://github.com/edsml-jz2321/QuoteMem/blob/main/docs/configuration.md), [forgetting](https://github.com/edsml-jz2321/QuoteMem/blob/main/docs/forgetting.md),
 [commands and the memory list](https://github.com/edsml-jz2321/QuoteMem/blob/main/docs/cli.md), [agents](https://github.com/edsml-jz2321/QuoteMem/blob/main/docs/agents.md),
 [benchmarks](https://github.com/edsml-jz2321/QuoteMem/blob/main/docs/benchmarks.md) and [development](https://github.com/edsml-jz2321/QuoteMem/blob/main/docs/development.md).

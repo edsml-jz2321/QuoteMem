@@ -8,9 +8,12 @@ one. Set `QUOTEMEM_REVIEW` (or pass `--review`) to choose it for a new store:
 | Review | What decides | Judge model calls per Add |
 |---|---|---|
 | `fast` | Local rules only. A change of state that the user says outright ("Hangzhou, not Beijing") retires the old memory. | none |
-| `standard` (default) | A new memory that may repeat, update or correct a stored one goes to the judge model; local rules review the rest. | only for those memories |
-| `full` | The judge model reviews every new memory. | one per four new memories |
+| `standard` (default) | The judge model reviews a new memory that may change a stored one ([which](architecture.md#review)); local rules review the rest. | usually one per review round, plus votes |
+| `full` | The judge model reviews every new memory. | about one per four new memories, plus votes |
 
+- A judge verdict that would end a current memory, or deny a new memory as
+  a forgotten fact, is confirmed by votes: that memory is sent alone again,
+  up to two more times, and the verdict that two answers share decides.
 - Every review keeps the other rules of the `agent` Add mode: forgetting,
   history and status work the same.
 - Only the `agent` Add mode lets you choose. The `lean-local` Add mode always

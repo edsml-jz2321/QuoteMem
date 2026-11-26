@@ -541,7 +541,7 @@ class _PoolSlots:
     def release(self) -> None:
         """Return a slot taken by :meth:`acquire` without a ``read`` on the same thread."""
         me = self._me()
-        self.reads.pop(next((read for read, thread in reversed(tuple(self.reads.items())) if thread == me), None), None)
+        self.reads.pop(next((read for read in reversed(tuple(self.reads)) if self.reads.get(read) == me), None), None)
         self.freed()
 
     def freed(self) -> None:

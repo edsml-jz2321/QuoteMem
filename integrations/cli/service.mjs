@@ -752,8 +752,8 @@ async function otherUserNote(settings, env, probe) {
   const owner = proc.portOwner(settings.localService.port);
   let refused = false;
   if (settings.token) {
-    const headers = { 'content-type': 'application/json', authorization: `${settings.authMode === 'token' ? 'Token' : 'Bearer'} ${settings.token}` };
-    refused = (await probe(`${settings.url}/memory/search`, { method: 'POST', headers, body: '{}' })).status === 401;
+    const { authHeaders } = await core('http.mjs');
+    refused = (await probe(`${settings.url}/agent/status`, { method: 'GET', headers: authHeaders(settings) })).status === 401;
   }
   if (!refused && !(owner && !owner.mine)) return null;
   return `the memory service at ${settings.url} ${owner && !owner.mine ? `runs as another user (${owner.owner})` : 'refused this user\'s token'}: it may be another user's QuoteMem on this computer (two people signed in at once). Give this user a port of its own: QUOTEMEM_URL=http://127.0.0.1:${proc.userPort(env)} in ~/.quotemem/env and in the environment Claude Code, Codex and DSH start in (its plugins then start its own service there)`;

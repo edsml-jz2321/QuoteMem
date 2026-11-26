@@ -21,7 +21,7 @@ import path from 'node:path';
 import { after, test } from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-import { HIT, TOKEN, plan, sleep, stubServer, tempDir, waitFor } from '../../core/test/helpers.mjs';
+import { HIT, TOKEN, plan, sleep, stubServer, tempDir, treeTexts, waitFor } from '../../core/test/helpers.mjs';
 
 const PLUGIN = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const REPO = path.resolve(PLUGIN, '..', '..');
@@ -107,19 +107,6 @@ function silent(result) {
   assert.equal(result.code, 0);
   assert.equal(result.out, '', 'nothing on stdout');
   assert.equal(result.err, '', 'nothing on stderr');
-}
-
-function files(dir) {
-  const out = [];
-  const walk = (d) => {
-    for (const name of fs.readdirSync(d)) {
-      const p = path.join(d, name);
-      if (fs.statSync(p).isDirectory()) walk(p);
-      else out.push(p);
-    }
-  };
-  if (fs.existsSync(dir)) walk(dir);
-  return out;
 }
 
 // ---------------------------------------------------------------- hooks
@@ -361,7 +348,7 @@ test('privacy: secrets redacted; no token or message text in the log or the stat
   await waitFor(() => server.of('/memory/add').length === 2, 8000, 'two attempts');
   assert.ok(!JSON.stringify(server.of('/memory/add')[0].body).includes('sk-proj-AbCd'));
   await waitFor(() => !fs.readdirSync(c.stateDir, { recursive: true }).some((name) => path.basename(name) === 'flusher.lock'), 5000, 'flusher exit');
-  const disk = files(c.stateDir).map((f) => fs.readFileSync(f, 'utf8')).join('\n');
+  const disk = treeTexts(c.stateDir).map(({ text }) => text).join('\n');
   for (const text of ['sk-proj-AbCd', 'hunter2xyz', TOKEN]) assert.ok(!disk.includes(text), `state folder contains ${text}`);
   const log = fs.readFileSync(path.join(c.stateDir, 'quotemem.log'), 'utf8');
   assert.match(log, /dropped: internal after 2 attempts/);
@@ -590,9 +577,9 @@ test('real Codex: plugin install, silent capture, recall and forget', { skip: BI
   assert.equal(note.length, 1);
   assert.match(note[0].text, /Done: 1 stored memory was forgotten/);
   assert.ok(!third.out.includes('automatic forget'));
-  const state = files(path.join(codex.codexHome, 'quotemem')).map((f) => fs.readFileSync(f, 'utf8')).join('\n');
+  const state = treeTexts(path.join(codex.codexHome, 'quotemem')).map(({ text }) => text).join('\n');
   assert.ok(!state.includes(TOKEN), 'no token in the state folder or log');
-  assert.ok(!files(codex.codexHome).some((f) => fs.readFileSync(f).includes(TOKEN)), 'no token anywhere in the Codex home');
+  assert.ok(!treeTexts(codex.codexHome).some(({ text }) => text.includes(TOKEN)), 'no token anywhere in the Codex home');
   console.log(`# real Codex exec wall time: ${first.ms} / ${second.ms} / ${third.ms} ms (statement / recall / forget)`);
 });
 

@@ -398,16 +398,33 @@ def _forgotten(view: AddReadView) -> tuple[str, ...]:
     return tuple(tombstone.statement for tombstone in view.tombstones())
 
 
+Hidden = Callable[[VersionRecord], bool]
+"""Whether an accepted forget of the scope withholds a version from reads until its erasure
+ends (``quotemem.store.erasure_gate.withheld_versions``)."""
+
+
 def select_memories(
     view: AddReadView, sources: Sequence[RenderedSource], catalog: Catalog,
+    hidden: Hidden | None = None,
 ) -> tuple[ContextMemory, ...]:
     """Select the context memories of one request and their earlier versions.
+
+    A version an accepted forget withholds (``hidden``) is neither selected nor shown as
+    an earlier version, as its erasure will leave it out: the extraction call never selects
+    a memory version a waiting forget withholds. The selection is recorded with the
+    context, so a resumed unit reads the same memories whatever is withheld then. The
+    rendered sources (the unit's earlier parts and the previous batch) are not masked:
+    they are rendered again on a resumed unit and checked byte for byte, and a waiting
+    forget's withheld set is not stored; a restatement the model makes from them is the
+    pre-existing limit that a confirmation takes nothing its prepare did not name.
 
     Args:
         view (AddReadView): The owner pin's read view.
         sources (Sequence[RenderedSource]): The rendered sources.
         catalog (Catalog): The catalog of routes 1 to 4, whose order
             the reserved slots follow.
+        hidden (Hidden | None): What an accepted forget withholds now; None when
+            nothing is withheld.
 
     Returns:
         tuple[ContextMemory, ...]: The relevance memories by rank, the reserved
@@ -423,7 +440,8 @@ def select_memories(
     # rollups recount whole sessions, so they would fill the context and lengthen the
     # call, and no supplement memory may change what the extraction call reads.
     heads = [record.head for record in view.heads()
-             if record.head.snapshot.origin not in RECOUNTING_ORIGINS]
+             if record.head.snapshot.origin not in RECOUNTING_ORIGINS
+             and (hidden is None or not hidden(record.head))]
     terms = {
         token for source in sources if source.fresh
         for text in source.readable_texts() for token in sparse_terms(text)
@@ -476,7 +494,8 @@ def select_memories(
         for entry in sorted(
             # A description a rewording replaced is no earlier version to show;
             # after a forget of its correction it is tombstoned text.
-            (entry for entry in view.history(memory.memory_id) if not entry.reworded),
+            (entry for entry in view.history(memory.memory_id) if not entry.reworded
+             and (hidden is None or not hidden(entry.version))),
             key=lambda entry: (entry.version.recorded_at, version_order(entry.version)),
             reverse=True,
         )[:MAX_EARLIER_PER_MEMORY]:
@@ -765,6 +784,7 @@ def build_context(
     tail_words: int = TAIL_WORDS,
     previous_words: int = PREVIOUS_BATCH_WORDS,
     withdrawn: frozenset[str] = frozenset(),
+    hidden: Hidden | None = None,
 ) -> ExtractionContext | None:
     """Select the context of one unit at the owner pin.
 
@@ -781,6 +801,8 @@ def build_context(
         previous_words (int): The policy's ``previous_batch_words`` (16,000).
         withdrawn (frozenset[str]): The scope's withdrawn summary-only memories
             (`session_rollup_of`).
+        hidden (Hidden | None): What an accepted forget withholds now
+            (`select_memories`).
 
     Returns:
         ExtractionContext | None: The context, or None when no fresh byte of the
@@ -808,7 +830,7 @@ def build_context(
         replace(source, source_id=f"S{number}")
         for number, source in enumerate((*before, *tail, *fresh), start=1)
     )
-    memories = select_memories(view, sources, build_catalog(view, sources))
+    memories = select_memories(view, sources, build_catalog(view, sources), hidden)
     catalog = build_catalog(view, sources, [
         (memory.handle, memory.version.anchors) for memory in memories
         if memory.origin != "earlier"

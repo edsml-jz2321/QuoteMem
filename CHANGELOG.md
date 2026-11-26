@@ -2,6 +2,87 @@
 
 All notable changes to QuoteMem are listed here. Dates are UTC.
 
+## 0.3.2 - 2026-11-26
+
+- **`quotemem_add` no longer sends a guessed time.** The MCP tool no longer
+  takes a time for each message: a model does not know when words were said,
+  and a time it estimates could rank an update before the fact it replaces.
+  A message it adds has no message time of its own, so it is never dated
+  after a forget and cannot bring a forgotten fact back; a plugin's prompt,
+  or an HTTP message with a `timestamp`, can.
+- **One background process waits for idle chats.** The process that saves a
+  chat's last turns after its idle time now serves every user of a service
+  in one state folder, so OpenClaw with `userScope: "sender"` runs one such
+  process instead of one per active sender.
+- **A forget still queued keeps recall back until it ends.** When a busy
+  service holds a forget behind earlier saves for more than two minutes, the
+  plugins no longer wait for it at every message; until it ends, messages
+  get no recall, so nothing it removes is shown meanwhile.
+- **`quotemem doctor` and `quotemem status` check the token without a
+  search**, through `GET /agent/status`, in every auth mode (`x-api-key`
+  included).
+- **Forgets of one user that overlap wait for each other.** A forget that
+  arrives while another forget of the same user is running waits on the
+  service for its turn before the client is asked to retry: up to 5 seconds
+  for the plugin's forget tool, up to 60 seconds for a forget written in the
+  chat, and up to 30 seconds when the same request is already running.
+  Search, History, Why and the memory list do not show what an accepted
+  forget is erasing until it ends. Once a forget written in the chat has
+  started erasing, it runs to the end even after its Add has answered; such
+  an Add may ask to be retried while its forget is already complete, and the
+  retry finds nothing left to do. One request is one forget: the same
+  sentence sent by a plugin's forget tool and seen again in the chat is
+  carried out once. The plugins now keep a final "+", "#" or "%", so
+  requests told apart only by a symbol, such as "C++" and "C#", stay two
+  requests.
+- **The memory list shows a replaced fact as past even when its update had no
+  date.** `quotemem memories` now lists a memory that an undated update
+  replaced as past, with no end date, instead of leaving it out. Search is
+  unchanged.
+- **An update is recognized when its client sends a rounded or day-only
+  time.** A change to a fact first stated without a date, stated up to a day
+  before that fact arrived, is ordered by when each message arrived, so a
+  client that stamps midnight or rounds to the minute no longer leaves the old
+  fact current.
+- **A name taught again after it was forgotten can be found after `quotemem
+  rebuild`.** The rebuilt store dates each forget as the old store did, so a
+  later restatement of the name is found by Search again.
+- **A store whose first start was interrupted opens.** If the service stopped
+  while it was first creating its keyword search tables, the next start
+  finishes them instead of refusing the store.
+- **A forget that cannot finish no longer blocks its user unnoticed.** It is
+  marked for repair under a warning that names its scope, `/agent/status`
+  lists its user, and the next start, a repeated confirmation or `quotemem
+  repair` runs it again. Nothing it hides becomes readable meanwhile.
+- **A forget keeps tidying related memories through a passing error.** If an
+  error that clears on retry interrupts the forget, the forget finishes that
+  work when it runs again instead of giving it up.
+- **Forgetting a name or a detail keeps more of the rest.** A memory that tells
+  something else beside a forgotten name or value is reworded without it in
+  more cases: two people named after a shared tie ("my friends Tom and
+  Lucas"), a relative told with the side of the family, a memory whose quote
+  never shows the name, a Chinese request about a memory stored in English,
+  and more coat colours of pets.
+- **A new value said with a forget request is kept.** "Forget my old number,
+  my new number is ..." keeps the new number said with the request.
+- **A page on how QuoteMem works.** `docs/architecture.md` describes the data
+  folder and the tables of a store, each step of an Add, the read routes,
+  forgetting and its tombstone, export, rebuild and deleting a user. The
+  README's "How it works" links to it.
+- **The demo shows the review and the tombstone.** `examples/demo` now prints
+  the link to the replaced memory, each quote's byte range, the review verdict
+  from `/memory/provenance` and the forget receipt. It then sends a chat that
+  names the forgotten fact again, which the tombstone refuses
+  (`denied_by_forget`). `--relearn` adds the user's own later statement, which
+  brings the fact back.
+- **The included HeavenBase is the published 0.1.2.3 release.** The copy in
+  `src/quotemem/_vendor` now holds the HeavenBase package of the 0.1.2.3 wheel
+  on the Python Package Index, unmodified, in place of a pre-release build.
+  QuoteMem still supports Python 3.12, 3.13 and 3.14.
+- **Upgrading from 0.3.0 or 0.3.1.** If a forget said in a chat that began
+  before the upgrade does not take effect, say it again in other words or
+  start a new chat.
+
 ## 0.3.1 - 2026-11-24
 
 - **A user message is the user's own words.** In the `agent` Add mode (the

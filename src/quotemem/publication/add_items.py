@@ -237,7 +237,7 @@ def readable_memories(rows: MemoryRows, memory_ids: Sequence[str]) -> tuple[str,
     kept: list[str] = []
     for memory_id in memory_ids:
         item = rows.memory(memory_id)
-        if item is not None:
+        if item is not None and not rows.withheld(item):
             cite(rows, rows.head(item).snapshot)
             kept.append(memory_id)
     return tuple(kept)
@@ -246,7 +246,8 @@ def readable_memories(rows: MemoryRows, memory_ids: Sequence[str]) -> tuple[str,
 def readable_memory(rows: MemoryRows, memory_id: str, now: int) -> bool:
     """Whether a recorded memory exists and its head passes ``p_ver`` at ``now``."""
     item = rows.memory(memory_id)
-    return item is not None and rows.readability(now).p_ver(rows.head(item).snapshot)
+    return item is not None and not rows.withheld(item) and rows.readability(now).p_ver(
+        rows.head(item).snapshot)
 
 
 def active_entities(rows: MemoryRows, entity_ids: Sequence[str]) -> tuple[str, ...]:

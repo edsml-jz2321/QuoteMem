@@ -29,7 +29,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping, Sequence, Set
 from dataclasses import dataclass, field
 from decimal import ROUND_HALF_EVEN, Decimal
-from typing import Annotated, Literal, Self
+from typing import Annotated, Final, Literal, Self
 
 from pydantic import Field, model_validator
 
@@ -182,6 +182,9 @@ class HeadTargetV1(StrictModel):
         memory_id: The head's memory.
         revision_id: The head revision at the pin.
         sigma: σ of the head (σT).
+        dated: Whether σT's time is a stated source time; False when it is the receipt
+            of an undated message, which bounds only from above when it was said
+            (`_older`).
         primary: The head's primary anchor (``item.entity_id``).
         naming: The entities its naming annotations name; non-empty makes it a
             naming head.
@@ -204,6 +207,7 @@ class HeadTargetV1(StrictModel):
     retired: tuple[VersionV1, ...]
     aliases: tuple[EntityKey, ...] = ()
     period: tuple[int | None, int | None] = (None, None)
+    dated: bool = True
 
     @model_validator(mode="after")
     def aliases_named(self) -> Self:
@@ -224,6 +228,7 @@ class RetiredTargetV1(StrictModel):
         sigma: σ of the version (σT in the change test).
         retired: The versions the restatement test reads: this version
             itself and the retired versions before it.
+        dated: As `HeadTargetV1.dated`.
     """
 
     kind: Literal["retired"]
@@ -232,6 +237,7 @@ class RetiredTargetV1(StrictModel):
     revision_id: str
     sigma: Sigma
     retired: tuple[VersionV1, ...]
+    dated: bool = True
 
 
 class SiblingTargetV1(StrictModel):
@@ -243,6 +249,27 @@ class SiblingTargetV1(StrictModel):
 
 
 type _Committed = HeadTargetV1 | RetiredTargetV1
+
+
+UNDATED_SLACK_MS: Final = 86_400_000
+"""How long before an undated target's receipt a change may be stated and still be ordered
+by receipt (`_older`): a day covers a client that stamps the day's midnight in any time
+zone, or cuts a time to the minute."""
+
+
+def _older(sigma: Sigma, target: _Committed) -> bool:
+    """Whether a change at σ is older than a target (the direction check).
+
+    By σ when the target's time was stated. An undated target's time is its receipt, which
+    says only that it was said by then: a change stated a little earlier than that receipt
+    may still be the newer one (a client that stamps the day's midnight, or a time cut to
+    the minute), so within `UNDATED_SLACK_MS` of it only the receipt order counts, as
+    between two undated messages. A change stated well before it (an imported old message)
+    keeps σ.
+    """
+    if target.dated or sigma[0] < target.sigma[0] - UNDATED_SLACK_MS:
+        return sigma < target.sigma
+    return sigma[1:] < target.sigma[1:]
 TargetV1 = Annotated[
     HeadTargetV1 | RetiredTargetV1 | SiblingTargetV1, Field(discriminator="kind"),
 ]
@@ -999,7 +1026,7 @@ class _Round:
         verdict = state.verdict
         quotes = {quote.handle: quote for quote in state.m.quotes}
         sigma_c = quotes[verdict.change_span].sigma if verdict.change_span else state.sigma
-        late = [t for t in [*(t for _r, t in changes), *history] if sigma_c < t.sigma]
+        late = [t for t in [*(t for _r, t in changes), *history] if _older(sigma_c, t)]
         for target in late:
             holder = next((version for version in target.retired if version.handle is not None
                            and version.handle in verdict.restates_history), None)
@@ -1009,7 +1036,7 @@ class _Round:
         if late:
             return state.done("older_than_target")
         for relation, target in heads:
-            if relation == "contradicts" and sigma_c < target.sigma:
+            if relation == "contradicts" and _older(sigma_c, target):
                 holder = _containing(state.groups, target.retired)
                 if holder is not None:
                     return state.done("restates_retired_version", holder.memory_id)

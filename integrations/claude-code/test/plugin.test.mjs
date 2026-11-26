@@ -13,12 +13,13 @@ import path from 'node:path';
 import { after, test } from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-import { HIT, TOKEN, plan, sleep, stubServer, tempDir, waitFor } from '../../core/test/helpers.mjs';
+import { HIT, TOKEN, plan, sleep, stubServer, tempDir, treeTexts, waitFor } from '../../core/test/helpers.mjs';
 
 const PLUGIN = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const HOOK = path.join(PLUGIN, 'scripts', 'hook.mjs');
 const MCP = path.join(PLUGIN, 'scripts', 'mcp.mjs');
-const { FORGET_HEADER, RECALL_HEADER } = await import(pathToFileURL(path.join(PLUGIN, 'core', 'index.mjs')).href);
+const pluginCore = await import(pathToFileURL(path.join(PLUGIN, 'core', 'index.mjs')).href);
+const { FORGET_HEADER, RECALL_HEADER } = pluginCore;
 const { cleanPrompt, isHostInjected, lastAssistantText } = await import(pathToFileURL(path.join(PLUGIN, 'scripts', 'adapter.mjs')).href);
 
 const root = tempDir('qm-claude-code-');
@@ -95,20 +96,8 @@ function install(server, { options = {}, env = {} } = {}) {
     return { prompt: p, stop: s };
   };
   const end = (session, reason = 'prompt_input_exit') => hook('SessionEnd', { ...common(session), reason });
-  const logText = () => {
-    const files = [];
-    const walk = (dir) => {
-      let names = [];
-      try { names = fs.readdirSync(dir); } catch { return; }
-      for (const name of names) {
-        const file = path.join(dir, name);
-        if (fs.statSync(file).isDirectory()) walk(file);
-        else files.push(file);
-      }
-    };
-    walk(data);
-    return files.map((file) => fs.readFileSync(file, 'utf8')).join('\n');
-  };
+  // Every file under the plugin data folder (background processes may still change it).
+  const logText = () => treeTexts(data).map(({ text }) => text).join('\n');
   return { home, data, stateDir, env: base, hook, start, prompt, stop, turn, end, transcript, logText };
 }
 
@@ -178,6 +167,35 @@ test('recall: a memory question gets the quoted memories as hidden context; stat
   await cc.stop('sess-r', 'p2', 'Lisbon.');
   const again = await cc.prompt('sess-r', 'p3', 'Remind me where I live?');
   assert.equal(again.out, '');
+});
+
+const CAT_ID = '01JX0000000000000000000CA1';
+test('recall: a forget still running after the 8 s wait leaves the turn without memory', async () => {
+  const server = await serve({
+    '/memory/add': ADDED,
+    '/memory/search': () => ({ body: { data: [HIT(CAT_ID, 'The user\'s cat is called Miso.')] } }),
+  });
+  const cc = install(server);
+  // A forget of this user is queued and no background sender runs it, so it is
+  // still running when the prompt's wait (the default, FORGET_WAIT_MS) is over.
+  const quiet = { warn() {}, warnOnce() {}, debug() {} };
+  const owner = { stateDir: cc.stateDir, url: server.url, userId: 'quei' };
+  const queue = new pluginCore.DiskQueue(owner, quiet);
+  const lock = pluginCore.tryLock(queue.lockFile);
+  assert.ok(lock);
+  try {
+    const body = { user_id: 'quei', request_id: 'f-slow' };
+    queue.enqueue([{ kind: 'forget', request_id: 'f-slow', body, url: server.url,
+      created: Date.now(), attempts: 0, nextAt: 0 }]);
+    const held = await cc.prompt('sess-h', 'p1', "What is my cat's name?");
+    assert.equal(held.code, 0);
+    assert.equal(held.out, '', 'nothing is injected: no memory and no note about the forget');
+    assert.equal(server.of('/memory/search').length, 0, 'no search while the forget runs');
+    assert.ok(held.ms >= pluginCore.FORGET_WAIT_MS, `waited for the forget first (${held.ms} ms)`);
+    assert.ok(held.ms < 30_000 - 2000, `within the UserPromptSubmit timeout (${held.ms} ms)`);
+  } finally {
+    pluginCore.releaseLock(lock);
+  }
 });
 
 test('recall: QUOTEMEM_MAX_INJECT_CHARS cannot push the context past the 10,000-character hook cap', async () => {

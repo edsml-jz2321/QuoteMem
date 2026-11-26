@@ -51,7 +51,7 @@ async function loadCore() {
 const core = await loadCore();
 
 const SERVER_NAME = 'quotemem';
-const SERVER_VERSION = '0.3.1';
+const SERVER_VERSION = '0.3.2';
 const PROTOCOL_VERSIONS = ['2025-06-18', '2025-03-26', '2024-11-05'];
 
 const MAX_ID_CHARS = 1024;
@@ -478,7 +478,6 @@ const TOOLS = [
               role: { type: 'string', enum: ['user', 'assistant', 'system'] },
               content: { type: 'string', minLength: 1 },
               speaker: { type: 'string', description: 'Assistant messages only: the assistant\'s name. A user message is always the user\'s own words, so a speaker on it is ignored; put another person\'s words in the content with a line label ("Alice: ...").' },
-              timestamp: { type: 'integer', minimum: 0, description: 'When it was said, Unix milliseconds.' },
             },
             required: ['role', 'content'],
             additionalProperties: false,
@@ -503,9 +502,10 @@ const TOOLS = [
         }
         const content = text(message.content, `messages[${index}].content`, { max: MAX_CONTENT_BYTES });
         bytes += Buffer.byteLength(content, 'utf8');
+        // No time goes with a message: a model does not know when words were
+        // said and would guess one, and a guessed time can rank a new fact
+        // before the one it updates. The service takes the time it receives it.
         const out = { role: message.role, content };
-        const timestamp = integer(message.timestamp, `messages[${index}].timestamp`, { min: 0, fallback: undefined });
-        if (timestamp !== undefined) out.timestamp = timestamp;
         const speaker = text(message.speaker, `messages[${index}].speaker`, { required: false });
         // A user message is the user's own words: the service binds its "I" to the user.
         if (speaker !== undefined && message.role === 'assistant') {

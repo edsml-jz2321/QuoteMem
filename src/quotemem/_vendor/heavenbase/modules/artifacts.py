@@ -828,8 +828,10 @@ def _clean_digest(value: str) -> str:
 
 
 def _guard_namespace(namespace: str) -> None:
-    for name, module in tuple(sys.modules.items()):
-        if name != namespace and not name.startswith(f"{namespace}."):
+    names = [name for name in tuple(sys.modules) if name == namespace or name.startswith(f"{namespace}.")]
+    for name in names:
+        module = sys.modules.get(name)
+        if module is None:
             continue
         loader = getattr(getattr(module, "__spec__", None), "loader", None)
         if not isinstance(loader, _ArtifactLoader) or loader.generation.namespace != namespace:

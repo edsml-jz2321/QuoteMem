@@ -77,6 +77,7 @@ from quotemem.store.domain import (
     DOMAIN_ADAPTERS,
     EvidenceRowV1,
 )
+from quotemem.store.erasure_gate import READ_WAIT_SECONDS, gate_for, on_event_loop, wait_deadline
 from quotemem.store.failures import is_runtime_failure
 from quotemem.store.finalize_ticket import FinalizeLeaseTicket
 from quotemem.store.indexed import IndexedReader
@@ -2178,6 +2179,30 @@ class StoreReadModel:
             self._fail()
             raise
 
+    def _await_erasure(self, scope_ids: Sequence[str]) -> None:
+        """Let a read wait, up to ``READ_WAIT_SECONDS`` within its request, for a running
+        erasure of its scopes to finish (`quotemem.store.erasure_gate`); the read then answers
+        as it always has (``index_rebuilding`` while the fence still holds).
+
+        Without a fence nothing waits, so a store that never forgets reads exactly as
+        before. Nothing waits on an event loop or under the Writer mutex.
+        """
+        def quiet() -> bool:
+            # A scope the root does not hold, or a read model that cannot answer now, does
+            # not wait: the read itself answers as it always has.
+            try:
+                with self._readers.condition:
+                    root = self._live_publisher().current
+                    return not any(root.scope_fence(scope_id).active_erasure
+                                   for scope_id in scope_ids)
+            except QuoteMemError:
+                return True
+
+        if quiet() or on_event_loop() or attrgetter("_is_owned")(self.writer.mutex)():
+            return
+        gate_for(self.writer).wait_quiet(
+            scope_ids[0], quiet, deadline=wait_deadline(READ_WAIT_SECONDS))
+
     def begin_search(
         self, grant: PrincipalGrant, *, query_time: int,
         raw_user_id: str | None = None, clock: Callable[[], int] | None = None,
@@ -2204,6 +2229,7 @@ class StoreReadModel:
             or raw.requested_scope.scope_id != canonical_scope_id("user", raw_user_id)
         ):
             raise QuoteMemError("scope_denied", "Search grant differs from its exact external user")
+        self._await_erasure((raw.requested_scope.scope_id,))
         with self._readers.condition:
             if self._search_scope_present(raw.requested_scope):
                 current = self._live_publisher().current
@@ -2343,6 +2369,7 @@ class StoreReadModel:
         Raises:
             QuoteMemError: If issuance, scope, privacy or embedding authority changed.
         """
+        self._await_erasure((context.allowed_scopes.requested_scope.scope_id,))
         with self._readers.condition:
             issued = self._readers.searches.get(id(context))
             if issued is None or issued[0]() is not context or issued[1]:
@@ -2590,6 +2617,8 @@ class StoreReadModel:
         frozen = tuple(_exact_scope(scope) for scope in scopes)
         if not frozen or len({scope.scope_id for scope in frozen}) != len(frozen):
             raise QuoteMemError("scope_denied", "Snapshot pin requires distinct exact scopes")
+        if not completions:
+            self._await_erasure([scope.scope_id for scope in frozen])
         with self._readers.condition:
             if self._unhealthy:
                 raise QuoteMemError("service_unhealthy", "Snapshot publication requires recovery")

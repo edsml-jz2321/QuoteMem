@@ -133,6 +133,11 @@ class RequestBudget:
         """Return the seconds this request has spent since its acceptance."""
         return max(0.0, self._clock() - self.started_at)
 
+    def until_deadline(self) -> float:
+        """Return the seconds left until the work deadline, whether or not the request was
+        cancelled."""
+        return max(0.0, self._work_deadline - self._clock())
+
     def remaining(self) -> float:
         """Return remaining seconds; cancellation leaves no budget for new work."""
         return 0.0 if self._cancelled.is_set() else max(0.0, self._work_deadline - self._clock())
@@ -213,6 +218,13 @@ def check_request_budget() -> None:
     """Check request-owned work; shared durable workers have no request budget."""
     if (budget := current_budget()) is not None:
         budget.check()
+
+
+def bind_budget(budget: RequestBudget | None) -> Callable[[], None]:
+    """Bind ``budget`` as the current request's budget from now on; return the call that
+    restores the one before it (in the same context)."""
+    token = _CURRENT.set(budget)
+    return lambda: _CURRENT.reset(token)
 
 
 @contextmanager

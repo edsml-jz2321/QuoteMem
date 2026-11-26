@@ -36,9 +36,9 @@ import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { SESSION_KEEP_MS, cutBatch, newCaptureState, recordTurn, sha16, timeOf } from './capture.mjs';
+import { SESSION_KEEP_MS, cutBatch, newCaptureState, ownerKey, recordTurn, sha16, timeOf } from './capture.mjs';
 import { setupNote } from './autostart.mjs';
-import { resolveSettings } from './config.mjs';
+import { publicSettings, resolveSettings } from './config.mjs';
 import { DiskQueue, IDLE_LOCK_STALE_MS, runFlusher } from './diskqueue.mjs';
 import { SETUP_HEADER, chatForgetNote, forgetNote, plainForgetDone, unavailableNote } from './format.mjs';
 import { detectForgetRequests, forgetBody, forgottenOf, noteForgotten } from './forget.mjs';
@@ -48,6 +48,7 @@ import { adoptLock, readJson, releaseLock, touchLock, tryLock, withLock, writeFi
 import { homeDir, settleLaunches } from './proc.mjs';
 import { RecallBreaker, newRecallMemo, recallQuery, recallTurn, rememberIds, searchRecall } from './recall.mjs';
 import { REDACT_MARGIN, redactText } from './redact.mjs';
+import { serviceToken } from './token.mjs';
 import { promptHead, readConversation, turnReply } from './transcript.mjs';
 
 const SESSION_LOCK_STALE_MS = 15_000;
@@ -100,8 +101,11 @@ export const IDLE_PASS_MS = 30_000;
 export const IDLE_EXTRA_LIFE_MS = 3_600_000;
 // A prompt that comes while a forget of this user is still queued waits for
 // it, reading only the local queue, at most FORGET_WAIT_MS (a host with a
-// short hook timeout gives less: forgetWaitWithin). A forget queued more
-// than FORGET_HOLD_MS ago no longer holds recall back.
+// short hook timeout gives less: forgetWaitWithin), and has no recall when
+// it is still queued then. A forget queued more than FORGET_HOLD_MS ago (a
+// busy service holds it behind earlier batches) is not waited for any more,
+// but still holds recall back until it ends: what it removes must not be
+// shown meanwhile.
 export const FORGET_WAIT_MS = 8000;
 export const FORGET_HOLD_MS = 120_000;
 const FORGET_POLL_MS = 100;
@@ -260,6 +264,21 @@ export class HookMemory {
     // how each ended, so a session that ends first does not lose it (a plain
     // success only to the session that asked, finishedForgets).
     this.forgetsFile = path.join(this.queue.ownerDir, 'forgets.json');
+    if (idleWait) this.registerOwner();
+  }
+
+  // The waiting flusher of this service saves the idle chats of every owner
+  // registered here with the same credential: it reads who they are and
+  // their own settings from here (never the token: only a hash of it).
+  registerOwner() {
+    const record = { version: 2, url: this.settings.url, userId: this.settings.userId, credential: this.queue.credential, settings: publicSettings(this.settings) };
+    try {
+      if (JSON.stringify(readJson(this.queue.ownerFile)) !== JSON.stringify(record)) writeFileAtomic(this.queue.ownerFile, JSON.stringify(record));
+      // In use now: a waiting flusher unregisters only an owner untouched for a week.
+      else fs.utimesSync(this.queue.ownerFile, new Date(), new Date());
+    } catch {
+      // without it only this owner's own waiting flusher saves its idle chats
+    }
   }
 
   /** The session id sent to the service for a host session id. */
@@ -442,26 +461,11 @@ export class HookMemory {
    * (idleDue), or null when nothing waits, the idle time is off or capture
    * is off. Another user's or service's sessions are not counted.
    */
-  idleDueAt() {
+  idleDueAt(sessions = readSessions(this.sessionsDir)) {
     if (!(this.settings.idleFlushMs > 0) || !(this.settings.captureEvery > 0)) return null;
-    let names = [];
-    try {
-      names = fs.readdirSync(this.sessionsDir).filter((name) => /^[0-9a-f]{16}\.json$/.test(name));
-    } catch {
-      return null;
-    }
     let next = null;
-    for (const name of names) {
-      const file = path.join(this.sessionsDir, name);
-      let mtime = 0;
-      try {
-        mtime = fs.statSync(file).mtimeMs;
-      } catch {
-        continue;
-      }
-      const data = readJson(file);
-      if (!data || typeof data !== 'object' || data.user !== this.user || !data.sessionId) continue;
-      if (Date.now() - mtime >= SESSION_KEEP_MS) continue;
+    for (const { data, mtime } of sessions) {
+      if (data.user !== this.user) continue;
       const due = idleDue(data, mtime, this.settings.idleFlushMs);
       if (due !== null && (next === null || due < next)) next = due;
     }
@@ -621,22 +625,29 @@ export class HookMemory {
     }
   }
 
-  // Whether a forget of this user queued in the last FORGET_HOLD_MS is still
-  // running after waiting up to forgetWaitMs for it. Only the local queue is
-  // read; a queue that cannot be read holds nothing.
+  // Whether a forget of this user is still queued, after waiting for it:
+  // up to forgetWaitMs while every queued forget is younger than
+  // FORGET_HOLD_MS, not at all once one is older. Recall is held back for as
+  // long as any forget is queued; only a queue with none lets it through.
+  // Only the local queue is read; a queue that cannot be read holds nothing.
   async forgetHeld() {
+    const pending = (since = 0) => {
+      try {
+        return this.queue.forgetPending(since);
+      } catch {
+        return false;
+      }
+    };
     const end = Date.now() + this.forgetWaitMs;
     let flushed = false;
     for (;;) {
-      let pending = false;
-      try {
-        pending = this.queue.forgetPending(Date.now() - FORGET_HOLD_MS);
-      } catch {
-        pending = false;
-      }
-      if (!pending) return false;
-      if (Date.now() >= end) {
-        this.log.debug('recall held back: a forget is still running');
+      if (!pending()) return false;
+      // One queued for a while (a busy service holds it behind earlier
+      // batches): no wait, but no recall either.
+      const old = !pending(Date.now() - FORGET_HOLD_MS);
+      if (old || Date.now() >= end) {
+        this.log.debug(old ? 'recall held back: a forget queued earlier is still waiting' : 'recall held back: a forget is still running');
+        if (!flushed) this.flush();
         return true;
       }
       if (!flushed) {
@@ -1377,6 +1388,33 @@ export async function queueOwnerSessions(env) {
   }
 }
 
+/**
+ * The session files of a state folder used in the last SESSION_KEEP_MS,
+ * read once: [{data, mtime}] (each names its owner, `data.user`).
+ */
+function readSessions(dir) {
+  let names = [];
+  try {
+    names = fs.readdirSync(dir).filter((name) => /^[0-9a-f]{16}\.json$/.test(name));
+  } catch {
+    return [];
+  }
+  const out = [];
+  for (const name of names) {
+    const file = path.join(dir, name);
+    let mtime = 0;
+    try {
+      mtime = fs.statSync(file).mtimeMs;
+    } catch {
+      continue;
+    }
+    if (Date.now() - mtime >= SESSION_KEEP_MS) continue;
+    const data = readJson(file);
+    if (data && typeof data === 'object' && typeof data.user === 'string' && data.sessionId) out.push({ data, mtime });
+  }
+  return out;
+}
+
 // Wait `ms` (at most IDLE_TICK_MS), or until `signal` aborts.
 function idleSleep(ms, signal) {
   return new Promise((resolve) => {
@@ -1393,8 +1431,9 @@ function idleSleep(ms, signal) {
 
 /**
  * The background flusher of a hook host (settings.idleWait): it sends the
- * queue (runFlusher), then keeps the idle rule. One per owner waits: the one
- * that holds idle.lock. While this owner's sessions hold turns the idle
+ * queue (runFlusher), then keeps the idle rule. One waits for all the owners
+ * of one service in a state folder (each OpenClaw channel sender is one):
+ * the one that holds the idle lock. While their sessions hold turns the idle
  * sweep would queue (HookMemory.idleDueAt), it sleeps until the oldest is
  * due, by the wall clock, then queues them exactly as a later hook's sweep()
  * would (a chat whose turn is in flight keeps that turn; another user's or
@@ -1415,6 +1454,62 @@ export async function runIdleWaiter(settings, log, { signal, env = process.env }
   const memory = new HookMemory({ settings, log, host: 'idle', env, idleWait: true });
   // This process sends what it queues.
   memory.flush = () => false;
+  const others = new Map();
+  // The flusher's credential tells which owners it may serve.
+  const { credential } = memory.queue;
+  if (!settings.token && settings.localService) settings.token = serviceToken(env, settings.localService);
+  // The owners whose idle chats this flusher keeps, with the sessions of the
+  // state folder read once: its own, and every owner of the same service and
+  // credential registered in this state folder (owner.json) with the idle
+  // rule on and a session in use, each with its own settings. An owner
+  // registered long ago with no session left is unregistered.
+  const owners = () => {
+    const sessions = readSessions(memory.sessionsDir);
+    const users = new Set(sessions.map(({ data }) => data.user));
+    const list = [memory];
+    const dir = path.join(settings.stateDir, 'owners');
+    let names = [];
+    try { names = fs.readdirSync(dir); } catch { /* none yet */ }
+    for (const name of names) {
+      if (name === memory.queue.owner || !/^[0-9a-f]{16}$/.test(name)) continue;
+      const file = path.join(dir, name, 'owner.json');
+      if (!users.has(name)) {
+        try {
+          // Unregistered only when untouched for a week and still without a session
+          // (its hook may have registered and written one since the sessions were read).
+          if (Date.now() - fs.statSync(file).mtimeMs >= SESSION_KEEP_MS
+            && !readSessions(memory.sessionsDir).some(({ data }) => data.user === name)
+            && Date.now() - fs.statSync(file).mtimeMs >= SESSION_KEEP_MS) fs.rmSync(file, { force: true });
+        } catch {
+          // none
+        }
+        continue;
+      }
+      const data = readJson(file);
+      const own = data?.settings;
+      if (!data || data.version !== 2 || data.url !== settings.url || typeof data.userId !== 'string' || ownerKey(data.url, data.userId) !== name) continue;
+      if (data.credential !== credential || !own || typeof own !== 'object' || own.url !== settings.url || own.userId !== data.userId || own.stateDir !== settings.stateDir) continue;
+      if (!(own.idleFlushMs > 0) || !(own.captureEvery > 0)) continue;
+      const text = JSON.stringify(own);
+      let other = others.get(name);
+      if (!other || other.record !== text) {
+        other = new HookMemory({ settings: { ...own, token: settings.token }, log, host: 'idle', env });
+        other.flush = () => false;
+        other.record = text;
+        others.set(name, other);
+      }
+      list.push(other);
+    }
+    return { list, sessions };
+  };
+  const dueOf = ({ list, sessions }) => {
+    let next = null;
+    for (const one of list) {
+      const due = one.idleDueAt(sessions);
+      if (due !== null && (next === null || due < next)) next = due;
+    }
+    return next;
+  };
   const on = settings.idleFlushMs > 0 && settings.captureEvery > 0;
   // The lock the hook that started this process took for it, else a free one.
   let handle = adoptLock(memory.queue.idleLockFile, env.QUOTEMEM_IDLE_LOCK);
@@ -1425,11 +1520,16 @@ export async function runIdleWaiter(settings, log, { signal, env = process.env }
     handle ??= tryLock(memory.queue.idleLockFile, { staleMs: IDLE_LOCK_STALE_MS });
   }
   // The lock stays fresh while the queue is sent (which may take minutes).
-  const send = async () => {
+  const send = async (list = [memory]) => {
     const beat = handle ? setInterval(() => { if (handle) touchLock(handle); }, IDLE_PASS_MS) : null;
     beat?.unref?.();
     try {
-      return await runFlusher(settings, log, { signal });
+      let outcome = '';
+      for (const one of list) {
+        if (signal?.aborted) break;
+        outcome = await runFlusher(one.settings, log, { signal });
+      }
+      return outcome;
     } finally {
       clearInterval(beat);
     }
@@ -1449,13 +1549,13 @@ export async function runIdleWaiter(settings, log, { signal, env = process.env }
         return 'idle-busy';
       }
       const now = Date.now();
-      let due = memory.idleDueAt();
+      let due = dueOf(owners());
       if (due === null) {
         // Release, then look again: a hook that saw the lock held started
         // no flusher, and its turns were written before this release.
         releaseLock(handle);
         handle = null;
-        if (memory.idleDueAt() === null) return `${outcome}, no idle chat left`;
+        if (dueOf(owners()) === null) return `${outcome}, no idle chat left`;
         handle = tryLock(memory.queue.idleLockFile, { staleMs: IDLE_LOCK_STALE_MS });
         if (!handle) return 'idle-busy';
         continue;
@@ -1478,10 +1578,19 @@ export async function runIdleWaiter(settings, log, { signal, env = process.env }
         continue;
       }
       lastPass = Date.now();
-      const swept = await memory.sweep();
+      const queued = [];
+      let swept = 0;
+      const seen = owners();
+      for (const one of seen.list) {
+        const at = one.idleDueAt(seen.sessions);
+        if (at === null || at > lastPass) continue;
+        const count = await one.sweep();
+        if (count > 0) queued.push(one);
+        swept += count;
+      }
       if (swept > 0) {
         log.debug(`idle: queued the turns of ${swept} chat(s)`);
-        outcome = await send();
+        outcome = await send(queued);
       }
     }
   } finally {

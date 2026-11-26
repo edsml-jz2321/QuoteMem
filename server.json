@@ -7,7 +7,7 @@
     "url": "https://github.com/edsml-jz2321/QuoteMem",
     "source": "github"
   },
-  "version": "0.3.1",
+  "version": "0.3.2",
   "websiteUrl": "https://github.com/edsml-jz2321/QuoteMem#readme",
   "icons": [
     {
@@ -21,7 +21,7 @@
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "quotemem",
-      "version": "0.3.1",
+      "version": "0.3.2",
       "runtimeHint": "npx",
       "transport": {
         "type": "stdio"

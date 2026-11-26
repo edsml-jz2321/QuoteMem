@@ -191,8 +191,14 @@ def _layout_entities(dimension: int, layout: StorageLayout) -> dict[str, type[An
     return build_entity_classes(dimension, specs=_layout_specs(layout))
 
 
-def _verified_auxiliary_table(database: Any, expected: Table) -> Table:
-    """Reflect exact HB-owned auxiliary DDL without invoking an ensure method."""
+def _verified_auxiliary_table(database: Any, expected: Table, *, unfinished: bool = False,
+                              ) -> Table:
+    """Reflect exact HB-owned auxiliary DDL without invoking an ensure method.
+
+    ``unfinished`` admits a table whose declared indexes are not all created yet, as a
+    first boot killed between them leaves it (`_verify_auxiliary_tables`); each index it
+    has is still exactly a declared one.
+    """
     inspector = inspect(database.engine)
     if not inspector.has_table(expected.name):
         raise QuoteMemError("schema_mismatch", "HB auxiliary table group is incomplete")
@@ -221,7 +227,9 @@ def _verified_auxiliary_table(database: Any, expected: Table) -> Table:
     }
     actual_checks = {value["name"]: value["sqltext"]
                      for value in inspector.get_check_constraints(expected.name)}
-    if indexes != desired or actual_checks != expected_checks or any(
+    if (not indexes.items() <= desired.items() if unfinished else indexes != desired) or (
+        actual_checks != expected_checks
+    ) or any(
         value.get("dialect_options") for value in inspector.get_indexes(expected.name)
     ) or inspector.get_unique_constraints(expected.name) or (
         inspector.get_foreign_keys(expected.name)
@@ -368,7 +376,18 @@ def _verify_auxiliary_tables(
     namespace, is not migrated: it fails here like any other unknown entry.
     Another workspace's namespace, another field, another entry or a value of
     another shape fails too.
+
+    HeavenBase creates the GRAM tables of a new store before its metadata table, one
+    statement at a time, each committed alone, and writes the three entries before that
+    table too. A first boot killed in between leaves the store unfinished: no metadata
+    table (and no capsule table, made after it), some of the GRAM tables, one perhaps
+    without all its indexes, and perhaps the entries. That state alone is admitted: each
+    table there is exactly as declared but for the indexes it lacks, the entries pass the
+    same checks, and no keyword or Catalog row exists, as none is written before the
+    field's registration. HeavenBase's own ensure then creates what is missing, as on a new
+    store. A first boot killed later, once the metadata table exists, is not admitted.
     """
+    from heavenbase.backends.sql.base import _table_name  # pyright: ignore[reportPrivateUsage]
     from heavenbase.backends.sql.strategies.sparse_gram import (
         _RETIRED_FINGERPRINT,  # pyright: ignore[reportPrivateUsage]
         SQLSparseGramAdapter,
@@ -381,49 +400,69 @@ def _verify_auxiliary_tables(
     gram_names = {"hb_gram_meta", "hb_gram_keywords", "hb_gram_postings"}
     if not names & (gram_names | {"sys_capsule"}):
         return
-    metadata = _verified_table(database, MetaSchema.schema().entity_id, MetaSchema.schema())
-    if "sys_capsule" in names:
-        _verify_capsule_declaration(database, workspace_id, metadata, read)
-    if not names & gram_names:
-        return
-    if names & gram_names != gram_names:
-        raise QuoteMemError("schema_mismatch", "HB auxiliary table group is incomplete")
+    unfinished = "sys_capsule" not in names and (
+        _table_name(MetaSchema.schema().entity_id) not in names)
+    metadata: Table | None = None
+    if not unfinished:
+        metadata = _verified_table(database, MetaSchema.schema().entity_id,
+                                   MetaSchema.schema())
+        if "sys_capsule" in names:
+            _verify_capsule_declaration(database, workspace_id, metadata, read)
+        if not names & gram_names:
+            return
+        if names & gram_names != gram_names:
+            raise QuoteMemError("schema_mismatch", "HB auxiliary table group is incomplete")
     shared = SQLSparseGramAdapter.identifier
     previous = f"{workspace_id}:main:{shared}"
     # Construct only the installed owner's inert SQLAlchemy declaration. Never
     # ensure, rebuild, mutate, or read keyword/manifest payloads during admission.
     declaration = _gram_declaration(database, shared)
-    tables = {table.name: _verified_auxiliary_table(database, table)
-              for table in (declaration.meta, declaration.keywords, declaration.postings)}
+    tables = {table.name: _verified_auxiliary_table(database, table, unfinished=unfinished)
+              for table in (declaration.meta, declaration.keywords, declaration.postings)
+              if table.name in names}
     # QuoteMem's physical entities store keyword/reference arrays as Json/HyperG.
     # The fixed Catalog Array[ShortText] field is the sole SQL GRAM source here.
     schema: Any = Catalog.schema()
     entity_id, field_name = schema.entity_id, "keywords"
     if not SQLSparseGramAdapter._indexable(schema.get(field_name)):  # pyright: ignore[reportPrivateUsage]
         raise QuoteMemError("schema_mismatch", "Installed Catalog GRAM declaration differs")
-    meta = tables["hb_gram_meta"]
-    if read(database, select(1).select_from(meta).where(
-        meta.c.ns.not_in((shared, previous)),
-    ).limit(1)):
-        raise QuoteMemError("schema_mismatch", "HB GRAM namespace has another owner")
-    fingerprint = SQLSparseGramAdapter._fingerprint_key(entity_id, field_name)  # pyright: ignore[reportPrivateUsage]
-    epoch = _SQLGramIndex.epoch_key(entity_id)
-    allowed = (((meta.c.ns == shared) & meta.c.key.in_((fingerprint, epoch)))
-               | ((meta.c.ns == previous) & (meta.c.key == fingerprint)))
-    if read(database, select(1).select_from(meta).where(~allowed).limit(1)):
-        raise QuoteMemError("schema_mismatch", "HB GRAM metadata has an unknown entry")
-    # The primary index on namespace and entry name leaves at most the three entries allowed above.
     indexed = False
-    for row in read(database, select(meta.c.ns, meta.c.key, meta.c.value)):
-        value = row["value"]
-        if row["ns"] == previous:
-            valid = value == _RETIRED_FINGERPRINT
-        elif row["key"] == epoch:
-            valid = _is_hex(value, _GRAM_EPOCH_LENGTH)
-        else:
-            valid = indexed = _is_hex(value, _GRAM_FINGERPRINT_LENGTH)
-        if not valid:
-            raise QuoteMemError("schema_mismatch", "HB GRAM metadata value has an unknown shape")
+    meta = tables.get("hb_gram_meta")
+    if meta is not None:
+        if read(database, select(1).select_from(meta).where(
+            meta.c.ns.not_in((shared, previous)),
+        ).limit(1)):
+            raise QuoteMemError("schema_mismatch", "HB GRAM namespace has another owner")
+        fingerprint = SQLSparseGramAdapter._fingerprint_key(entity_id, field_name)  # pyright: ignore[reportPrivateUsage]
+        epoch = _SQLGramIndex.epoch_key(entity_id)
+        allowed = (((meta.c.ns == shared) & meta.c.key.in_((fingerprint, epoch)))
+                   | ((meta.c.ns == previous) & (meta.c.key == fingerprint)))
+        if read(database, select(1).select_from(meta).where(~allowed).limit(1)):
+            raise QuoteMemError("schema_mismatch", "HB GRAM metadata has an unknown entry")
+        # The primary index on namespace and entry name leaves at most the three entries
+        # allowed above.
+        for row in read(database, select(meta.c.ns, meta.c.key, meta.c.value)):
+            value = row["value"]
+            if row["ns"] == previous:
+                valid = value == _RETIRED_FINGERPRINT
+            elif row["key"] == epoch:
+                valid = _is_hex(value, _GRAM_EPOCH_LENGTH)
+            else:
+                valid = indexed = _is_hex(value, _GRAM_FINGERPRINT_LENGTH)
+            if not valid:
+                raise QuoteMemError("schema_mismatch",
+                                    "HB GRAM metadata value has an unknown shape")
+    if unfinished:
+        # No keyword row, and no Catalog row, is written before the field's registration.
+        if any(read(database, select(1).select_from(table).limit(1))
+               for name, table in tables.items() if name != "hb_gram_meta") or (
+                   _table_name(Catalog.schema().entity_id) in names and read(
+                       database, select(1).select_from(_verified_table(
+                           database, Catalog.schema().entity_id, Catalog.schema())).limit(1))):
+            raise QuoteMemError("schema_mismatch", "HB auxiliary table group is incomplete")
+        return
+    if metadata is None:
+        raise QuoteMemError("schema_mismatch", "Offline workspace is missing a physical table")
     # HeavenBase writes keyword rows only under the shared namespace, in the
     # transaction that writes its fingerprint or after it.
     for table in (tables["hb_gram_keywords"], tables["hb_gram_postings"]):

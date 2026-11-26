@@ -40,8 +40,11 @@ _HAN_KIN: Final = (
 """The Han kin words an English statement may keep as its tie ("The user's 表哥 is named
 志强."), longest first."""
 _HAN_TIE: Final = "|".join(_HAN_KIN)
+_SIDE: Final = r"(?: on (?:his|her|their|the user['’]s) (?:mother|father)['’]s side)"
+"""The side of the family a tie may be told with ("older male cousin on his mother's side",
+as a statement glosses "表哥")."""
 _DESCRIPTION: Final = (r"(?P<description>[a-z][a-z-]*(?:(?:['’]s)? [a-z][a-z-]*){0,3}"
-                       rf"|(?:{_HAN_TIE}))")
+                       rf"{_SIDE}?|(?:{_HAN_TIE}))")
 """A tie as it reads after "the user's": "wife", "best friend", one of another person's
 ("brother's girlfriend", "daughter's piano teacher"), or a Han kin word ("表哥")."""
 _NAME: Final = r"(?P<name>[^,.;:]{1,64}?)"
@@ -56,7 +59,8 @@ _TIES: Final = (
 """The statements that tie a name to a person or animal of the user's: "林晓雨 is the
 user's wife.", "The user's dog is named Biscuit.", "Gregor is the husband of the user's
 sister." (the user's sister's husband)."""
-_APPOSITION: Final = re.compile(rf"The user's {_DESCRIPTION} {_NAME}(?= (?:is|was|has|had|"
+_APPOSITION: Final = re.compile(rf"The user's {_DESCRIPTION} (?!(?:his|her|their|its|the|a|an)\b)"
+                                rf"{_NAME}(?= (?:is|was|has|had|"
                                 r"works|lives|likes|loves|goes|plays|runs|studies|attends)\b)")
 """A memory naming the bearer after the tie it describes ("The user's boss Henrik works
 from the Berlin office."): the tie is the memory's own."""
@@ -69,7 +73,7 @@ _NAMING_VERB: Final = re.compile(
 """A name right after a naming verb states the name itself: such a memory is no rewording's."""
 _POSSESSED: Final = re.compile(
     r"(?:\bthe user['’]s|\b(?:his|her|their|its))"
-    rf"(?P<words>(?: (?:[a-z][a-z'’-]*|{_HAN_TIE})){{1,4}})(?P<gap>,? )$", re.IGNORECASE)
+    rf"(?P<words>(?: (?:[a-z][a-z'’-]*|{_HAN_TIE})){{1,4}}{_SIDE}?)(?P<gap>,? )$", re.IGNORECASE)
 """A possessive description right before a name ("the user's dog ", "The user's paternal
 grandmother "): when it describes the name's bearer by its tie, the name only identifies it
 and leaves alone; any other description ("the user's son walks ") is not the bearer's."""
@@ -263,7 +267,9 @@ def tie_descriptions(statements: Sequence[str]) -> dict[str, str]:
     user's boss Henrik works ..."). A name two statements tie differently gives none."""
     found: dict[str, set[str]] = {}
     for statement in statements:
-        text = statement.strip()
+        # A gloss in parentheses after the tie is no part of it ("志强 is the user's older male
+        # cousin (表哥).").
+        text = re.sub(r"\s*[(（][^)）]{1,32}[)）](?=\.$)", "", statement.strip())
         for pattern in _TIES:
             match = pattern.fullmatch(text)
             if match is None:
@@ -290,6 +296,30 @@ def forgotten_values(statement: str, sources: Sequence[str]) -> list[str]:
     source shows (``token_contained``)."""
     return list(dict.fromkeys(run for run in _runs(statement)
                               if any(token_contained(run, source) for source in sources)))
+
+
+_HAN_LIGHT: Final = re.compile(
+    r"上个月|下个月|这个月|上周|下周|今天|昨天|明天|去年|今年|明年|现在|以前|之前|后来|然后"
+    r"|我们|你们|他们|她们|它们|[我你他她它的了在是和与从到把被就也都很这那]")
+"""Han words that name no place or thing: no run of a quote's that a value aligns with."""
+
+
+def aligned_values(statement: str, quotes: Sequence[str], sources: Sequence[str]) -> list[str]:
+    """The Latin values of an English statement that its Han quote tells as the Han words the
+    ``sources`` share ("Shanghai" of "The user moved from Shanghai to Hangzhou last month."
+    quoting "我上个月从上海搬到了杭州", for "我在上海住过"): the statement's capitalized runs and
+    the quote's Han runs taken in order, when there are as many of each; none otherwise."""
+    latin = [run for run in _runs(statement) if run.isascii()]
+    found: list[str] = []
+    for quote in quotes:
+        han = [run for run in (_HAN_LIGHT.sub(" ", part) for part in _HAN_RUN.findall(quote))
+               for run in run.split() if len(run) >= 2]
+        if not latin or len(han) != len(latin):
+            continue
+        shared = set(han_forms(quote, list(sources)))
+        found += [value for value, run in zip(latin, han, strict=True)
+                  if any(form in run or run in form for form in shared)]
+    return list(dict.fromkeys(found))
 
 
 def left_out(statement: str, reworded: str) -> list[str]:
@@ -453,7 +483,12 @@ def _without_name(text: str, name: str, description: str) -> tuple[str, set[str]
     escaped = _escaped(name)
     if re.search(rf"\b{re.escape(description)}s\b", text, re.IGNORECASE):
         found: str | None = None
-        if re.search(_FIRST_OF_TWO.format(value=escaped), text, re.IGNORECASE):
+        tied = _first_after_tie(text, escaped)
+        if tied is None:
+            return None
+        if tied != text:
+            found = tied
+        elif re.search(_FIRST_OF_TWO.format(value=escaped), text, re.IGNORECASE):
             found = re.sub(_FIRST_OF_TWO.format(value=escaped), r"\1", text,
                            flags=re.IGNORECASE)
         elif re.search(_LAST_OF_TWO.format(value=escaped), text, re.IGNORECASE):
@@ -531,6 +566,32 @@ def _escaped(value: str) -> str:
     """A pattern of ``value`` inside a phrase rule, with a parenthesis of another form of it."""
     return value_pattern(value).pattern.removeprefix(r"(?<![0-9A-Za-z_-])").removesuffix(
         r"(?![0-9A-Za-z_-])") + r"(?:\s*[(（][^)）]{1,64}[)）])?"
+
+
+_TIED_FIRST: Final = (r"(\b(?:the user['’]s|my|his|her|their)\s+(?P<noun>[a-z]+))s\s+"
+                      r"(?:the\s+)?{value}\s+and\s+(?=(?P<other>{member})(?P<next>[\s.,;]|$))")
+"""The forgotten value first of two a plural tie names ("the user's friends Tom and Lucas"):
+the tie, made one, stays before the one left ("the user's friend Lucas")."""
+
+
+def _first_after_tie(text: str, escaped: str) -> str | None:
+    """``text`` without the forgotten value first of two after their plural tie
+    (``_TIED_FIRST``), with a verb the two agreed with agreeing with the one left ("The
+    user's friend Lucas is a hiker." of "The user's friends Tom and Lucas are hikers." is not
+    written: its complement is plural); ``text`` itself when no such phrase names it; None
+    when a word still speaks of two (``_TOGETHER``) or the tie is no kin word."""
+    pattern = re.compile(_TIED_FIRST.format(value=escaped, member=_MEMBER), re.IGNORECASE)
+    match = pattern.search(text)
+    if match is None:
+        return text
+    if not _kin_word(match["noun"]) or _TOGETHER.search(text):
+        return None
+    found = text[:match.start()] + match.group(1) + " " + text[match.end():]
+    after = found[match.start() + len(match.group(1)) + 1 + len(match["other"]):]
+    verb = re.match(r"\s+(are|were|have)\b", after, re.IGNORECASE)
+    if verb is not None:
+        return None  # what the two are or have is no fact of one alone
+    return found
 
 
 def _one_of_two(text: str, escaped: str) -> str | None:
@@ -618,7 +679,8 @@ Shanghai", "is a blue 卡罗拉, not a 思域"): it leaves whole, and the statem
 says besides."""
 
 
-def _without_value(text: str, value: str, *, keep_kind: bool = False) -> str | None:
+def _without_value(text: str, value: str, *, keep_kind: bool = False,
+                   apposed: bool = False) -> str | None:
     """``text`` without the phrase carrying a forgotten value, with a parenthesis of another
     form of it: a departure before an arrival ("moved to Hangzhou"), a former employer before a new
     one ("joined Fabrikam"), one of two ("with Tom and Lucas" gives "with Lucas"), or a place phrase
@@ -637,6 +699,25 @@ def _without_value(text: str, value: str, *, keep_kind: bool = False) -> str | N
     if _NEGATION.search(text) or any(_NAMING_VERB.search(text[:match.start()])
                                      for match in value_pattern(value).finditer(text)):
         return None  # "is not friends with Sofia"; "A company is named 青柠科技."
+    found = _first_after_tie(text, escaped)
+    if found is None:
+        return None
+    text = found
+    # With ``apposed`` (the request names the bearer by this name: "forget Amy's name"), a name
+    # right after a possessive tie only identifies its bearer: it leaves, the tie stays ("The
+    # user's coworker sits next to the user." of "The user's coworker Amy sits next to the
+    # user."), as `_without_name` takes it out when the tie is known. A request by a tie
+    # never does: the name may be a namesake's ("my cousin's name" beside "my colleague 志强").
+    for match in reversed(list(value_pattern(value).finditer(text)) if apposed else []):
+        possessed = _POSSESSED.search(text[:match.start()])
+        if possessed is not None and _kin_word(possessed["words"].split()[-1]) and not (
+                _NAMING_VERB.search(text[:match.start()])):
+            gap, after = possessed["gap"], text[match.end():]
+            if "," in gap:
+                if not after.startswith(","):
+                    return None
+                after = after[1:]
+            text = text[:match.start() - len(gap)] + after
     for form, keep in ((_FROM_TO, ""), (_LEFT_AND, ""), (_FIRST_OF_TWO, r"\1")):
         text = re.sub(form.format(value=escaped), keep, text, flags=re.IGNORECASE)
     found = _one_of_two(text, escaped)
@@ -665,6 +746,7 @@ def _without_value(text: str, value: str, *, keep_kind: bool = False) -> str | N
 
 def reworded_statement(statement: str, *, names: Mapping[str, str],
                        values: Collection[str], kinded: Collection[str] = (),
+                       apposed: bool = False,
                        ) -> tuple[str, str | None] | None:
     """Reword a statement so it shows none of the forgotten ``names`` (each with the tie its
     bearer is borne under) and ``values``, keeping everything else it says.
@@ -694,7 +776,7 @@ def reworded_statement(statement: str, *, names: Mapping[str, str],
     if len(ties) > 1:
         return None
     for value in sorted(values, key=len, reverse=True):
-        found = _without_value(text, value, keep_kind=value in kinded)
+        found = _without_value(text, value, keep_kind=value in kinded, apposed=apposed)
         if found is None:
             return None
         text = found

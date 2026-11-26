@@ -39,6 +39,18 @@ test('forget intent: abbreviations, addresses and versions do not cut the reques
     ['Please forget that my landlord is J. Smith.', ['my landlord is J. Smith']],
   ];
   for (const [text, expected] of cases) assert.deepEqual(detectForget(text), expected, text);
+  // A +, # or % right after a word is part of it: "forget C++" is not "forget C".
+  for (const [text, expected] of [
+    ['Please forget that I use C++.', ['I use C++']],
+    ['Forget that I code in C#!', ['I code in C#']],
+    ['Please forget that I own 50% of the company.', ['I own 50% of the company']],
+    ['Please forget that I like C++, thanks.', ['I like C++']],
+    ['Please forget that I use C.', ['I use C']],
+  ]) assert.deepEqual(detectForget(text), expected, text);
+  assert.notEqual(core.requestKey('I use C#'), core.requestKey('I use C'));
+  assert.notEqual(core.requestKey('I use C++'), core.requestKey('I use C'));
+  assert.equal(core.requestKey('I use C# !'), core.requestKey('I use C#'));
+  assert.equal(core.requestKey('my address.'), core.requestKey('my address'));
   assert.deepEqual(sentences('I like apples etc. and pears. Forget it.'), ['I like apples etc. and pears.', ' Forget it.']);
   assert.deepEqual(sentences('第一句。第二句！third'), ['第一句。', '第二句！', 'third']);
   assert.equal(sentences('a.b@example.com and 3.5 km').length, 1);
@@ -662,6 +674,30 @@ test('forget intent: what was said counts as a fact only with what it was about'
   for (const text of ['Please forget my questions.', 'forget all my questions', 'forget that stuff', 'forget our chats', 'Please forget my previous answers.', 'forget my stupid mistakes', 'Forget those conversations.']) {
     assert.deepEqual(asked(text), [], text);
   }
+});
+
+// Work objects the plugin and the service read differently today. The plugin keeps its reading
+// (a work word refuses the request; "my new code" asks): these pin it.
+test('forget intent: work objects and "my new" keep the plugin\'s reading', () => {
+  for (const [text, expected] of [
+    ["Forget the plan I came up with.", []],
+    ["Forget my code from before.", []],
+    ["Forget the script I've been working on.", []],
+    ["Forget the code I'm writing.", []],
+    ["Forget the code I have open.", []],
+    ["Forget the function I need.", []],
+    ["Forget my last commit message.", []],
+    ["Forget my design doc.", []],
+    ["Forget my PR review comments.", []],
+    ["Forget my previous implementation idea.", []],
+    ["Forget my code in the last message.", []],
+    ["Forget my plan we discussed.", []],
+    ["Forget the plan you and I made.", []],
+    ["Forget the function you explained to me.", []],
+    ["Forget my code name ++", []],
+    ["Forget my new code.", ["my new code"]],
+    ["Forget my new plan.", ["my new plan"]],
+  ]) assert.deepEqual(detectForget(text), expected, text);
 });
 
 test('forget intent: starting the work over is no forget, and a that-clause or a condition is never a correction', () => {

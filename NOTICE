@@ -22,11 +22,11 @@ pandas, prompt_toolkit and typer.
 
 Included software
 -----------------
-src/quotemem/_vendor holds a pre-release build of HeavenBase 0.1.2.3 (the
-project: https://pypi.org/project/heavenbase/) - MIT License. The package
-folder is unmodified, from heavenbase-0.1.2.3-py3-none-any.whl with SHA-256
-3fcbeacfeb1446900db06582e28512b9d98540204c7b45c587849ad9b44bf4e4; its
-dist-info folder holds only the metadata headers and the licence. The
+src/quotemem/_vendor holds HeavenBase 0.1.2.3 as published on the Python
+Package Index (https://pypi.org/project/heavenbase/0.1.2.3/) - MIT License.
+The package folder is unmodified, from heavenbase-0.1.2.3-py3-none-any.whl
+with SHA-256 34791e55278b49fb3453ef3d64f4f901f9698e5167b1674e46f8dec100facf69;
+its dist-info folder holds only the metadata headers and the licence. The
 copyright and permission notice are in
 src/quotemem/_vendor/heavenbase-0.1.2.3.dist-info/licenses/LICENSE.
 

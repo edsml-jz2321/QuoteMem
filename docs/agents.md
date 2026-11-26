@@ -223,7 +223,9 @@ stored. When depends on whether the agent reports a chat's end:
 
 Otherwise a chat's last turns go out when it ends, or before a forget. A
 chat's last turns are saved once it has been idle for 5 minutes
-(`QUOTEMEM_IDLE_FLUSH_MS`), with no further prompt. The MCP tools stay available for explicit requests: search, history,
+(`QUOTEMEM_IDLE_FLUSH_MS`), with no further prompt. (On Windows, where
+PowerShell cannot start background processes, they are saved at the next
+prompt or session start instead.) The MCP tools stay available for explicit requests: search, history,
 provenance (the quoted evidence behind a memory), a list of what is
 remembered (`quotemem_memories`) and a two-step forget.
 When the service cannot be reached, the turns wait on disk and go out on a

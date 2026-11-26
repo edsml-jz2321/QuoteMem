@@ -10,7 +10,7 @@ import path from 'node:path';
 import { after, test } from 'node:test';
 import { pathToFileURL } from 'node:url';
 
-import { CORE, HIT, TOKEN, plan, sleep, stubServer, tempDir, waitFor } from './helpers.mjs';
+import { CORE, HIT, TOKEN, plan, sleep, stubServer, tempDir, testSettings, treeTexts, waitFor } from './helpers.mjs';
 
 const core = await import(pathToFileURL(path.join(CORE, 'index.mjs')).href);
 const { DiskQueue, FORGET_HEADER, RECALL_HEADER } = core;
@@ -1087,10 +1087,7 @@ test('privacy: secrets redacted on disk and on the wire; logs hold no token or c
   assert.ok(!sent.includes('sk-proj-AbCd') && sent.includes('[REDACTED:api_key]'));
   assert.ok(!JSON.stringify(server.of('/memory/search')).includes('hunter2xyz'));
   await waitFor(() => !fs.existsSync(hooks.queue().lockFile), 5000, 'flusher exit');
-  const files = [];
-  const walk = (dir) => { for (const name of fs.readdirSync(dir)) { const p = path.join(dir, name); if (fs.statSync(p).isDirectory()) walk(p); else files.push(p); } };
-  walk(hooks.stateDir);
-  const disk = files.map((f) => fs.readFileSync(f, 'utf8')).join('\n');
+  const disk = treeTexts(hooks.stateDir).map(({ text }) => text).join('\n');
   assert.ok(!disk.includes('sk-proj-AbCd') && !disk.includes('hunter2xyz') && !disk.includes(TOKEN), 'no secret or token on disk');
   const log = fs.readFileSync(path.join(hooks.stateDir, 'quotemem.log'), 'utf8');
   assert.match(log, /dropped: internal after 2 attempts/);
@@ -1180,11 +1177,21 @@ test('recall: a forget still queued holds recall back until it ends, for its own
     fs.unlinkSync(jobFile());
     recalled(await hooks.call('prompt', { session: 'G', turn: 'g1', text: ask }), 'dropped forget');
 
-    // Queued more than 120 s ago: no longer held back.
+    // Queued more than 120 s ago and still waiting (a busy service): not
+    // waited for any more, but recall stays held back until it ends.
     queue.enqueue([forgetJob('f3')]);
     const name = path.basename(jobFile());
-    fs.renameSync(jobFile(), path.join(queue.dir, `${String(Date.now() - 121_000).padStart(15, '0')}${name.slice(15)}`));
-    recalled(await hooks.call('prompt', { session: 'H', turn: 'h1', text: ask }), 'old forget');
+    const oldFile = path.join(queue.dir, `${String(Date.now() - 121_000).padStart(15, '0')}${name.slice(15)}`);
+    fs.renameSync(jobFile(), oldFile);
+    const searched = searches();
+    const late = await hooks.call('prompt', { session: 'H', turn: 'h1', text: ask });
+    assert.equal(late.context, null, 'an older forget still queued: no memory');
+    assert.equal(late.held, true);
+    assert.ok(late.ms < 1500, `not waited for again (${late.ms} ms)`);
+    assert.equal(searches(), searched, 'no search while it waits');
+    // Once it ends (here: dropped from the queue), recall is normal again.
+    fs.unlinkSync(oldFile);
+    recalled(await hooks.call('prompt', { session: 'H2', turn: 'h2', text: ask }), 'old forget gone');
 
     // A queue file that cannot be read means no pending forget.
     queue.enqueue([forgetJob('f4')]);
@@ -1207,6 +1214,38 @@ test('recall: a forget still queued holds recall back until it ends, for its own
   } finally {
     core.releaseLock(lock);
   }
+});
+
+test('recall: held back while any forget is queued, one that turns old during the wait or an old one beside a new one', async () => {
+  const quiet = { warn() {}, warnOnce() {}, debug() {} };
+  const settings = await testSettings('http://127.0.0.1:9', tempDir(), {}, { QUOTEMEM_AUTOSTART: '0' });
+  const forgetJob = (id) => ({ kind: 'forget', request_id: id, body: { user_id: 'quei', request_id: id }, url: settings.url, created: Date.now(), attempts: 0, nextAt: 0 });
+  // Queue a forget whose file says it was queued `agoMs` ago.
+  const queueAt = (memory, id, agoMs) => {
+    memory.queue.enqueue([forgetJob(id)]);
+    const entry = memory.queue.entries().find((e) => e.name.includes(core.jobKey(memory.queue.owner, id)));
+    const moved = path.join(memory.queue.dir, `${String(Date.now() - agoMs).padStart(15, '0')}${entry.name.slice(15)}`);
+    fs.renameSync(entry.file, moved);
+    return moved;
+  };
+  const HOLD_MS = 120_000; // FORGET_HOLD_MS
+  // A forget queued 119.6 s ago turns 120 s old during the wait: still held.
+  const crossing = new core.HookMemory({ settings: { ...settings, stateDir: tempDir() }, log: quiet, host: 'test-host', forgetWaitMs: 3000 });
+  crossing.flush = () => false;
+  queueAt(crossing, 'f-cross', HOLD_MS - 400);
+  const started = Date.now();
+  assert.equal(await crossing.forgetHeld(), true, 'held while it is queued');
+  assert.ok(Date.now() - started < 2500, 'no longer waited for once it is old');
+  // An old forget beside a new one that ends during the wait: still held.
+  const both = new core.HookMemory({ settings: { ...settings, stateDir: tempDir() }, log: quiet, host: 'test-host', forgetWaitMs: 3000 });
+  both.flush = () => false;
+  queueAt(both, 'f-old', HOLD_MS + 1000);
+  const fresh = queueAt(both, 'f-new', 0);
+  setTimeout(() => fs.unlinkSync(fresh), 300);
+  assert.equal(await both.forgetHeld(), true, 'the old forget still holds recall back');
+  // None queued: not held.
+  const none = new core.HookMemory({ settings: { ...settings, stateDir: tempDir() }, log: quiet, host: 'test-host', forgetWaitMs: 3000 });
+  assert.equal(await none.forgetHeld(), false);
 });
 
 test('recall: the wait for a queued forget fits in the hook time limit', () => {

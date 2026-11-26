@@ -74,9 +74,9 @@ from quotemem.core.identity import integrity_digest, new_ulid, scope_id
 from quotemem.core.knowledge import KnowledgeReadView
 from quotemem.core.query import FrozenScopeGrantSetV1, QueryBundleV1, ReturnedItemV1, ScopeV1
 from quotemem.core.readability import Readability, VersionContent
-from quotemem.core.recall import carried_parts, recall_interactive, recall_pure
+from quotemem.core.recall import Hidden, carried_parts, recall_interactive, recall_pure
 from quotemem.core.recall_agent import SHADOW_PURPOSE, AgentContext, ForgetShadow, Status
-from quotemem.core.recall_corpora import MemoryDocument
+from quotemem.core.recall_corpora import EvidenceDocument, MemoryDocument
 from quotemem.core.recall_snapshot import RecallSnapshot, evidence_record
 from quotemem.core.run_inputs import InputMessageV1
 from quotemem.ingestion.forget_requests import asked_part, forget_requests, request_reach
@@ -91,6 +91,7 @@ from quotemem.service.delivery import (
 )
 from quotemem.service.search_priority import SearchActivity
 from quotemem.store.domain import ReplayableRecallRowV1
+from quotemem.store.erasure_gate import Withheld, hold_generation, withheld_in
 from quotemem.store.knowledge import read_knowledge_view
 from quotemem.store.read_model import SearchContext, SnapshotReadGuard, StoreReadModel
 from quotemem.store.search_rows import DeferredRecallRows
@@ -371,6 +372,41 @@ def scope_kept(
                     *(("evidence", part_id) for part_id in entry.parts)):
             found[key] = found.get(key, ()) + window
     return found
+
+
+def _unheld(
+    root: RecallSnapshot, returned: tuple[ReturnedItemV1, ...], held: Withheld,
+) -> tuple[ReturnedItemV1, ...]:
+    """``returned`` without what an accepted forget withholds (`quotemem.store.erasure_gate`): a
+    memory it names or one quoting a withheld sentence, an Evidence part holding one; the
+    rest keep their order and are ranked again from 1."""
+    if not held:
+        return returned
+    kept: list[ReturnedItemV1] = []
+    for target in returned:
+        if target.kind == "memory":
+            row = root.get_memory(target.object_id)
+            quotes = () if row is None else MemoryDocument.of(row).snapshot.quote_spans
+            if held.touches(target.object_id, quotes):
+                continue
+        elif held.evidence(target.object_id):
+            continue
+        kept.append(target.model_copy(update={"rank": len(kept) + 1}))
+    return tuple(kept)
+
+
+def _hidden(held: Withheld) -> Hidden | None:
+    """What the ranking leaves out while an accepted forget waits or runs (`_unheld`'s
+    rule); None when nothing is withheld."""
+    if not held:
+        return None
+
+    def hidden(document: MemoryDocument | EvidenceDocument) -> bool:
+        if isinstance(document, MemoryDocument):
+            return held.touches(document.row.object_id, document.snapshot.quote_spans)
+        return held.evidence(document.row.object_id)
+
+    return hidden
 
 
 def _delivered_versions(
@@ -711,6 +747,8 @@ class SearchUseCase:
     ) -> tuple[DeliveryAttempt, int]:
         """Rank, render and attempt the delivery inside the registered guard callback."""
         writer = self._writer
+        # A forget accepted after this note makes the delivery recompute (`_unheld`).
+        holds = hold_generation(writer, scope.scope_id)
         as_of = None if request.as_of is None else request.as_of.at
         knowledge: KnowledgeReadView | None = None
         if mode == "knowledge":
@@ -735,8 +773,11 @@ class SearchUseCase:
         agent = self._agent_context(scope) if (
             self._interactive is not None and knowledge is None
             and mode in {"plain", "current"} and not _BENCH_RANKING.get()) else None
+        # What an accepted forget withholds is ranked out, so the top k are filled without
+        # it; such a ranking is never reused.
+        hidden = _hidden(withheld_in(writer, scope.scope_id))
         # A knowledge read ranks its selected projections; it is never reused.
-        key = None if knowledge is not None else _ranking_digest(
+        key = None if knowledge is not None or hidden is not None else _ranking_digest(
             root, scope, bundle, allowed, mode, withdrawn, reranked=self._rerank is not None,
             agent=agent,
         )
@@ -749,7 +790,7 @@ class SearchUseCase:
                 root, bundle, bundle.policy_snapshot, allowed_scopes=allowed, mode=mode,
                 context=agent, depth=self._interactive.max_top_k,
                 cache=self._publisher.recall_corpora(root),
-                withdrawn=withdrawn, lexical_only=state.lexical_only,
+                withdrawn=withdrawn, lexical_only=state.lexical_only, hidden=hidden,
             )
             returned, statuses = ranking.returned, ranking.statuses
         else:
@@ -762,8 +803,10 @@ class SearchUseCase:
                 rerank=self._rerank,
                 withdrawn=withdrawn,
                 lexical_only=state.lexical_only,
+                hidden=hidden,
             )
         state.ranked = None if key is None else (key, returned, statuses)
+        returned = _unheld(shown, returned, withheld_in(writer, scope.scope_id))
         _check_guarded(delivery, guard)
         versions = _delivered_versions(shown, returned)
         speakers = quote_speakers(writer, shown, scope, versions, now=context.query_time)
@@ -810,6 +853,9 @@ class SearchUseCase:
             if not writer.mutex.acquire(blocking=False):
                 return False
             try:
+                if hold_generation(writer, scope.scope_id) != holds:
+                    stale = True
+                    return False
                 try:
                     self._deliver_locked(
                         guard, context, fresh, projections, mode=mode, as_of=as_of,
@@ -836,6 +882,8 @@ class SearchUseCase:
 
             def enqueue() -> None:
                 _check_delivery(delivery)
+                if hold_generation(writer, scope.scope_id) != holds:
+                    raise QuoteMemError("delivery_stale", "A forget was accepted during the Search")
                 rows.enqueue(row, erase_epoch=context.fence.erase_epoch,
                              consent_epoch=context.fence.consent_epoch)
                 delivery.deliver(result)

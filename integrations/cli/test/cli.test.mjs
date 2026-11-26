@@ -256,12 +256,16 @@ test('install: print-only tools, an unknown tool, and invalid JSON in a config f
   assert.match(broken.err, /not valid JSON; fix it first/);
 });
 
+// /agent/status as the service answers it: 200 with the right credential header, else 401.
+const statusRoute = (header, value) => (_body, entry) => (entry.headers[header] === value
+  ? { body: { phase: 'serving' } }
+  : { status: 401, body: { code: 'authentication_failed' } });
+
 test('doctor: reports the token check and the shared default owner, never the token', async () => {
   const server = await serve({
     '/health': () => ({ body: {} }),
-    '/memory/search': (_body, entry) => (entry.headers.authorization === `Bearer ${TOKEN}`
-      ? { status: 400, body: { code: 'invalid_request' } }
-      : { status: 401, body: { code: 'authentication_failed' } }),
+    '/agent/status': statusRoute('authorization', `Bearer ${TOKEN}`),
+    '/memory/search': () => ({ status: 400, body: { code: 'invalid_request' } }),
   });
   const home = freshHome();
   const cwd = path.join(home, 'project');
@@ -276,8 +280,9 @@ test('doctor: reports the token check and the shared default owner, never the to
   // A service on this computer: it may be another user's, and a port of this user's own is named.
   assert.match(bad.out, /another user's QuoteMem on this computer[^\n]*QUOTEMEM_URL=http:\/\/127\.0\.0\.1:2\d{4} in ~\/\.quotemem\/env and in the environment Claude Code, Codex and DSH start in/);
   assert.ok(!bad.out.includes('wrong-token-1'));
-  // The search probe carried no query: nothing was searched.
-  assert.ok(server.of('/memory/search').every((s) => JSON.stringify(s.body) === '{}'));
+  // The token is checked with GET /agent/status: no search request reaches the service.
+  assert.equal(server.of('/memory/search').length, 0);
+  assert.ok(server.of('/agent/status').length >= 2);
   // An exported token is flagged: an agent started from this shell hands it to its shell tool.
   assert.match(good.out, /note {2}the token is exported in this shell: an agent started from it hands it to its own shell tool/);
 
@@ -297,6 +302,27 @@ test('doctor: reports the token check and the shared default owner, never the to
   const missing = await quotemem(['doctor'], { env: { PATH: process.env.PATH, HOME: freshHome(), QUOTEMEM_URL: server.url, QUOTEMEM_TOKEN_FILE: '~/no-such-token' }, cwd });
   assert.equal(missing.code, 1);
   assert.match(missing.out, /FAIL {2}no token: QUOTEMEM_TOKEN_FILE cannot be read/);
+});
+
+test('doctor and status check the token in the configured header mode (x-api-key)', async () => {
+  const server = await serve({
+    '/health': () => ({ body: {} }),
+    '/agent/status': statusRoute('x-api-key', TOKEN),
+  });
+  const home = freshHome();
+  const cwd = path.join(home, 'project');
+  const env = { PATH: process.env.PATH, HOME: home, USERPROFILE: home, QUOTEMEM_URL: server.url, QUOTEMEM_TOKEN: TOKEN, QUOTEMEM_HTTP_AUTH_MODE: 'x-api-key' };
+  const doctor = await quotemem(['doctor'], { env, cwd });
+  assert.equal(doctor.code, 0, doctor.out);
+  assert.match(doctor.out, /the service accepts the token/);
+  const checked = server.of('/agent/status').length;
+  const status = await quotemem(['status'], { env, cwd });
+  assert.equal(status.code, 0, status.out);
+  assert.match(status.out, /memory service: running/);
+  assert.doesNotMatch(status.out, /problem:/);
+  assert.equal(server.of('/agent/status').length, checked + 1, 'status checked the token too');
+  assert.ok(server.of('/agent/status').every((r) => r.headers['x-api-key'] === TOKEN && !r.headers.authorization));
+  assert.ok(!(doctor.out + status.out).includes(TOKEN));
 });
 
 /** A folder with a fake `uvx` that records its arguments and stdin, then exits with QM_FAKE_UVX_EXIT. */
@@ -519,7 +545,7 @@ test('help lists the plugin commands and the service commands; doctor reports uv
 
   const server = await serve({
     '/health': () => ({ body: {} }),
-    '/memory/search': () => ({ status: 400, body: { code: 'invalid_request' } }),
+    '/agent/status': statusRoute('authorization', `Bearer ${TOKEN}`),
   });
   const bin = fakeUvx(home);
   const withUvx = await quotemem(['doctor'], { env: { PATH: `${bin}${path.delimiter}${process.env.PATH}`, HOME: home, USERPROFILE: home, QUOTEMEM_URL: server.url, QUOTEMEM_HTTP_AUTH_SECRET: TOKEN }, cwd });

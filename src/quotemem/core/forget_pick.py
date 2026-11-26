@@ -42,6 +42,7 @@ from pydantic import Field
 from quotemem.core.errors import QuoteMemError
 from quotemem.core.extraction_output import AdvertisedRequest
 from quotemem.core.forget_detail import detail_question
+from quotemem.core.forget_match import name_only
 from quotemem.store.metadata import OpaqueIdSpec, StrictModel
 
 FORGET_PICK_PROMPT_VERSION = "memory-forget-pick-v1"
@@ -166,11 +167,40 @@ FORGET_TELLS_DETAIL_PROMPT_DIGEST = hashlib.sha256(
 """SHA-256 of the system prompt a ``tells`` request of a detail request sends."""
 
 
-def forget_prompt(stage: Stage, target: str) -> tuple[str, str, str]:
+_NAME_RULE = """\
+A target may ask to forget a name and nothing else: the name of someone or something of the \
+user's ("Tom's name", "the name of my brother's girlfriend", "我的猫的名字"). Its claim is \
+then that name, whatever it is: a memory tells it only when it shows that name or another \
+form of it (a spelling, a nickname, a transliteration). A memory that speaks of the same \
+person, animal or thing without its name ("The user's brother's girlfriend is a \
+photographer.", "The user took the user's cat to the vet.") does not tell it, nor does one \
+saying that the user has them. The message then has "rewordings": true: each memory is a \
+new wording of a stored memory that leaves the name out.
+
+"""
+FORGET_TELLS_NAME_PROMPT_VERSION = "memory-forget-tells-name-v1"
+FORGET_TELLS_NAME_PROMPT = FORGET_TELLS_PROMPT.replace(
+    'For every memory answer', _NAME_RULE + 'For every memory answer', 1)
+FORGET_TELLS_NAME_PROMPT_DIGEST = hashlib.sha256(
+    FORGET_TELLS_NAME_PROMPT.encode("utf-8")).hexdigest()
+"""SHA-256 of the system prompt a ``tells`` request of a name request sends (`name_only`):
+the rewording of a memory that spoke of the name's bearer by the name keeps the bearer,
+which the pinned prompt read as telling the request. Only the rewordings' check sends it
+(``"rewordings": true`` in its message): a memory still showing the name is the word rules'
+to withhold, never the judge's to take whole."""
+
+
+def forget_prompt(stage: Stage, target: str, *, rewordings: bool = False,
+                  ) -> tuple[str, str, str]:
     """The system prompt, its version and its digest a vote of ``stage`` sends for
-    ``target``: a detail question's own (`detail_question`), else the pick's or the tells'."""
+    ``target``: a detail question's own (`detail_question`), the ``tells`` of the
+    ``rewordings`` of a name request's memories its own (`name_only`), else the pick's or the
+    tells'."""
     detail = detail_question(target) is not None
     if stage == "tells":
+        if rewordings and not detail and name_only(target):
+            return (FORGET_TELLS_NAME_PROMPT, FORGET_TELLS_NAME_PROMPT_VERSION,
+                    FORGET_TELLS_NAME_PROMPT_DIGEST)
         return ((FORGET_TELLS_DETAIL_PROMPT, FORGET_TELLS_DETAIL_PROMPT_VERSION,
                  FORGET_TELLS_DETAIL_PROMPT_DIGEST) if detail else
                 (FORGET_TELLS_PROMPT, FORGET_TELLS_PROMPT_VERSION, FORGET_TELLS_PROMPT_DIGEST))
@@ -567,14 +597,16 @@ def pick_targets(
     return ForgetPickV1(tuple(sorted((*same, *needed))), roles, method, tuple(stages))
 
 
-def _tells_ballot(target: str, statements: Sequence[str]) -> _Ballot:
+def _tells_ballot(target: str, statements: Sequence[str], *,
+                  rewordings: bool = False) -> _Ballot:
     count = len(statements)
     keys: tuple[Hashable, ...] = tuple(range(count))
 
     def build(vote: int) -> tuple[str, Callable[[ForgetPickOutput], dict[Hashable, str] | None]]:
         order = _order(count, "tells", vote)
         handles = {f"m{position + 1}": index for position, index in enumerate(order)}
-        message = _message({"task": "tells", "target": target, "memories": [
+        message = _message({"task": "tells", "target": target, **(
+            {"rewordings": True} if rewordings else {}), "memories": [
             {"id": handle, "statement": statements[index]} for handle, index in handles.items()]})
 
         def read(reply: ForgetPickOutput) -> dict[Hashable, str] | None:
@@ -598,18 +630,20 @@ def _tells_ballot(target: str, statements: Sequence[str]) -> _Ballot:
 
 
 def tells(target: str, statements: Sequence[str], send: Send, *,
-          rounds: RoundRunner = _sequential) -> tuple[list[bool | None], int] | None:
+          rounds: RoundRunner = _sequential, rewordings: bool = False,
+          ) -> tuple[list[bool | None], int] | None:
     """Whether each memory states or presupposes ``target`` (task ``tells``), in order, with
     the calls made: what a complete forget may take beyond its own pick, its base links and
     its linked replacers needs this answer, since a word rule only nominates. Voted as every
     stage is, the ballots of ``MAX_FORGET_CANDIDATES`` memories each in one round; a memory
     the votes leave contested is None. None in all when a decision got fewer than two
-    answered votes (the judge is unavailable)."""
+    answered votes (the judge is unavailable). ``rewordings`` marks the statements as the
+    new wordings of memories (`forget_prompt`)."""
     chunks = [statements[start:start + MAX_FORGET_CANDIDATES]
               for start in range(0, len(statements), MAX_FORGET_CANDIDATES)]
 
     def poll(chunk: Sequence[str]) -> tuple[dict[Hashable, str], StageTallyV1]:
-        return _poll(_tells_ballot(target, chunk), send, rounds)
+        return _poll(_tells_ballot(target, chunk, rewordings=rewordings), send, rounds)
 
     try:
         polled = [poll(chunk) for chunk in chunks]

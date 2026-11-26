@@ -216,7 +216,8 @@ class ForgetIntentV1(StrictModel):
     """A forget the user asked for a modifier alone of a thing of theirs ("forget that my
     cat is orange",
     ``forget_admission.asks_modifier``): a survivor about that thing keeps what does not show
-    the modifier (``ForgottenCitation.modifier``), at admission as; left out when False."""
+    the modifier (``ForgottenCitation.modifier``), at admission as at the deletion stage; left
+    out when False."""
     rewordings: _Rewordings = ()
     """The memories the forget rewords instead of taking (``ForgetRewordV1``): a complete
     forget's; the fence carries them on and a consumed intent drops them. Left out when

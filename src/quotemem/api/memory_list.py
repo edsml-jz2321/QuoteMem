@@ -41,6 +41,7 @@ from quotemem.core.recall_agent import SHADOW_PURPOSE, Status
 from quotemem.core.recall_snapshot import RecallSnapshot
 from quotemem.core.technical_types import ExternalId
 from quotemem.providers.auth import AuthProvider, AuthRequest
+from quotemem.store.erasure_gate import hold_generation, withheld_in
 from quotemem.store.metadata import StrictModel
 from quotemem.store.read_model import StoreReadModel
 from quotemem.store.writer import Writer
@@ -122,6 +123,10 @@ class MemoryListV1(StrictModel):
     counts: StatusCountsV1
 
 
+_PAGE_ATTEMPTS = 3
+"""How often a listing is built again because a forget was accepted while it was built."""
+
+
 def parse_list_request(body: bytes) -> MemoryListRequestV1:
     """Parse one ``/memory/list`` body; ``invalid_request`` for any body it does not accept."""
     try:
@@ -200,7 +205,7 @@ def listing_page(
             revision_id=memory.document.row.current_revision_id,
             content_hash=memory.document.row.content_hash, rank=rank, score=0.0,
         ) for rank, memory in enumerate(page, 1)),
-        mode="plain", at_time=now, speakers=speakers(page),
+        mode="plain", at_time=now, speakers=speakers(page), replaced=True,
     ) if page else ()
     memories: list[ListedMemoryV1] = []
     for memory, projection in zip(page, projections, strict=True):
@@ -283,21 +288,38 @@ class MemoryListing:
         with self._publisher.pin_search(context) as guard:
 
             def operation(root: RecallSnapshot) -> None:
-                listed = agent_listing(
-                    root, scope_kind=scope.scope_kind, scope_id=scope.scope_id, now=now,
-                    context=agent_context(self._writer, scope, self._shadow_key,
-                                          self._writer.bind_content),
-                    cache=self._publisher.recall_corpora(root),
-                    withdrawn=scope_withdrawn(self._writer, scope),
-                )
-                consumer(listing_page(
-                    root, listed, request, now=now,
-                    speakers=lambda page: quote_speakers(
-                        self._writer, root, scope,
-                        [memory.document.snapshot for memory in page], now=now),
-                ))
+                # What an accepted forget withholds is left out, as its erasure will leave
+                # it out; a forget accepted while the page is built makes it build again.
+                for _ in range(_PAGE_ATTEMPTS):
+                    holds = hold_generation(self._writer, request.scope.scope_id)
+                    page = self._page(root, request, now)
+                    if hold_generation(self._writer, request.scope.scope_id) == holds:
+                        consumer(page)
+                        return
+                raise QuoteMemError("delivery_busy", "Forgets kept changing the listing")
 
             guard.consume_search(context, operation)
+
+    def _page(self, root: RecallSnapshot, request: MemoryListRequestV1, now: int) -> MemoryListV1:
+        """One page of the scope's listing at ``root``, without withheld memories."""
+        scope = request.scope
+        held = withheld_in(self._writer, scope.scope_id)
+        listed = agent_listing(
+            root, scope_kind=scope.scope_kind, scope_id=scope.scope_id, now=now,
+            context=agent_context(self._writer, scope, self._shadow_key,
+                                  self._writer.bind_content),
+            cache=self._publisher.recall_corpora(root),
+            withdrawn=scope_withdrawn(self._writer, scope),
+        )
+        if held:
+            listed = tuple(memory for memory in listed if not held.touches(
+                memory.document.memory_id, memory.document.snapshot.quote_spans))
+        return listing_page(
+            root, listed, request, now=now,
+            speakers=lambda page: quote_speakers(
+                self._writer, root, scope,
+                [memory.document.snapshot for memory in page], now=now),
+        )
 
     def encoded(self, request: MemoryListRequestV1) -> bytes:
         """One page as the JSON bytes ``/memory/list`` answers, encoded under the pin."""

@@ -27,6 +27,43 @@ export function writeFileAtomic(file, text) {
   }
 }
 
+const stateKeys = new Map();
+
+/**
+ * A random 32-byte key of a state folder (`state.key`, 0600), made once by
+ * whichever process needs it first: hashes of a secret kept in the folder
+ * (a token) are HMACs under it, so a copy of the folder gives no value to
+ * test guesses against, and none that matches another folder's.
+ */
+export function stateKey(stateDir) {
+  const known = stateKeys.get(stateDir);
+  if (known) return known;
+  const file = path.join(stateDir, 'state.key');
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    try {
+      const key = fs.readFileSync(file);
+      if (key.length === 32) {
+        stateKeys.set(stateDir, key);
+        return key;
+      }
+      // another process is writing it
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+      fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 });
+      const key = randomBytes(32);
+      try {
+        fs.writeFileSync(file, key, { flag: 'wx', mode: 0o600 });
+        stateKeys.set(stateDir, key);
+        return key;
+      } catch (made) {
+        if (made.code !== 'EEXIST') throw made;
+      }
+    }
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+  }
+  throw Object.assign(new Error('the state folder key could not be read'), { code: 'ESTATEKEY' });
+}
+
 /** Read and parse a JSON file; null when missing or unreadable. */
 export function readJson(file) {
   try {

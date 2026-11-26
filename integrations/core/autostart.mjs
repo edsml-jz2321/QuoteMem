@@ -36,7 +36,7 @@ import { lockOwned, readJson, tryLock, writeFileAtomic } from './lock.mjs';
 import { DIRECT_START_FILE, alive, bootTime, homeDir, hostName, spawnDetached } from './proc.mjs';
 
 /** The service release these plugins start; check_package.mjs keeps it equal to package.json. */
-export const SERVICE_RELEASE = '0.3.1';
+export const SERVICE_RELEASE = '0.3.2';
 /** Where `quotemem serve` listens unless told otherwise (the service's DEFAULT_PORT). */
 export const DEFAULT_PORT = 8765;
 const LOOPBACK = new Set(['localhost', '127.0.0.1', '[::1]']);

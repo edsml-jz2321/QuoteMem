@@ -407,12 +407,13 @@ def prepare_recall(
 def listed_memories(
     root: RecallSnapshot, cache: SnapshotRecallCache, *, scope_kind: str, scope_id: str,
     now: int,
-) -> tuple[tuple[MemoryDocument, ...], tuple[EvidenceDocument, ...]]:
+) -> tuple[tuple[MemoryDocument, ...], tuple[EvidenceDocument, ...], frozenset[str]]:
     """A plain read's eligible memories and readable Evidence of one scope, without a query.
 
     The same eligibility as `prepare_recall` in ``plain`` mode (current memories and past
-    states with a witnessed end) and the same Evidence readability (``p_evr``),
-    for a listing of the scope's memories. The caller authorizes the scope.
+    states with a witnessed end), and also a memory an undated update replaced
+    (`Readability.p_replaced`), which has no end to date; the same Evidence readability
+    (``p_evr``), for a listing of the scope's memories. The caller authorizes the scope.
 
     Args:
         root: The read pin's snapshot.
@@ -422,7 +423,8 @@ def listed_memories(
         now: The read's trusted clock.
 
     Returns:
-        The memory documents and the Evidence documents.
+        The memory documents, the Evidence documents and the ids of the memories only an
+        undated update's replacement admits, which no Search reads.
 
     Raises:
         QuoteMemError: ``binding_mismatch`` for a cache of another root.
@@ -430,13 +432,16 @@ def listed_memories(
     if cache.root is not root:
         raise QuoteMemError("binding_mismatch", "Recall cache belongs to another snapshot")
     read = Readability(scope_kind, scope_id, now, root.get_source)
-    memories = _eligible(cache.memory(scope_id), read, "plain", None, None)
+    corpus = cache.memory(scope_id)
+    memories = _eligible(corpus, read, "plain", None, None, replaced=True)
+    plain = {document.memory_id for document in _eligible(corpus, read, "plain", None, None)}
     held = root.held_evidence(scope_id)
     evidence = tuple(
         document for document in cache.evidence(scope_id).documents
         if read.p_evr(document.row, held=document.row.object_id in held)
     )
-    return memories, evidence
+    return memories, evidence, frozenset(
+        document.memory_id for document in memories if document.memory_id not in plain)
 
 
 def _eligible(
@@ -446,6 +451,8 @@ def _eligible(
     at: int | None,
     knowledge: Mapping[str, MemoryRowV2] | None,
     documents: Sequence[MemoryDocument] | None = None,
+    *,
+    replaced: bool = False,
 ) -> tuple[MemoryDocument, ...]:
     result: list[MemoryDocument] = []
     for current in corpus.documents if documents is None else documents:
@@ -483,6 +490,7 @@ def _eligible(
                 tuple(snapshot.sensitivity_classes),
             ),
             knowledge=selection,
+            replaced=replaced,
         ):
             result.append(document)
     return tuple(result)

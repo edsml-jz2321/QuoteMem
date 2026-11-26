@@ -22,6 +22,7 @@ import { fileURLToPath } from 'node:url';
 import { check as checkCore, coreFiles } from './core/sync.mjs';
 import { check as checkBundles } from './hooks/bundle.mjs';
 import { checkServerJson, serverSources } from './check_server_json.mjs';
+import { docVersionProblems } from './check_versions.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..');
@@ -104,6 +105,8 @@ const versionOf = {
   'integrations/core/autostart.mjs': /export const SERVICE_RELEASE = '([^']+)'/.exec(fs.readFileSync(path.join(here, 'core', 'autostart.mjs'), 'utf8'))?.[1],
 };
 for (const [file, value] of Object.entries(versionOf)) ok(value === version, `${file} version ${value} differs from package.json ${version}`);
+// The release commands in the documentation (README examples) name it too.
+for (const problem of docVersionProblems(root, version)) ok(false, problem);
 // server.json, the MCP Registry entry: the same version, and its name is mcpName.
 for (const problem of checkServerJson(readJson(path.join(root, 'server.json')), pkg, serverSources())) ok(false, problem);
 // Folders with their own package.json (a host loads them as a plugin

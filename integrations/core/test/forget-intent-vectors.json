@@ -2,7 +2,7 @@
  "schema": "quotemem-forget-intent-vectors/1",
  "source": "integrations/core/test/intent.test.mjs (the sentences its tests give to detection)",
  "notes": "Every sentence the plugin intent tests give to forget detection, with what detectForgetRequests(text, {previous}) returns. requests: the forget requests in order, each {statement (the words sent to /memory/forget/prepare, before secret redaction), inChat, ownTurn}; [] means the sentence asks nothing. statement and inChat repeat the first request (null when none). inChat true: the service's in-chat check reads the same request with the same statement today. inChat false: only the plugin reads it, or reads fewer words (a cut replacement). A service that mirrors the plugin reads every inChat-false request with the same statement and none of the [] sentences. The rules are conservative: a false request deletes the user's data without a word, a missed one is said again more plainly. So complaints, questions, recall requests and instructions about code, files or apps are [] even where the service reads them today, for example \"Don't remember my address.\" and \"Never remember my address.\" (a bare noun phrase without please: often the user's own \"(I) don't remember …\"), 忘记我的密码了 and 你忘了我的生日吧 (\"(I/you) forgot …\"), 别记错我的生日 and 把我的分支删掉. A statement shorter than the request's object (a cut) keeps a new value out of what is forgotten only when it is the last clause, restates an address, a name, a number or an email, and says nothing more (\"Forget my old address, I live at 27 Birch Lane now.\"); any other clause stays in the statement: a missed cut is safe, a wrong one is not.",
- "count": 604,
+ "count": 667,
  "vectors": [
   {
    "text": "Please forget that I like jazz.",
@@ -5612,6 +5612,714 @@
     {
      "statement": "my locker code",
      "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Please forget that I use C++.",
+   "statement": "I use C++",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "I use C++",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget that I code in C#!",
+   "statement": "I code in C#",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "I code in C#",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Please forget that I own 50% of the company.",
+   "statement": "I own 50% of the company",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "I own 50% of the company",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Please forget that I like C++, thanks.",
+   "statement": "I like C++",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "I like C++",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Please forget that I use C.",
+   "statement": "I use C",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "I use C",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget the fact that I'm pregnant, let's move on.",
+   "statement": "the fact that I'm pregnant",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "the fact that I'm pregnant",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Please forget where I live, let's change the subject.",
+   "statement": "where I live",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "where I live",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget the name of my therapist, let's talk about something else.",
+   "statement": "the name of my therapist",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "the name of my therapist",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget everything I told you about my divorce, let's move on.",
+   "statement": "everything I told you about my divorce",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "everything I told you about my divorce",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget the address I gave you, new topic.",
+   "statement": "the address I gave you",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "the address I gave you",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget both my address and my phone number, let's move on.",
+   "statement": "both my address and my phone number",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "both my address and my phone number",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget what my doctor told me, let's move on.",
+   "statement": "what my doctor told me",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "what my doctor told me",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget the movie I watched and my therapist's name, let's talk about work.",
+   "statement": "the movie I watched and my therapist's name",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "the movie I watched and my therapist's name",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget the phone number of my sister, moving on.",
+   "statement": "the phone number of my sister",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "the phone number of my sister",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget the part where I mentioned my HIV status, let's move on.",
+   "statement": "the part where I mentioned my HIV status",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "the part where I mentioned my HIV status",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget the medication I take, let's move on.",
+   "statement": "the medication I take",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "the medication I take",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget the guy I'm dating, let's talk about work.",
+   "statement": "the guy I'm dating",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "the guy I'm dating",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget the clinic I go to, let's change the subject.",
+   "statement": "the clinic I go to",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "the clinic I go to",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget the debt I owe, new topic.",
+   "statement": "the debt I owe",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "the debt I owe",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget the school my kids attend, let's move on.",
+   "statement": "the school my kids attend",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "the school my kids attend",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget the diagnosis I got last week, okay let's move on.",
+   "statement": "the diagnosis I got last week",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "the diagnosis I got last week",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Please forget the antidepressants I'm on, let's start over.",
+   "statement": "the antidepressants I'm on",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "the antidepressants I'm on",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget the rehab I went to, let's talk about something else.",
+   "statement": "the rehab I went to",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "the rehab I went to",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget your notes on my salary, let's move on.",
+   "statement": "your notes on my salary",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "your notes on my salary",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget the password I just typed, let's move on.",
+   "statement": "the password I just typed",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "the password I just typed",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget the lump I found, let's change the topic.",
+   "statement": "the lump I found",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "the lump I found",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget the guy from Tinder I met, let's talk about work.",
+   "statement": "the guy from Tinder I met",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "the guy from Tinder I met",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget the name of the doctor I see, moving on.",
+   "statement": "the name of the doctor I see",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "the name of the doctor I see",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget the abortion I had, let's move on.",
+   "statement": "the abortion I had",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "the abortion I had",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget the affair I had, let's move on.",
+   "statement": "the affair I had",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "the affair I had",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget the money I owe Tom, let's move on.",
+   "statement": "the money I owe Tom",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "the money I owe Tom",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget whatever I said about my mom, let's move on.",
+   "statement": "whatever I said about my mom",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "whatever I said about my mom",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget how much I earn, let's move on.",
+   "statement": "how much I earn",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "how much I earn",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget how old I am, let's change the subject.",
+   "statement": "how old I am",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "how old I am",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget when my birthday is, new topic.",
+   "statement": "when my birthday is",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "when my birthday is",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget who I voted for, let's move on.",
+   "statement": "who I voted for",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "who I voted for",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget why I got fired, let's move on.",
+   "statement": "why I got fired",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "why I got fired",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget the time I got arrested, let's move on.",
+   "statement": "the time I got arrested",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "the time I got arrested",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget the name I go by, let's move on.",
+   "statement": "the name I go by",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "the name I go by",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget the city I live in, let's move on.",
+   "statement": "the city I live in",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "the city I live in",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget any details about my health, let's move on.",
+   "statement": "any details about my health",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "any details about my health",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget each of my passwords, let's move on.",
+   "statement": "each of my passwords",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "each of my passwords",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget the thing about my sister, let's move on.",
+   "statement": "the thing about my sister",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "the thing about my sister",
+     "inChat": false,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget the drugs I took, ok let's move on because it's private.",
+   "statement": "the drugs I took, ok let's move on because it's private",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "the drugs I took, ok let's move on because it's private",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget the drugs I took, let's move on, my mom reads this.",
+   "statement": "the drugs I took, let's move on, my mom reads this",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "the drugs I took, let's move on, my mom reads this",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget the plan we discussed.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Forget the design we talked about.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Forget the schema we agreed on.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Forget the plan we agreed on.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Forget the code we went over.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Forget the script we discussed yesterday.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Forget the branch we're on.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Forget the plans we discussed for the trip.",
+   "statement": null,
+   "inChat": null,
+   "requests": []
+  },
+  {
+   "text": "Forget my phone number +",
+   "statement": "my phone number +",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my phone number +",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget that I use C++ +",
+   "statement": "I use C++ +",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "I use C++ +",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget that I use C++, thanks +",
+   "statement": "I use C++, thanks +",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "I use C++, thanks +",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget my phone number, please #",
+   "statement": "my phone number, please #",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my phone number, please #",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget that my blood type is O +.",
+   "statement": "my blood type is O +",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my blood type is O +",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget that I use C ++.",
+   "statement": "I use C ++",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "I use C ++",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget my address, thanks +",
+   "statement": "my address, thanks +",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my address, thanks +",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget my PIN 1234 #",
+   "statement": "my PIN 1234 #",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my PIN 1234 #",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget that my rate is 5% +",
+   "statement": "my rate is 5% +",
+   "inChat": true,
+   "requests": [
+    {
+     "statement": "my rate is 5% +",
+     "inChat": true,
+     "ownTurn": false
+    }
+   ]
+  },
+  {
+   "text": "Forget the 忘记 I wrote, let's move on.",
+   "statement": "the 忘记 I wrote",
+   "inChat": false,
+   "requests": [
+    {
+     "statement": "the 忘记 I wrote",
+     "inChat": false,
      "ownTurn": false
     }
    ]

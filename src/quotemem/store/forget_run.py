@@ -83,6 +83,7 @@ from __future__ import annotations
 import logging
 import re
 from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, Sequence, Set
+from contextlib import AbstractContextManager, contextmanager, nullcontext
 from dataclasses import dataclass, replace
 from typing import Any, Final, Literal, cast
 
@@ -200,6 +201,17 @@ from quotemem.store.entity_ops import (
     requote_on,
     reworded_view,
 )
+from quotemem.store.erasure_gate import (
+    FORGET_WAIT_SECONDS,
+    background,
+    check_request_end,
+    gate_for,
+    note_admitted,
+    one_operation,
+    patient_deadline,
+    user_request,
+    wait_deadline,
+)
 from quotemem.store.failures import is_runtime_failure
 from quotemem.store.forget_admission import (
     CorrectionEdge,
@@ -305,6 +317,23 @@ def _forget_alone(error: Exception) -> bool:
         isinstance(error, QuoteMemError) and error.code == "lease_lost"))
 
 
+_TRANSIENT_CODES: Final = frozenset({
+    "provider_unavailable", "authorization_unavailable", "authorization_expired",
+    "index_rebuilding", "delivery_busy", "erasure_in_progress", "finalize_pending",
+    "extraction_busy",
+})
+"""The refusals a later attempt of a running forget outlives: provider, authorization, index
+and queue states. Never a bound (``budget_exceeded``: a batch over a size bound is the same
+batch at every resume) or a changed selection (``reception_stale``), which the forget routes
+answer as final."""
+
+
+def _transient(error: Exception) -> bool:
+    """Whether a refusal is one a later attempt may outlive (`_TRANSIENT_CODES`): a forget
+    never gives up trimming its dependents for it (``ForgetOwner._delete``)."""
+    return isinstance(error, QuoteMemError) and error.code in _TRANSIENT_CODES
+
+
 def _cancelled_post_image(run: Mapping[str, Any], now: int) -> dict[str, Any]:
     """A cancelled cohort Run's post-image: failed ``erase_fenced``."""
     return dict(run, status="failed", failure_code="erase_fenced", updated_at=now,
@@ -394,6 +423,10 @@ class SpansPrepared:
 
     intent_key: str
     expires_at: int
+
+
+_EXACT_SCAN_LIMIT: Final = 20_000
+"""The most tombstones `ForgetOwner.plan_still_exact` reads before it answers not exact."""
 
 
 @dataclass(frozen=True)
@@ -515,6 +548,26 @@ class ForgetOwner:
         rewordings: Sequence[ForgetRewordV1] = (),
         asked: Sequence[ContentBindingDigest] = (), name_asked: bool = False,
     ) -> ForgetPrepared:
+        """Issue one bounded intent bound to the memory's current head, in the
+        scope's erasure turn (`quotemem.store.erasure_gate`): behind another erasure of the scope
+        it waits up to ``FORGET_WAIT_SECONDS`` and then checks everything again
+        (`_prepare` has the rest)."""
+        return self._in_turn(scope, enforces is None, lambda: self._prepare(
+            scope, grant, session_id=session_id, memory_id=memory_id,
+            expected_revision_id=expected_revision_id, restating=restating, seed=seed,
+            enforces=enforces, allowed=allowed, listed=listed, support_only=support_only,
+            modifier_only=modifier_only, rewordings=rewordings, asked=asked,
+            name_asked=name_asked))
+
+    def _prepare(
+        self, scope: ScopeV1, grant: PrincipalGrant, *, session_id: str, memory_id: str,
+        expected_revision_id: str, restating: Sequence[QuoteSpanV1] = (),
+        seed: ForgetSeedV1 | None = None, enforces: int | None = None,
+        allowed: Sequence[str] | None = None, listed: Sequence[str] | None = None,
+        support_only: bool = False, modifier_only: bool = False,
+        rewordings: Sequence[ForgetRewordV1] = (),
+        asked: Sequence[ContentBindingDigest] = (), name_asked: bool = False,
+    ) -> ForgetPrepared:
         """Issue one bounded intent bound to the memory's current head.
 
         ``seed`` is the user's words of the fact a complete forget takes a memory for, given
@@ -603,6 +656,16 @@ class ForgetOwner:
         spans: Sequence[QuoteSpanV1], seed: ForgetSeedV1, enforces: int | None = None,
         rewordings: Sequence[ForgetRewordV1] = (),
     ) -> SpansPrepared:
+        """`_prepare_spans` in the scope's erasure turn, as `prepare` runs `_prepare`."""
+        return self._in_turn(scope, enforces is None, lambda: self._prepare_spans(
+            scope, grant, session_id=session_id, spans=spans, seed=seed, enforces=enforces,
+            rewordings=rewordings))
+
+    def _prepare_spans(
+        self, scope: ScopeV1, grant: PrincipalGrant, *, session_id: str,
+        spans: Sequence[QuoteSpanV1], seed: ForgetSeedV1, enforces: int | None = None,
+        rewordings: Sequence[ForgetRewordV1] = (),
+    ) -> SpansPrepared:
         """Issue one bounded intent that forgets sentences no memory states.
 
         ``spans`` are sentences of the scope's active Evidence that state a fact the user
@@ -650,13 +713,19 @@ class ForgetOwner:
     def forget_spans(
         self, scope: ScopeV1, grant: PrincipalGrant, *, session_id: str, intent: str,
     ) -> ForgetOutcome:
-        """Admit a forget of sentences (`prepare_spans`), run its phases, return its receipt."""
-        prefilled = self._prefill(scope, intent, None)
-        controller = self.admit(
-            scope, grant, session_id=session_id, memory_id=None, expected_revision_id=None,
-            expected_content_hash=None, intent=intent,
-        )
-        return self._run(scope, controller, prefilled)
+        """Admit a forget of sentences (`prepare_spans`), run its phases, return its receipt.
+
+        Reads withhold the sentences from the moment the confirmation is received with a
+        current intent until it ends (`quotemem.store.erasure_gate`), also while it waits."""
+        with self._withheld(scope, grant, intent, None), \
+                self._turn(scope, user_request()) as deadline:
+            prefilled = self._prefill(scope, intent, None)
+            controller = self._admit_in_turn(scope, deadline, lambda: self._admit(
+                scope, grant, session_id=session_id, memory_id=None, expected_revision_id=None,
+                expected_content_hash=None, intent=intent,
+            ))
+            note_admitted()
+            return self._run(scope, controller, prefilled)
 
     def preview(
         self, scope: ScopeV1, memory_ids: Sequence[str], *,
@@ -1110,15 +1179,21 @@ class ForgetOwner:
         """Admit, run the phases and return the verified receipt.
 
         A repeated confirm of a consumed intent resumes or returns its original
-        controller's outcome.
+        controller's outcome. Reads withhold the memory from the moment the
+        confirmation is received with a current intent until it ends, also while it waits
+        for the scope's erasure turn (`quotemem.store.erasure_gate`).
         """
-        prefilled = self._prefill(scope, intent, memory_id)
-        controller = self.admit(
-            scope, grant, session_id=session_id, memory_id=memory_id,
-            expected_revision_id=expected_revision_id,
-            expected_content_hash=expected_content_hash, intent=intent,
-        )
-        return self._run(scope, controller, prefilled)
+        with self._withheld(scope, grant, intent, memory_id, expected_revision_id,
+                            expected_content_hash), \
+                self._turn(scope, user_request()) as deadline:
+            prefilled = self._prefill(scope, intent, memory_id)
+            controller = self._admit_in_turn(scope, deadline, lambda: self._admit(
+                scope, grant, session_id=session_id, memory_id=memory_id,
+                expected_revision_id=expected_revision_id,
+                expected_content_hash=expected_content_hash, intent=intent,
+            ))
+            note_admitted()
+            return self._run(scope, controller, prefilled)
 
     def _run(self, scope: ScopeV1, controller: str,
              prefilled: Mapping[str, tuple[str, list[float], str]]) -> ForgetOutcome:
@@ -1127,9 +1202,191 @@ class ForgetOwner:
         if prefilled:
             self._prefilled[controller] = prefilled
         try:
+            # A repeated confirm runs a forget left to repair again (`_attend`).
+            _adopt(self._writer, scope, controller)
             return self.resume(scope, controller)
+        except Exception as error:
+            # A forget refused for good would hold its user until some boot resumes it.
+            if _forget_alone(error) and not _transient(error):
+                _attend(self._writer, scope, controller, self._clock(), "forget_run", error)
+            raise
         finally:
             self._prefilled.pop(controller, None)
+
+    def _intent_exact(self, scope: ScopeV1, value: ForgetIntentV1,
+                      planned: _AdmissionPlan) -> bool:
+        """Whether an intent issued at an older ``erase_epoch`` is still exactly its plan.
+
+        The caller has already recomputed the selection at the intent's own epoch (same head,
+        content, session, seed and sentences). The plan computed now must also concern only
+        rows that no change since the intent was issued touched (`plan_still_exact`): every
+        memory it forgets, rewords, replaces or lists, every Evidence it withholds or cites,
+        and no tombstone or memory of its facts written since. A workspace whose intent did not
+        bind the memories its prepare listed binds none, so the plan computed now stands in.
+        """
+        memories = {*planned.chain, *planned.replacers, *planned.reworded, *planned.rewords,
+                    *(value.listed or ()), *(value.allowed or ()),
+                    *(reword.memory_id for reword in value.rewordings)}
+        if value.memory_id is not None:
+            memories.add(value.memory_id)
+        spans = [*planned.spans, *value.restating_spans,
+                 *(quote for version in planned.versions
+                   for quote in version.snapshot.quote_spans)]
+        # A source Evidence none of the plan's sentences or quotes points into is read whole.
+        quoted = {span.evidence_id for span in spans}
+        evidence = {item for version in planned.versions
+                    for item in version.source_evidence_ids if item not in quoted}
+        digests = {version.snapshot.statement_digest for version in planned.versions}
+        entities = set(planned.entity_ids)
+        if value.seed is not None and value.seed.entity_id:
+            entities.add(value.seed.entity_id)
+        return self.plan_still_exact(
+            scope, since_ms=value.issued_at, since_epoch=value.erase_epoch, memories=memories,
+            evidence=evidence, spans=spans, digests=digests, entities=entities)
+
+    def plan_still_exact(
+        self, scope: ScopeV1, *, since_ms: int, since_epoch: int, memories: Collection[str],
+        evidence: Collection[str] = (), spans: Collection[QuoteSpanV1] = (),
+        digests: Collection[str] = (), entities: Collection[str] = (),
+    ) -> bool:
+        """Whether a forget plan read at ``since_epoch`` and ``since_ms`` is still exact now,
+        although another forget has moved the scope's ``erase_epoch`` since.
+
+        Invariant: a plan whose epoch is behind is confirmed only when nothing it concerns
+        changed after it was read. "Changed" is decided from the rows, never from the epoch,
+        and on the safe side: anything written at or after the plan's read time, or by a
+        forget admitted at or after its epoch, counts as a change. Concretely, it is exact
+        when all of these hold:
+
+        - every memory in ``memories`` exists in the scope, its memory was not updated and its
+          current revision not recorded since (superseded, corrected, re-taught or forgotten
+          memories fail), and the ranges its head quotes pass the next rule;
+        - every Evidence the plan reads is active; one in ``evidence`` (read whole) holds no
+          withheld range written since (by a Run created since or admitted at or after the
+          epoch), and one read only through ``spans`` or the memories' quotes holds no such
+          range that overlaps or touches a range the plan reads (a partly erased sentence of
+          the plan fails; another sentence of the same message withheld does not change the
+          plan's bytes);
+        - no tombstone written since (by time or by its forget Run's epoch) shares a
+          statement digest with the plan or cites an Evidence the plan reads whole (a
+          tombstone of another fact of the same subject or message does not change this
+          plan: its bytes are checked by the rule above, and every row the plan reads is
+          checked by the other rules);
+        - no entity row the plan names was updated since (erased, merged or renamed);
+        - no memory created since states one of the plan's facts (same statement digest).
+
+        Changes the epoch did not mark (an Add between the prepare and the other forget) are
+        what a plan at an unchanged epoch already accepts, subject to the same head and
+        selection checks.
+
+        What does not depend on the clock: every row written by a Run admitted after the
+        epoch moved, or by a forget admitted at the plan's epoch or later (the Run's
+        ``admitted_erase_epoch``, which no clock sets), is seen whatever time it carries,
+        when it is a head revision of a memory the plan reads, a withheld range of an
+        Evidence it reads, a tombstone, or the head of a memory created since that states
+        one of its facts; so is a memory or Evidence row deleted or no longer active.
+
+        What does depend on it: a memory row whose lifecycle changed without a new head (its
+        update carries no Run), an entity row updated, and any row written by a Run admitted
+        before the epoch moved, are judged by their timestamps against ``since_ms``. The store
+        holds no write sequence for the plan to be compared with without a format change: an
+        intent records the epoch and the time it was read, not a commit sequence. A clock
+        behind ``since_ms`` now answers not exact; a clock set back and then forward again
+        past ``since_ms`` between the prepare and the confirmation can hide such a row's
+        change. A scope whose tombstones exceed ``_EXACT_SCAN_LIMIT`` is not scanned and the
+        plan is not exact. Writes nothing; runs under the Writer mutex.
+
+        Args:
+            scope: The plan's scope.
+            since_ms: When the plan was read (the prepare's clock).
+            since_epoch: The ``erase_epoch`` the plan was read at.
+            memories: Every memory the plan targets, reads, lists or rewords.
+            evidence: Every Evidence the plan reads whole (no byte ranges known).
+            spans: Every sentence the plan withholds or quotes beyond the memories' own.
+            digests: The statement digests of the facts the plan forgets.
+            entities: The entities the plan's tombstones and names concern.
+        """
+        writer = self._writer
+        with writer.write_scope():
+            # A clock behind the plan's read time cannot order rows against it.
+            if writer.get_counter(f"erase_epoch:{scope.scope_id}") < since_epoch or (
+                    self._clock() < since_ms):
+                return False
+            runs: dict[str, bool] = {}
+
+            def recent_run(run_id: str) -> bool:
+                if run_id not in runs:
+                    run = writer.get_row("run", run_id)
+                    # A forget admitted at the plan's epoch or later ran after the plan was
+                    # read, or is counted so, and so is any Run admitted after the epoch
+                    # moved (a Run admitted before cannot commit after it: erase_fenced).
+                    # These two rules need no clock; the time rule adds the rest.
+                    admitted = None if run is None else run.get("admitted_erase_epoch")
+                    runs[run_id] = run is None or run["created_at"] >= since_ms or (
+                        admitted is not None and (admitted > since_epoch or (
+                            run["run_kind"] == "forget" and admitted >= since_epoch)))
+                return runs[run_id]
+
+            whole = set(evidence)
+            facts = set(digests)
+            ranges: dict[str, list[tuple[int, int]]] = {}
+            for span in spans:
+                ranges.setdefault(span.evidence_id, []).append((span.byte_start, span.byte_end))
+            for memory_id in sorted(set(memories)):
+                item = writer.get_row("item", memory_id)
+                if item is None or item["scope_id"] != scope.scope_id or (
+                        item["updated_at"] >= since_ms):
+                    return False
+                head = writer.get_row("revision", item["current_revision_id"])
+                if head is None or head["recorded_at"] >= since_ms or recent_run(
+                        head["origin_run_id"]):
+                    return False
+                for quote in head["snapshot"]["quote_spans"]:
+                    ranges.setdefault(quote["evidence_id"], []).append(
+                        (quote["byte_start"], quote["byte_end"]))
+            for evidence_id in sorted(whole | ranges.keys()):
+                row = writer.get_row("evidence", evidence_id)
+                if row is None or row["scope_id"] != scope.scope_id or row["state"] != "active":
+                    return False
+                read = ranges.get(evidence_id, [])
+                for held in row["withheld_spans"]:
+                    if not recent_run(held["run_id"]):
+                        continue
+                    # Touching counts: a sentence grown into the plan's bytes is a change.
+                    if evidence_id in whole or any(
+                            held["byte_start"] <= end and held["byte_end"] >= start
+                            for start, end in read):
+                        return False
+            scanned = 0
+            for row in self._pages(TombstoneRows(scope_kind=scope.scope_kind,
+                                                 scope_id=scope.scope_id,
+                                                 after_tombstone_seq=0)):
+                scanned += 1
+                if scanned > _EXACT_SCAN_LIMIT:
+                    return False
+                if not (row["created_at"] >= since_ms or recent_run(row["forget_run_id"])):
+                    continue
+                if (row["statement_digest"] in facts
+                        or whole.intersection(row["source_evidence_ids"])):
+                    return False
+            for entity_id in sorted(set(entities)):
+                # A reserved subject ("user") has no row; an entity row the other forget
+                # erased, merged or renamed was updated since.
+                entity = writer.get_row("entity", entity_id)
+                if entity is not None and entity["updated_at"] >= since_ms:
+                    return False
+            for digest in sorted(facts):
+                for row in self._pages(MemoryTableRows(scope_kind=scope.scope_kind,
+                                                       scope_id=scope.scope_id,
+                                                       statement_digest=digest)):
+                    if row["object_id"] in memories:
+                        continue
+                    if row["created_at"] >= since_ms:
+                        return False
+                    head = writer.get_row("revision", row["current_revision_id"])
+                    if head is None or recent_run(head["origin_run_id"]):
+                        return False
+        return True
 
     def _admission_plan(self, scope: ScopeV1, txn: TxnRows, value: ForgetIntentV1,
                         head: Row | None) -> _AdmissionPlan:
@@ -1406,6 +1663,19 @@ class ForgetOwner:
         self, scope: ScopeV1, grant: PrincipalGrant, *, session_id: str, memory_id: str | None,
         expected_revision_id: str | None, expected_content_hash: str | None, intent: str,
     ) -> str:
+        """`_admit` in the scope's erasure turn (`quotemem.store.erasure_gate`): the only place an
+        erasure fence is installed, so no erasure starts outside a turn."""
+        controller = self._in_turn(scope, user_request(), lambda: self._admit(
+            scope, grant, session_id=session_id, memory_id=memory_id,
+            expected_revision_id=expected_revision_id,
+            expected_content_hash=expected_content_hash, intent=intent))
+        note_admitted()
+        return controller
+
+    def _admit(
+        self, scope: ScopeV1, grant: PrincipalGrant, *, session_id: str, memory_id: str | None,
+        expected_revision_id: str | None, expected_content_hash: str | None, intent: str,
+    ) -> str:
         """Bind the intent, admit both Runs and install the fence with the plan.
 
         A live Add owner of the scope (a ``preparing`` or ``held`` finalize
@@ -1461,24 +1731,33 @@ class ForgetOwner:
                     # sentence states: nothing forgotten names the request's words, so they
                     # hide nothing more (a memory the forget kept stays found).
                     shadowed = None
-                if erase_epoch != value.erase_epoch or self._bind_span_selection(
+                # The selection is recomputed at the epoch the intent was issued at: the same
+                # sentences, the same seed, the same session, or a conflict.
+                if self._bind_span_selection(
                         scope, grant.principal_id, session, selected, seed,
-                        erase_epoch) != value.selection_digest:
+                        value.erase_epoch) != value.selection_digest:
                     raise QuoteMemError("operation_conflict",
                                         "The scope changed since the selection")
                 planned = self._admission_plan(scope, self._open_txn(scope, None, now), value, None)
+                if erase_epoch != value.erase_epoch and not self._intent_exact(
+                        scope, value, planned):
+                    raise QuoteMemError("operation_conflict",
+                                        "The scope changed since the selection")
             else:
                 item, head = self._current(scope, memory_id)
                 if (
                     item["current_revision_id"] != expected_revision_id
                     or head["content_hash"] != expected_content_hash
-                    or erase_epoch != value.erase_epoch
                     or self._bind_selection(scope, grant.principal_id, session, item, head,
-                                            erase_epoch, seed=seed) != value.selection_digest
+                                            value.erase_epoch, seed=seed) != value.selection_digest
                 ):
                     raise QuoteMemError("operation_conflict",
                                         "The memory changed since it was selected")
                 planned = self._admission_plan(scope, self._open_txn(scope, None, now), value, head)
+                if erase_epoch != value.erase_epoch and not self._intent_exact(
+                        scope, value, planned):
+                    raise QuoteMemError("operation_conflict",
+                                        "The memory changed since it was selected")
                 if value.listed is not None and not set(planned.chain) <= set(value.listed):
                     raise QuoteMemError("operation_conflict",
                                         "The forget would take a memory its prepare did not name")
@@ -1649,6 +1928,38 @@ class ForgetOwner:
                 _, plan = writer.plan_rows(rows, None)
                 writer.write_plan(plan)
 
+    def restamp_names(self, scope: ScopeV1, *, since: int, at: int) -> int:
+        """Stamp with ``at`` every shadow name a complete forget stamped at ``since`` or later;
+        how many were.
+
+        A rebuild replays a forget the old store admitted at ``at`` (``quotemem.agent.rebuild``),
+        so the new store stamps its names with the rebuild's clock, while the messages it
+        replays keep their dates. A name is lifted only by a restatement dated after its
+        stamp (``core/relearn.after``), so the user's restatement after the forget would stay
+        hidden. Stamped back with the forget's own time, each name stands where the old store
+        put it. Topic keywords keep their stamps: they also say which hits the forget read
+        (``ForgetShadow.topic_seen``), on the new store's clock.
+        """
+        writer = self._writer
+        key = f"forget_shadow:{scope.scope_id}"
+        with writer.write_scope():
+            stored = writer.get_control(key)
+            if stored is None:
+                return 0
+            current = ForgetShadowV1.model_validate(stored["value"])
+            changed = [when >= since for when in current.name_times]
+            if not any(changed):
+                return 0
+            value = current.model_copy(update={"name_times": [
+                at if moved else when for when, moved in zip(
+                    current.name_times, changed, strict=True)]})
+            rows = [RowWrite("control", writer.materialize_control(
+                key, value.model_dump(mode="json"), stored["version"] + 1, self._clock(),
+                None))]
+            _, plan = writer.plan_rows(rows, None)
+            writer.write_plan(plan)
+        return sum(changed)
+
     def _shadow_rows(
         self, scope: ScopeV1, terms: ForgetShadowTerms, now: int, controller_id: str | None,
         *, enforces: int | None = None,
@@ -1745,8 +2056,12 @@ class ForgetOwner:
         """Continue a forget from its durable fence phase; committed writes never repeat.
 
         A forget whose fence is gone completed: its outcome is read back from the
-        result index.
+        result index. It runs in the scope's erasure turn (`quotemem.store.erasure_gate`).
         """
+        with self._turn(scope, user_request()):
+            return self._resume(scope, controller_id)
+
+    def _resume(self, scope: ScopeV1, controller_id: str) -> ForgetOutcome:
         while True:
             control = self._writer.get_control(fence_key(scope.scope_id, controller_id))
             if control is None:
@@ -1888,8 +2203,9 @@ class ForgetOwner:
                 self._advance(scope, ticket, txn, fence, control, counts,
                               dependents_after=dependents[-1])
             except Exception as error:
-                # The fence is written with the batch: unchanged, nothing of it was.
-                if not fence.trim_dependents or not _forget_alone(error) or (
+                # The fence is written with the batch: unchanged, nothing of it was. A
+                # transient refusal leaves the batch to a later resume, which may trim it.
+                if not fence.trim_dependents or not _forget_alone(error) or _transient(error) or (
                         writer.get_control(cast(str, control["key"])) != control):
                     raise
                 self._settle_untrimmed(scope, ticket, fence, control, statements, error)
@@ -1936,8 +2252,9 @@ class ForgetOwner:
         self, scope: ScopeV1, ticket: WriteTicket, fence: ErasureFenceV1, control: Row,
         statements: Sequence[str], error: Exception,
     ) -> None:
-        """Go on past a dependents batch refused before any write: deterministic, it would be
-        refused again at every resume and the fence would hold the scope forever.
+        """Go on past a dependents batch refused before any write: deterministic (never
+        `_transient`), it would be refused again at every resume and the fence would hold the
+        scope forever.
 
         The planned rewordings are written first, one per call, since no read may tell an old
         wording once the fence is gone; then the fence allows no trim any more. The
@@ -4025,6 +4342,188 @@ class ForgetOwner:
             "forget-session", {"scope": scope.scope_id, "session": client_session_id},
         )
 
+    def _withheld(
+        self, scope: ScopeV1, grant: PrincipalGrant, intent: str, memory_id: str | None,
+        expected_revision_id: str | None = None, expected_content_hash: str | None = None,
+    ) -> AbstractContextManager[None]:
+        """Withhold from reads, while a confirmation of ``intent`` waits for its turn and
+        runs, everything its erasure takes (`_held_by`), planned without writing as its
+        admission will plan it (`_admission_plan`).
+
+        Nothing is withheld for a confirmation its admission refuses on what it carries: an
+        intent of another scope or principal, one no longer active, expired or of another
+        memory, or a memory whose head or content changed since the prepare (a stale
+        confirmation never hides a live memory while it waits to be refused)."""
+        writer = self._writer
+        if not intent.startswith(f"intent:{scope.scope_id}:"):
+            return nullcontext()
+        with writer.write_scope():
+            stored = writer.get_control(intent)
+            value = None if stored is None else ForgetIntentV1.model_validate(stored["value"])
+            if (value is None or value.state != "active"
+                    or value.principal_id != grant.principal_id
+                    or self._clock() >= value.expires_at or value.memory_id != memory_id):
+                return nullcontext()
+            head: Row | None = None
+            if memory_id is not None:
+                item = writer.get_row("item", memory_id)
+                if item is None or (item["scope_kind"], item["scope_id"]) != (
+                        scope.scope_kind, scope.scope_id) or (
+                        item["current_revision_id"] != expected_revision_id):
+                    return nullcontext()
+                head = writer.get_row("revision", item["current_revision_id"])
+                if head is None or head["content_hash"] != expected_content_hash:
+                    return nullcontext()
+            txn = self._open_txn(scope, None, self._clock())
+            intent_value = value
+            # The plan is read exactly as the admission will read it, so only what it takes
+            # is withheld: its memories and the bytes it withholds.
+            memory_ids, spans = self._held_by(
+                txn, memory_id, head,
+                lambda: self._admission_plan(scope, txn, intent_value, head), exact=True)
+        return gate_for(writer).withhold(
+            scope.scope_id, memory_ids, [*spans, *value.restating_spans])
+
+    def withhold(
+        self, scope: ScopeV1, memory_ids: Sequence[str], spans: Sequence[QuoteSpanV1] = (),
+        *, allowed: Set[str] | None = frozenset(), also: Sequence[str] = (),
+    ) -> AbstractContextManager[None]:
+        """Withhold from reads of ``scope``, for the body, what forgets of ``memory_ids``
+        and of ``also`` (the memories the operation may take or reword beside its forgets:
+        by names, ties, listings, records or residue) take, each planned as a forget taking
+        beyond its base links only ``allowed`` plans it (`_held_by`: its memories, the quotes
+        of every version and the sentences it cites), and the sentences ``spans``, as one set
+        (`ErasureGate.withhold`). A memory that is no longer active withholds itself and the
+        quotes of its versions."""
+        writer = self._writer
+        held: list[str] = []
+        quoted = list(spans)
+        planned = list(dict.fromkeys([*memory_ids, *also]))
+        if planned:
+            with writer.write_scope():
+                txn = self._open_txn(scope, None, self._clock())
+                for memory_id in planned:
+                    item = writer.get_row("item", memory_id)
+                    head = None if item is None or (item["scope_kind"], item["scope_id"]) != (
+                        scope.scope_kind, scope.scope_id) else (
+                        writer.get_row("revision", item["current_revision_id"]))
+                    if item is None or head is None:
+                        held.append(memory_id)
+                        continue
+                    ids, quotes = self._held_by(
+                        txn, memory_id, head, self._current_plan(scope, txn, item, head, allowed))
+                    held += ids
+                    quoted += quotes
+        return gate_for(writer).withhold(scope.scope_id, list(dict.fromkeys(held)), quoted)
+
+    def _current_plan(
+        self, scope: ScopeV1, txn: TxnRows, item: Row, head: Row, allowed: Set[str] | None,
+    ) -> Callable[[], _AdmissionPlan]:
+        """The plan of a forget of an active memory at ``head`` (`_plan_of`), to read later; it
+        refuses a memory that is no longer active."""
+        def plan() -> _AdmissionPlan:
+            if item["lifecycle_state"] != "active":
+                raise QuoteMemError("operation_conflict", "The memory is not current")
+            return self._plan_of(scope, txn, head, restating=(), seed=None, words=(),
+                                 allowed=allowed)
+        return plan
+
+    def _held_by(
+        self, txn: TxnRows, memory_id: str | None, head: Row | None,
+        plan: Callable[[], _AdmissionPlan], *, exact: bool = False,
+    ) -> tuple[list[str], list[QuoteSpanV1]]:
+        """What reads withhold of one forget while it waits for its turn and runs: the memory
+        and every memory of the chain it forgets (corrected, retracted, replaced) and the
+        sentences it withholds (S).
+
+        With ``exact`` the plan is the one the admission installs, so that is all: a memory
+        quoting the forgotten versions' other bytes reads after the erasure as before it, and
+        stays readable. Otherwise (a statement plan or an in-chat forget, whose plans the run
+        makes again with more inputs) the quotes of every version of each memory and every
+        sentence the versions it cites quote are withheld too, a wider hide that cannot miss
+        what the run withholds. A plan that cannot be read now (``plan`` refuses, and the
+        admission then refuses the forget or plans it again in its turn) gives the memory and
+        the quotes of its versions. Writes nothing."""
+        memory_ids = [] if memory_id is None else [memory_id]
+        spans: list[QuoteSpanV1] = [] if head is None else list(
+            MemorySnapshotV2.model_validate(head["snapshot"]).quote_spans)
+        try:
+            planned: _AdmissionPlan | None = plan()
+        except QuoteMemError:
+            planned = None
+        if planned is not None and exact:
+            chain = [memory for memory in planned.chain if memory not in memory_ids]
+            unique = {(span.evidence_id, span.byte_start, span.byte_end): span
+                      for span in planned.spans}
+            return [*memory_ids, *chain], list(unique.values())
+        if planned is not None:
+            memory_ids += [memory for memory in planned.chain if memory not in memory_ids]
+            spans += planned.spans
+            spans += [quote for version in planned.versions
+                      for quote in version.snapshot.quote_spans]
+            spans += [span for cited in planned.cited for group in cited.groups
+                      for span in group]
+        for memory in memory_ids:
+            for revision in self._revisions(txn, memory):
+                spans += MemorySnapshotV2.model_validate(revision["snapshot"]).quote_spans
+        unique = {(span.evidence_id, span.byte_start, span.byte_end): span for span in spans}
+        return memory_ids, list(unique.values())
+
+    def wait_unheld(self, scope: ScopeV1) -> int:
+        """Let a prepare wait, up to ``FORGET_WAIT_SECONDS`` within its request, until no
+        accepted forget of the scope withholds anything (`ErasureGate.wait_unheld`), so its
+        preview reads the scope as that forget leaves it; ``erasure_in_progress`` after.
+        Returns the scope's hold generation at the instant nothing was withheld."""
+        held = self._writer.mutex._is_owned()  # pyright: ignore[reportPrivateUsage]
+        return gate_for(self._writer).wait_unheld(
+            scope.scope_id, deadline=wait_deadline(FORGET_WAIT_SECONDS), mutex_held=held)
+
+    @contextmanager
+    def erasure_turn(self, scope: ScopeV1, *, patient: bool = False) -> Iterator[None]:
+        """Hold the scope's erasure turn for a whole operation of several forgets (a
+        confirmation of a statement plan, an in-chat forget): nothing else erases the scope
+        between its checks and its forgets, and a forget that arrives meanwhile waits.
+
+        A ``patient`` caller (an in-chat forget, whose client is the Add) waits past
+        ``FORGET_WAIT_SECONDS``, keeping what it withholds and what it picked rather than
+        failing and running again, up to `PATIENT_WAIT_SECONDS` and a margin before its
+        request's end (`patient_deadline`), so the forget runs within its budget."""
+        with one_operation(), self._turn(scope, user_request(), patient=patient):
+            yield
+
+    @contextmanager
+    def _turn(self, scope: ScopeV1, user: bool, *, patient: bool = False) -> Iterator[float]:
+        """Hold the scope's erasure turn (`quotemem.store.erasure_gate`, rules 2 and 5); yield the
+        end of this request's wait. The turn is never waited for under the Writer mutex."""
+        deadline = patient_deadline() if patient else wait_deadline(FORGET_WAIT_SECONDS)
+        held = self._writer.mutex._is_owned()  # pyright: ignore[reportPrivateUsage]
+        with gate_for(self._writer).turn(scope.scope_id, user=user, deadline=deadline,
+                                         mutex_held=held):
+            yield deadline
+
+    def _admit_in_turn[T](self, scope: ScopeV1, deadline: float, admit: Callable[[], T]) -> T:
+        """Run ``admit`` in the turn; behind a fence no turn holds (one left by a failed run)
+        try again until ``deadline``, every check repeated, the Writer mutex released. Past
+        the request's own end an operation's first forget is not admitted
+        (`check_request_end`): the operation fails as a whole and shows what it withheld
+        again; once one was admitted, the operation's others are (`one_operation`)."""
+        check_request_end()
+        if self._writer.mutex._is_owned():  # pyright: ignore[reportPrivateUsage]
+            return admit()
+        return gate_for(self._writer).retry_fenced(
+            admit, deadline=deadline, fenced=lambda: self._fenced(scope))
+
+    def _in_turn[T](self, scope: ScopeV1, user: bool, operation: Callable[[], T]) -> T:
+        """Run ``operation`` in the scope's erasure turn (`_turn`, `_admit_in_turn`)."""
+        with self._turn(scope, user and user_request()) as deadline:
+            return self._admit_in_turn(scope, deadline, operation)
+
+    def _fenced(self, scope: ScopeV1) -> bool:
+        """Whether an erasure fence holds the scope now."""
+        with self._writer.write_scope():
+            return any(cast(str, row["key"]).startswith("erasure:") for row in
+                       self._writer.indexed_reader().scope_fences(scope.scope_id))
+
     def _refuse_fenced(self, scope: ScopeV1) -> None:
         for row in self._writer.indexed_reader().scope_fences(scope.scope_id):
             if cast(str, row["key"]).startswith("erasure:"):
@@ -4987,7 +5486,9 @@ def _adopt(writer: Writer, scope: ScopeV1, controller_id: str) -> None:
     Boot step 13: a fence that survived a restart names Runs of an
     earlier Writer epoch, whose tickets the Writer refuses (``lease_lost``).
     Only ``writer_epoch`` changes, as in the other startup adoptions; the
-    fence, its frozen plan and every timestamp stay as they are.
+    fence, its frozen plan and every timestamp stay as they are. A Run a refused
+    forget left ``manual_attention`` (`_attend`) runs again: the boot, or the repair path
+    (`resume_attended`), is its retry.
 
     Raises:
         QuoteMemError: ``binding_mismatch`` for a Run the fence does not name or
@@ -5004,12 +5505,15 @@ def _adopt(writer: Writer, scope: ScopeV1, controller_id: str) -> None:
         for run_id in (fence.worker_run_id, fence.controller_run_id):
             run = writer.get_row("run", run_id)
             if run is None or not owns_erasure_fence(run, control) or run["status"] not in {
-                "queued", "running",
+                "queued", "running", "manual_attention",
             }:
                 raise QuoteMemError("binding_mismatch", "A surviving fence lost its running Runs")
             if run["writer_epoch"] > epoch:
                 raise QuoteMemError("lease_lost", "A surviving fence names a later Writer epoch")
-            if run["writer_epoch"] != epoch:
+            if run["status"] == "manual_attention":
+                rows.append(RowWrite("run", writer.parse_row("run", dict(
+                    run, writer_epoch=epoch, status="running", failure_code=None))))
+            elif run["writer_epoch"] != epoch:
                 rows.append(RowWrite("run", writer.parse_row(
                     "run", dict(run, writer_epoch=epoch))))
         if rows:
@@ -5063,23 +5567,108 @@ def recover_forgets(owner: ForgetOwner, scopes: Iterable[ScopeV1]) -> list[str]:
                 controller = key.rsplit(":", 1)[1]
                 try:
                     _adopt(writer, scope, controller)
-                    owner.resume(scope, controller)
+                    with background():
+                        owner.resume(scope, controller)
                 except Exception as error:
                     if not _forget_alone(error):
                         raise
                     # Its fence keeps this scope closed; every other scope still opens.
-                    logging.getLogger(__name__).warning(
-                        "Forget recovery refused: %s",
-                        canonical_json(failure_reason("forget_recovery", error).to_dict()),
-                    )
-                    # Its frames hold the boot's own publisher, which must go before step 14.
-                    held: BaseException | None = error
-                    while held is not None:
-                        held.__traceback__ = None
-                        held = held.__cause__ or held.__context__
+                    if _transient(error):
+                        logging.getLogger(__name__).warning(
+                            "Forget recovery refused for scope %s, controller %s: %s",
+                            scope.scope_id, controller,
+                            canonical_json(failure_reason("forget_recovery", error).to_dict()),
+                        )
+                    else:
+                        _attend(writer, scope, controller,
+                                owner._clock(),  # pyright: ignore[reportPrivateUsage]
+                                "forget_recovery", error)
+                    _drop_frames(error)
                     continue
                 resumed.append(controller)
     return resumed
+
+
+def _attend(writer: Writer, scope: ScopeV1, controller_id: str, now: int, site: str,
+            error: Exception) -> None:
+    """Leave a forget refused for good to the repair path: its fence stays, so nothing it
+    withholds is read, and its controller and worker go ``manual_attention``
+    (``parity_mismatch``) until the next boot or a repair (``quotemem repair``,
+    `resume_attended`) runs them again. The warning names the scope and the controller,
+    never content."""
+    logging.getLogger(__name__).warning(
+        "A forget needs repair: scope %s, controller %s: %s", scope.scope_id, controller_id,
+        canonical_json(failure_reason(site, error).to_dict()),
+    )
+    with writer.write_scope():
+        control = writer.get_control(fence_key(scope.scope_id, controller_id))
+        if control is None:
+            return
+        fence = ErasureFenceV1.model_validate(control["value"])
+        rows: list[RowWrite] = []
+        for run_id in (fence.worker_run_id, fence.controller_run_id):
+            run = writer.get_row("run", run_id)
+            if run is not None and owns_erasure_fence(run, control) and (
+                    run["status"] == "running"):
+                rows.append(RowWrite("run", writer.parse_row("run", dict(
+                    run, status="manual_attention", failure_code="parity_mismatch",
+                    updated_at=now))))
+        if rows:
+            _, plan = writer.plan_rows(rows, None)
+            writer.write_plan(plan)
+
+
+def attended_forgets(writer: Writer, scope: ScopeV1) -> list[str]:
+    """The controllers of the scope's fenced forgets left ``manual_attention`` (`_attend`)."""
+    found: list[str] = []
+    with writer.write_scope():
+        for row in writer.indexed_reader().scope_fences(scope.scope_id):
+            key = cast(str, row["key"])
+            if not key.startswith(f"erasure:{scope.scope_id}:"):
+                continue
+            fence = ErasureFenceV1.model_validate(row["value"])
+            run = writer.get_row("run", fence.controller_run_id)
+            if run is not None and run["status"] == "manual_attention":
+                found.append(key.rsplit(":", 1)[1])
+    return found
+
+
+def resume_attended(owner: ForgetOwner, scope: ScopeV1) -> list[str]:
+    """Run each of the scope's forgets left ``manual_attention`` again (the repair path);
+    the controllers that completed. A forget refused again is left to repair again.
+
+    Raises:
+        QuoteMemError: the refusal of a forget that did not complete.
+    """
+    writer = owner._writer  # pyright: ignore[reportPrivateUsage]
+    done: list[str] = []
+    for controller in attended_forgets(writer, scope):
+        _adopt(writer, scope, controller)
+        try:
+            owner.resume(scope, controller)
+        except Exception as error:
+            if _forget_alone(error) and not _transient(error):
+                _attend(writer, scope, controller,
+                        owner._clock(),  # pyright: ignore[reportPrivateUsage]
+                        "forget_repair", error)
+            raise
+        done.append(controller)
+    return done
+
+
+def _drop_frames(error: BaseException) -> None:
+    """Drop the traceback of ``error`` and of every exception it chains to, by cause and by
+    context: a refused recovery's frames hold the boot's own publisher, which must go
+    before step 14."""
+    pending: list[BaseException] = [error]
+    seen: set[int] = set()
+    while pending:
+        held = pending.pop()
+        if id(held) in seen:
+            continue
+        seen.add(id(held))
+        held.__traceback__ = None
+        pending.extend(link for link in (held.__cause__, held.__context__) if link is not None)
 
 
 def abandon_orphan_controllers(writer: Writer, *, now: int) -> list[str]:
@@ -5151,5 +5740,6 @@ __all__ = [
     "FORGET_RECEIPT_KINDS", "FinalScan", "ForgetOutcome", "ForgetOwner", "ForgetPrepared",
     "SpansPrepared",
     "MAX_TX_ROWS", "abandon_orphan_controllers", "check_controller_artifact", "fence_key",
-    "intent_key", "owns_erasure_fence", "recover_forgets",
+    "attended_forgets", "intent_key", "owns_erasure_fence", "recover_forgets",
+    "resume_attended",
 ]

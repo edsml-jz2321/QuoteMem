@@ -178,6 +178,11 @@ file sink, as above.
      sent again every 250 ms (sooner when Retry-After says so) while the
      deadline allows. No other answer is sent again, and the wait never
      opens the breaker.
+   - While a forget of this user is still queued, the message waits for it
+     up to 8 s (less within a shorter hook time limit) and gets no memory if
+     it is still queued then. A forget queued more than 2 minutes ago (a
+     busy service holds it behind earlier batches) is not waited for again,
+     but holds recall back until it ends.
    - Repeat suppression is per session and kept in the session file.
    - The circuit breaker is kept in `recall-breaker.json`. A refused
      connection, or two missed deadlines in a row, skips recall for a while
@@ -298,16 +303,22 @@ retry prepares it again.
 host whose plugin keeps no timer of its own (the hook runner, OpenClaw).
 Call `armIdle()` after each hook's answer. When a session it wrote holds
 turns that wait for the idle time, it starts the background flusher, unless
-one already waits for this owner. That flusher sends the queue, then sleeps
+one already waits for this service and credential. That flusher sends the queue, then sleeps
 until the oldest such chat's idle time is over (by the wall clock, at most a
 minute per timer, so it acts within a minute of the computer waking). Then
 it queues those turns exactly as `sweep()` does, and sends them. A turn
 written meanwhile moves the time. It exits when nothing waits, when
 `QUOTEMEM_IDLE_FLUSH_MS` or capture is off, or an hour after the idle time
 (a chat still in use then goes to a new flusher). One flusher waits per
-owner: it holds `owners/<owner>/idle.lock`, which the hook takes for it
-before the start, so hooks at once start one. The settings reach it in its
-environment, the token too, never in its arguments.
+service and credential (token and auth mode) in a state folder, for all its
+owners (each OpenClaw channel sender is one): it holds
+`idle/<hash>.lock`, which the hook takes for it before the start, so hooks
+at once start one. It saves each owner's chats with that owner's own
+settings, read from `owners/<owner>/owner.json`, which each hook writes
+(the settings without the token, and a hash of the credential). The
+settings reach it in its environment, the token too, never in its
+arguments. A flusher started directly on Windows (below) only sends the
+queue and exits: the next hook saves the idle chats.
 
 **`sessionStarted({session})`** queues the unsent turns of this user's
 other sessions idle a minute (with `reliableEnd: false`, also those of this
@@ -695,7 +706,8 @@ mode 0700 and each file 0600.
 | `queue/<stamp>-<pid>-<seq>-<owner>-<key>.json` | One job (a /memory/add batch or a forget), written atomically; FIFO by name. `owner` is one user (`QUOTEMEM_USER_ID`) at one service (`QUOTEMEM_URL`) |
 | `owners/<owner>/state.json` | When this owner's writes are paused after a refused token; when a batch was last stored |
 | `owners/<owner>/flusher.lock` | This owner's one running flusher (host, boot time, pid), refreshed every 10 s |
-| `owners/<owner>/idle.lock` | The one flusher that waits for this owner's idle chats (host, boot time, pid), refreshed at each wake |
+| `idle/<hash>.lock` | The one flusher that waits for the idle chats of one service and credential (host, boot time, pid), refreshed at each wake |
+| `owners/<owner>/owner.json` | An owner whose idle chats that flusher saves: its user, its settings without the token, and a hash of its credential |
 | `owners/<owner>/forgets.json` | This owner's forgets still running when their note was given |
 | `owners/<owner>/results/<key>.json` | A forget's outcome (counts only once its note was given), kept for a day |
 | `owners/<owner>/chat-forgets.json` | What the service's in-chat forget did, counts and request-word hashes only, until the next message reports it |
@@ -845,7 +857,9 @@ least), a session after a week.
   (missing, blocked) and nothing started, the program is started directly,
   holding the hook's handles again: the log says so once, a
   `direct-start.json` in the state folder records it, and `quotemem
-  doctor` reports both. A test runs a hook under cmd and PowerShell with a
+  doctor` reports both. A flusher started that way only sends the queue
+  and exits, so it does not hold the handles while chats wait for their
+  idle time. A test runs a hook under cmd and PowerShell with a
   piped caller and checks that the pipe ends while the flusher and a
   started program still run.
 - It exits when the queue is empty, when the next retry is further off than

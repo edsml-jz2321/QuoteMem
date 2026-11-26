@@ -27,7 +27,7 @@ never consult tombstones and never read a correction's ``verdict_ref``.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
 from itertools import pairwise
 from typing import Final, Literal, NamedTuple, Protocol
@@ -753,17 +753,50 @@ class Readability:
         ]
         return min(past, key=_past_order, default=None)
 
-    def _world_end(self, memory: WorldMemory, index: WorldIndex) -> WorldEnd | None:
-        """The world end of a memory: the earliest end among its witnesses, or None."""
-        ends: list[WorldEnd] = []
+    def p_replaced(self, memory: WorldMemory, index: WorldIndex) -> bool:
+        """Whether a memory was replaced by an update that witnesses its end, dated or not.
+
+        It is `p_past` of a superseded head without the date: the head passes ``p_ver``, no
+        correction targets it, and a successor that would be a witness has an ``update`` link
+        to it, whether or not that link has an ``effective_at``. An undated update leaves the
+        replaced memory no end a plain read can deliver, so only a listing of the scope's
+        memories admits it this way; every Search keeps `p_past`.
+
+        Args:
+            memory (WorldMemory): The memory, read through its current head.
+            index (WorldIndex): The scope's memory corpus at the read's pin.
+
+        Returns:
+            bool: True for such a superseded memory.
+        """
+        return (
+            memory.lifecycle_state == "superseded"
+            and self.p_ver(memory.head)
+            and not index.corrections(memory.head_revision_id)
+            and any(True for _ in self._witnesses(memory, index))
+        )
+
+    def _witnesses(
+        self, memory: WorldMemory, index: WorldIndex,
+    ) -> Iterator[tuple[IncomingLink, WorldMemory]]:
+        """The ``update`` links into a memory, with their successors, that witness its end
+        when dated: a successor whose head passes ``p_ver``, not retracted."""
         for link in index.incoming(memory.memory_id):
             successor = index.memory(link.successor_id)
             if (
-                link.relation != "update" or link.effective_at is None or successor is None
+                link.relation != "update" or successor is None
                 or successor.lifecycle_state == "retracted"
                 or successor.head_reason == "retraction"
                 or not self.p_ver(successor.head)
             ):
+                continue
+            yield link, successor
+
+    def _world_end(self, memory: WorldMemory, index: WorldIndex) -> WorldEnd | None:
+        """The world end of a memory: the earliest end among its witnesses, or None."""
+        ends: list[WorldEnd] = []
+        for link, successor in self._witnesses(memory, index):
+            if link.effective_at is None:
                 continue
             granularity = (
                 successor.head.time_granularity if link.observed_granularity is None

@@ -58,7 +58,7 @@ Or install it from a packed tarball of a clone (`npm pack` in the clone's root
 writes `quotemem-<version>.tgz`):
 
 ```console
-dsh plugin --profile quotemem add file:/path/to/quotemem-0.3.1.tgz
+dsh plugin --profile quotemem add file:/path/to/quotemem-0.3.2.tgz
 ```
 
 ### 1. Set up the memory service, once
@@ -95,7 +95,7 @@ and point `QUOTEMEM_DATA_DIR` in `~/.quotemem/service.env` at the new
 directory (with `npx quotemem setup --review full`).
 
 From then on the plugin starts the service by itself
-(`uvx --from quotemem==0.3.1 quotemem serve`, on 127.0.0.1:8765) when DSH
+(`uvx --from quotemem==0.3.2 quotemem serve`, on 127.0.0.1:8765) when DSH
 first needs memory, so [uv](https://docs.astral.sh/uv/) must be installed.
 The service keeps its data in `~/.local/share/quotemem` (a
 `QUOTEMEM_DATA_DIR` line in `~/.quotemem/service.env` moves it), and creates
@@ -403,7 +403,7 @@ To keep DSH's state out of your home directory, set `DSH_HOME` and
 `DSH_AGENTS_HOME` to private folders and disable telemetry with
 `DSH_TELEMETRY_DISABLED=1` before these commands. On the day a version is
 published, DSH's pnpm may refuse it as too new; pin it, for example
-`dsh plugin --profile quotemem add quotemem@0.3.1`.
+`dsh plugin --profile quotemem add quotemem@0.3.2`.
 
 ## Other MCP clients
 

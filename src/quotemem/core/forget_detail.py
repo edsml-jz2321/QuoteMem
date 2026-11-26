@@ -78,9 +78,14 @@ COLOURS: Final = (
     (("white",), ("白",)), (("grey", "gray"), ("灰",)), (("brown",), ("棕", "褐", "咖啡")),
     (("red",), ("红",)), (("blue",), ("蓝",)), (("green",), ("绿",)), (("pink",), ("粉",)),
     (("purple",), ("紫",)), (("silver",), ("银",)), (("golden", "gold"), ("金",)),
-    (("cream",), ("奶油",)), (("tabby",), ("狸花",)), (("calico",), ("三花",)),
+    (("cream",), ("奶油",)), (("tabby",), ("狸花", "虎斑")), (("calico",), ("三花",)),
     (("tortoiseshell",), ("玳瑁",)), (("black and white", "black-and-white", "tuxedo"),
                                      ("黑白", "奶牛")),
+    (("beige",), ("米",)), (("ivory",), ("象牙",)), (("apricot",), ("杏",)),
+    (("tan", "fawn", "camel"), ("驼", "小鹿")), (("chocolate",), ("巧克力",)),
+    (("champagne",), ("香槟",)), (("lilac", "lavender"), ("丁香", "淡紫")),
+    (("blue-grey", "blue-gray", "bluish grey", "bluish gray"), ("蓝灰",)),
+    (("sable",), ("貂",)), (("brindle",), ("虎纹",)), (("merle",), ("陨石",)),
 )
 """Colours (and coat patterns) by their English and Chinese forms. A Chinese form counts in a
 quote only right before 色 or the thing's own word ("橘猫", "橘色"), never inside another word

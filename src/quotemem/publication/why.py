@@ -268,7 +268,8 @@ class _Plan:
 def _explained(rows: MemoryRows, memory_id: str, revision_id: str | None) -> _Explained:
     """Read the named version and its memory's newer versions, refused like History."""
     item = rows.memory(memory_id)
-    if item is None:
+    if item is None or rows.withheld(item):
+        # A memory an accepted forget withholds reads as it will once forgotten.
         raise QuoteMemError("scope_denied", "Why target is unavailable")
     chain = [rows.head(item)]
     while revision_id is not None and chain[-1].object_id != revision_id:
@@ -276,6 +277,10 @@ def _explained(rows: MemoryRows, memory_id: str, revision_id: str | None) -> _Ex
         if older is None:
             raise QuoteMemError("scope_denied", "Why target is unavailable")
         chain.append(older)
+    # A version quoting bytes an accepted forget withholds reads as the erasure leaves it:
+    # its readability is judged on the Evidence with those bytes withheld (`p_ver`), as
+    # History judges it, so a version keeping a readable quote is explained with them
+    # masked and one keeping none is redacted.
     return _Explained(item, chain[-1], chain[-1].version <= erased_through(chain)
                       or chain[-1].version < reworded_through(chain))
 
@@ -334,7 +339,9 @@ def _readable_version(rows: MemoryRows, read: Readability, revision_id: str) -> 
     every forget's rewording of its memory (`reworded_through`)."""
     revision = rows.revision(revision_id)
     item = None if revision is None else rows.memory(revision.memory_id)
-    if revision is None or item is None or not read.p_ver(revision.snapshot):
+    # A version of a memory an accepted forget takes reads as gone (`MemoryRows.withheld`).
+    if revision is None or item is None or rows.withheld(item) or not read.p_ver(
+            revision.snapshot):
         return False
     chain = [rows.head(item)]
     while chain[-1].object_id != revision.object_id:
