@@ -394,3 +394,102 @@ fs.writeFileSync(pidFile, String(child.pid));
   }
   assert.deepEqual(survives, { wmi: true, shell: false }, 'started through WMI it outlives the job; through the shell it does not');
 });
+
+// ---------------------------------------------- Windows PowerShell's module path
+
+test('every PowerShell the plugins start looks in Windows PowerShell\'s own module folders first', async () => {
+  const { powershellEnv } = await import(pathToFileURL(path.join(CORE, 'proc.mjs')).href);
+  const env = { SYSTEMROOT: 'C:\\Win', ProgramFiles: 'D:\\Programs', psmodulepath: 'C:\\Big\\Modules', PATH: 'C:\\bin' };
+  const out = powershellEnv(env);
+  assert.deepEqual(Object.keys(out).filter((name) => name.toUpperCase() === 'PSMODULEPATH'), ['PSModulePath'], 'one module path');
+  assert.equal(out.PSModulePath, 'C:\\Win\\System32\\WindowsPowerShell\\v1.0\\Modules;D:\\Programs\\WindowsPowerShell\\Modules');
+  assert.equal(out.PATH, 'C:\\bin');
+  assert.equal(env.psmodulepath, 'C:\\Big\\Modules', 'the caller\'s environment is not changed');
+  const bare = powershellEnv({ SystemRoot: 'C:\\Win', SystemDrive: 'E:' });
+  if (!process.env.ProgramFiles) assert.equal(bare.PSModulePath, 'C:\\Win\\System32\\WindowsPowerShell\\v1.0\\Modules;E:\\Program Files\\WindowsPowerShell\\Modules');
+});
+
+// A module ahead of Windows PowerShell's own folders on the caller's module
+// path that is slow to load, as a large module installed for all users is
+// (AWSPowerShell costs each PowerShell about 18 s), and that names the
+// cmdlets the plugins' scripts use: loading it writes `mark` and waits 12 s.
+function slowModuleFolder(dir) {
+  const module = path.join(dir, 'QmSlowFirst');
+  fs.mkdirSync(module, { recursive: true });
+  const mark = path.join(dir, 'loaded.txt');
+  const cmdlets = ['Remove-Item', 'Get-ChildItem', 'New-CimInstance', 'Invoke-CimMethod', 'Get-CimInstance', 'Test-Path',
+    'Start-Sleep', 'New-Item', 'Stop-Process', 'Wait-Process', 'Get-Process', 'Join-Path', 'Start-Process', 'Set-Content',
+    'Get-NetTCPConnection', 'Select-Object'];
+  const body = [`[IO.File]::AppendAllText('${mark.replace(/'/g, "''")}', 'loaded ')`, '[Threading.Thread]::Sleep(12000)',
+    ...cmdlets.map((name) => `function ${name} { }`)];
+  fs.writeFileSync(path.join(module, 'QmSlowFirst.psm1'), body.join('\r\n'));
+  fs.writeFileSync(path.join(module, 'QmSlowFirst.psd1'), "@{ RootModule = 'QmSlowFirst.psm1'; ModuleVersion = '1.0'; GUID = '8d2f3c55-2a7e-4b8e-9a43-1d2f6f0e7a13'; FunctionsToExport = '*' }");
+  return { folder: dir, mark };
+}
+
+function withModulePath(env, value) {
+  const out = Object.fromEntries(Object.entries(env).filter(([name]) => name.toUpperCase() !== 'PSMODULEPATH'));
+  if (value !== null) out.PSModulePath = value;
+  return out;
+}
+
+test('Windows: a slow module ahead of Windows PowerShell\'s own does not slow a start, doctor or stop; the program gets the caller\'s module path', { skip: !windows && 'Windows only' }, async (t) => {
+  const { folder, mark } = slowModuleFolder(path.join(root, 'slow-modules'));
+  const own = path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'Modules');
+  const callerPath = `${folder};${own}`;
+  const say = ['-e', "console.log('modpath ' + (process.env.PSModulePath || '(none)')); setTimeout(() => {}, 30000)"];
+  const cases = [
+    { name: 'wmi', options: {}, path: callerPath, via: 'wmi' },
+    { name: 'constrained', options: { constrained: true }, path: callerPath, via: 'wmi' },
+    { name: 'shell', options: { wmi: false }, path: callerPath, via: 'shell' },
+    { name: 'none', options: {}, path: null, via: 'wmi' },
+  ];
+  for (const one of cases) {
+    const logFile = path.join(root, `modpath-${one.name}.log`);
+    const begun = Date.now();
+    const child = core.spawnDetached(process.execPath, say, { env: withModulePath(process.env, one.path), logFile, ...one.options });
+    const ms = Date.now() - begun;
+    t.diagnostic(`${one.name}: started through ${child.via ?? 'nothing'} in ${ms} ms`);
+    if (Number.isInteger(child.pid)) started.add(child.pid);
+    assert.notEqual(child.direct, true, `${one.name}: PowerShell started it (${ms} ms)`);
+    assert.equal(child.via, one.via, one.name);
+    assert.ok(ms < 6000, `${one.name}: the start took ${ms} ms`);
+    await readSoon(logFile, /modpath /);
+    assert.equal(fs.readFileSync(logFile, 'utf8').trim(), `modpath ${one.path ?? '(none)'}`, `${one.name}: the program's module path`);
+    stop(child.pid);
+    started.delete(child.pid);
+  }
+  // As a hook starts the flusher: within the time a hook waits.
+  const asyncLog = path.join(root, 'modpath-async.log');
+  const begun = Date.now();
+  const later = await core.spawnDetachedAsync(process.execPath, say, { env: withModulePath(process.env, callerPath), logFile: asyncLog });
+  const asyncMs = Date.now() - begun;
+  started.add(later.pid);
+  assert.equal(later.via, 'wmi', `the hook's start (${asyncMs} ms)`);
+  assert.ok(asyncMs < 6000, `the hook's start took ${asyncMs} ms`);
+  await readSoon(asyncLog, /modpath /);
+  stop(later.pid);
+  started.delete(later.pid);
+  // doctor's check, a pid's command line (`quotemem stop`) and a port's owner
+  // (doctor) read this process's environment.
+  const saved = process.env.PSModulePath;
+  process.env.PSModulePath = callerPath;
+  try {
+    assert.deepEqual(core.launcherCheck(), { ok: true, detail: 'FullLanguage' });
+    let at = Date.now();
+    const line = auto.commandLineOf(process.pid);
+    const lineMs = Date.now() - at;
+    assert.match(String(line), /node/i, `the command line of this process (${lineMs} ms)`);
+    assert.ok(lineMs < 6000, `reading a command line took ${lineMs} ms`);
+    const server = await stubServer({ '/health': () => ({ body: { status: 'ok' } }) });
+    at = Date.now();
+    const owner = await core.portOwnerAsync(server.port, '127.0.0.1', { timeoutMs: 8000 });
+    const ownerMs = Date.now() - at;
+    await server.close();
+    assert.equal(owner?.mine, true, `the port's owner (${ownerMs} ms): ${JSON.stringify(owner)}`);
+  } finally {
+    if (saved === undefined) delete process.env.PSModulePath;
+    else process.env.PSModulePath = saved;
+  }
+  assert.equal(fs.existsSync(mark), false, 'no PowerShell loaded the slow module');
+});

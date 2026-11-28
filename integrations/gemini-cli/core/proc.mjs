@@ -53,13 +53,23 @@ const LAUNCH_VAR = 'QUOTEMEM_LAUNCH';
 // whose cmd needs no claim. When PowerShell cannot make it, that cmd made it
 // and runs the program: its pid stands. The claim is removed once that cmd
 // is gone, or by this process once a WMI start stands.
+// PowerShell starts with Windows PowerShell's own module folders as its
+// module path (powershellEnv) and loads the three modules whose cmdlets the
+// script uses. Then it gives the module path the caller had back (or none,
+// as the caller had none), so the program gets it: every cmdlet after that
+// line is from those modules or built in, so none is looked for along the
+// caller's path.
 const LAUNCH_SCRIPT = [
   `$c = $env:${LAUNCH_VAR}_CMD`,
   `$a = $env:${LAUNCH_VAR}_ARGS`,
   `$f = $env:${LAUNCH_VAR}_PID`,
   `$m = $env:${LAUNCH_VAR}_MARK`,
   `$k = $env:${LAUNCH_VAR}_CLAIM`,
-  `Remove-Item -Path Env:${LAUNCH_VAR}_CMD, Env:${LAUNCH_VAR}_ARGS, Env:${LAUNCH_VAR}_PID, Env:${LAUNCH_VAR}_MARK, Env:${LAUNCH_VAR}_CLAIM -ErrorAction SilentlyContinue`,
+  `$mp = $env:${LAUNCH_VAR}_MODPATH`,
+  `$ms = $env:${LAUNCH_VAR}_MODPATHSET`,
+  'Import-Module -Name Microsoft.PowerShell.Management, Microsoft.PowerShell.Utility, CimCmdlets -ErrorAction SilentlyContinue',
+  "if ($ms -eq '1') { $env:PSModulePath = $mp } else { Remove-Item -Path Env:PSModulePath -ErrorAction SilentlyContinue }",
+  `Remove-Item -Path Env:${LAUNCH_VAR}_CMD, Env:${LAUNCH_VAR}_ARGS, Env:${LAUNCH_VAR}_PID, Env:${LAUNCH_VAR}_MARK, Env:${LAUNCH_VAR}_CLAIM, Env:${LAUNCH_VAR}_MODPATH, Env:${LAUNCH_VAR}_MODPATHSET -ErrorAction SilentlyContinue`,
   '$id = $null',
   "$via = 'wmi'",
   "if ($c) { try { $v = Get-ChildItem Env: | ForEach-Object { $_.Name + '=' + $_.Value }; $s = New-CimInstance -ClassName Win32_ProcessStartup -ClientOnly -Property @{ ShowWindow = [uint16]0; EnvironmentVariables = [string[]]$v }; $r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = $c; ProcessStartupInformation = $s } -ErrorAction Stop; if ($r.ReturnValue -eq 0) { $id = $r.ProcessId } } catch { $id = $null } }",
@@ -76,8 +86,41 @@ const LAUNCH_TIMEOUT_MS = 10_000;
 // How long to look for cmd's own file when PowerShell gave no pid.
 const LAUNCH_SETTLE_MS = 1000;
 
-function powershellPath(env) {
-  return path.join(env.SystemRoot || process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+// A variable of `env`, whatever the case of its name (a copy of a Windows
+// environment keeps the names as they came), else of this process's.
+function windowsVar(env, name) {
+  const key = Object.keys(env ?? {}).find((k) => k.toUpperCase() === name.toUpperCase());
+  return (key && env[key]) || process.env[name] || '';
+}
+
+function powershellPath(env = process.env) {
+  return path.join(windowsVar(env, 'SystemRoot') || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+}
+
+/**
+ * The environment for Windows PowerShell 5.1 (powershell.exe): `env` with
+ * a module path of Windows PowerShell's own module folders, System32's
+ * first, then Program Files' (5.1 puts that one first when it is missing).
+ * PowerShell loads even its own cmdlets (Remove-Item, Start-Process,
+ * Get-CimInstance) the first time a script uses them, looking along the
+ * module path in order and reading every module it meets first. A large
+ * module there (AWSPowerShell, installed for all users, takes about 18 s)
+ * made each call slower than a hook may wait, and a module that names a
+ * cmdlet of its own would run instead. Every PowerShell this core starts
+ * gets this environment.
+ * @param {object} env - the environment it starts from.
+ * @returns {object} a copy, with only that module path.
+ */
+export function powershellEnv(env = process.env) {
+  const out = {};
+  for (const [name, value] of Object.entries(env ?? {})) if (name.toUpperCase() !== 'PSMODULEPATH') out[name] = value;
+  const root = windowsVar(env, 'SystemRoot') || 'C:\\Windows';
+  const programFiles = windowsVar(env, 'ProgramFiles') || `${windowsVar(env, 'SystemDrive') || 'C:'}\\Program Files`;
+  out.PSModulePath = [
+    path.win32.join(root, 'System32', 'WindowsPowerShell', 'v1.0', 'Modules'),
+    path.win32.join(programFiles, 'WindowsPowerShell', 'Modules'),
+  ].join(';');
+  return out;
 }
 
 // The environment and cmd.exe arguments that run `command args`: every word
@@ -125,7 +168,11 @@ function windowsLaunch(command, args, { env, cwd, logFile, label, started, claim
   launchEnv[`${LAUNCH_VAR}_PID`] = pidFile;
   launchEnv[`${LAUNCH_VAR}_MARK`] = started;
   launchEnv[`${LAUNCH_VAR}_CLAIM`] = claim;
-  return launchEnv;
+  // The caller's module path, which PowerShell gives back to the program.
+  const modulePath = Object.keys(launchEnv).find((name) => name.toUpperCase() === 'PSMODULEPATH');
+  launchEnv[`${LAUNCH_VAR}_MODPATH`] = modulePath ? launchEnv[modulePath] : '';
+  launchEnv[`${LAUNCH_VAR}_MODPATHSET`] = modulePath ? '1' : '0';
+  return powershellEnv(launchEnv);
 }
 
 function sleepSync(ms) {
@@ -350,7 +397,7 @@ export async function settleLaunches(ms) {
  */
 export function launcherCheck({ env = process.env, platform = process.platform, powershell = null } = {}) {
   if (platform !== 'win32') return null;
-  const run = spawnSync(powershell ?? powershellPath(env), ['-NoProfile', '-NonInteractive', '-Command', '$ExecutionContext.SessionState.LanguageMode'], { env, encoding: 'utf8', windowsHide: true, timeout: LAUNCH_TIMEOUT_MS, stdio: ['ignore', 'pipe', 'pipe'] });
+  const run = spawnSync(powershell ?? powershellPath(env), ['-NoProfile', '-NonInteractive', '-Command', '$ExecutionContext.SessionState.LanguageMode'], { env: powershellEnv(env), encoding: 'utf8', windowsHide: true, timeout: LAUNCH_TIMEOUT_MS, stdio: ['ignore', 'pipe', 'pipe'] });
   const mode = String(run.stdout ?? '').trim();
   if (run.error || run.status !== 0 || !mode) return { ok: false, detail: run.error?.code ?? `exit ${run.status}` };
   return { ok: true, detail: mode };
@@ -481,7 +528,7 @@ export function portOwner(port, { platform = process.platform } = {}) {
       return uid === undefined ? null : { mine: Number(uid) === process.getuid?.(), owner: `uid ${uid}` };
     }
     if (platform === 'win32') {
-      const out = spawnSync(path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'), ['-NoProfile', '-NonInteractive', '-Command', windowsOwnerScript(port, '127.0.0.1')], { encoding: 'utf8', windowsHide: true, timeout: 10_000 });
+      const out = spawnSync(powershellPath(), ['-NoProfile', '-NonInteractive', '-Command', windowsOwnerScript(port, '127.0.0.1')], { env: powershellEnv(), encoding: 'utf8', windowsHide: true, timeout: 10_000 });
       const line = String(out.stdout ?? '').split(/\r?\n/).map((text) => text.trim()).find(Boolean);
       if (!line || line === '?') return null;
       return { mine: line.startsWith('1\t'), owner: line.slice(2) };
@@ -550,8 +597,7 @@ export async function portOwnerAsync(port, address, { platform = process.platfor
     }
     if (platform === 'win32') {
       const script = windowsOwnerScript(port, address);
-      const shell = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
-      const out = await runBounded(shell, ['-NoProfile', '-NonInteractive', '-Command', script], { timeoutMs, signal });
+      const out = await runBounded(powershellPath(), ['-NoProfile', '-NonInteractive', '-Command', script], { env: powershellEnv(), timeoutMs, signal });
       const names = String(out ?? '').split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
       if (names.length === 0 || names.includes('?')) return null;
       return ownersVerdict(names.map((name) => ({ mine: name.startsWith('1\t'), owner: name.slice(2) })));
@@ -571,7 +617,7 @@ function ownersVerdict(owners) {
 // A program's stdout, or null when it fails, outlasts `timeoutMs` or `signal`
 // aborts. The time limit holds even when a child of the program (netstat
 // under PowerShell) keeps its output open after it is stopped.
-function runBounded(command, args, { timeoutMs, signal }) {
+function runBounded(command, args, { env = process.env, timeoutMs, signal }) {
   return new Promise((resolve) => {
     if (signal?.aborted) {
       resolve(null);
@@ -594,7 +640,7 @@ function runBounded(command, args, { timeoutMs, signal }) {
       finish(null);
     }
     try {
-      child = spawn(command, args, { stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true });
+      child = spawn(command, args, { env, stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true });
     } catch {
       finish(null);
       return;

@@ -41,6 +41,11 @@ All notable changes to QuoteMem are listed here. Dates are UTC.
   for a moment to replace a state file, to grant a lock that was just let
   go, or to remove a temporary file, the plugins now try again. A lock left
   by a process that died is broken by one process at a time.
+- **Background starts on Windows stay quick with large PowerShell modules
+  installed.** The Windows PowerShell that starts the background sender and
+  the service, and the one `quotemem doctor` and `quotemem stop` use, now
+  looks for its cmdlets in Windows PowerShell's own module folders first.
+  The started program gets the module path of the agent that started it.
 - **No background send waits for the next prompt.** A send asked for while
   the background sender was still starting, a forget included, now starts
   once that start is done, and a hook waits for that start before it exits.

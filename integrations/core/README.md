@@ -903,10 +903,15 @@ least), a session after a week.
   An exit handler, which cannot wait, starts it at once. The service's
   start waits for PowerShell (0.2 to 0.5 s) for the pid it records; that
   pid is cmd's, and `taskkill /T` stops both. The script works in ConstrainedLanguage mode
-  (AppLocker, WDAC). The pid comes from a file PowerShell writes, and a
-  file cmd writes first says it started, so a PowerShell stopped at its
-  10 s limit after the start leaves no second instance (the service is
-  then recorded without a pid, as starting). When PowerShell cannot run
+  (AppLocker, WDAC). Windows PowerShell loads even its own cmdlets on first
+  use, along its module path, so every PowerShell the core starts
+  (`powershellEnv`) looks in Windows PowerShell's own module folders first:
+  a large module elsewhere on the path (AWSPowerShell) is not read. The
+  script then gives the program the module path the caller had. The pid
+  comes from a file PowerShell writes, and a file cmd writes first says it
+  started, so a PowerShell stopped at its 10 s limit after the start leaves
+  no second instance (the service is then recorded without a pid, as
+  starting). When PowerShell cannot run
   (missing, blocked) and nothing started, the program is started directly,
   holding the hook's handles again: the log says so once, a
   `direct-start.json` in the state folder records it, and `quotemem
@@ -981,7 +986,7 @@ All functions are exported from `index.mjs`.
 | `send.mjs` | `sendAdd(settings, job, signal) → stored \| pending \| deferred \| retry \| …`, `deferMs`, `pollDelayMs`, `ADD_HEADERS`, `rotateJob`, `backoffMs`, `validJob` |
 | `diskqueue.mjs` | `DiskQueue` (`enqueue`, `entries`, `has`, `result`, `markResultRead`, `waitResult`, `startFlusher({env})`, `flusherRunning`, `noteContact`, `contactAt`, `probedAt`), `PROBE_EVERY_MS`, `ACCEPTED_READ_TIMEOUT_MS`, `ACCEPTED_MAX_WAIT_MS`, `FORGET_CONFLICT_ATTEMPTS`, `runFlusher(settings, log, {signal})`, `FLUSHER_PATH` |
 | `lock.mjs` | `tryLock`, `releaseLock`, `touchLock`, `lockHeld`, `withLock(file, fn, {timeoutMs, staleMs})`, `writeFileAtomic`, `readJson` |
-| `proc.mjs` | `homeDir(env)` (the one home every part uses, as Python's Path.home(): USERPROFILE, then HOMEDRIVE+HOMEPATH on Windows; HOME elsewhere; then the OS's), `spawnDetached(command, args, {env, cwd, logFile, label})` → `{pid, via, on}` (a detached process that holds none of this process's handles; on Windows started through WMI, else `Start-Process`), `spawnDetachedAsync` and `settleLaunches(ms)` (the same without holding the caller up; wait before exiting), `launcherCheck`, `userPort`, `portOwner`, `portOwnerAsync(port, address, {timeoutMs, signal})` (doctor and status only), `alive(pid)`, `ownerRecord`, `ownerGone`, `bootTime`, `hostName` |
+| `proc.mjs` | `homeDir(env)` (the one home every part uses, as Python's Path.home(): USERPROFILE, then HOMEDRIVE+HOMEPATH on Windows; HOME elsewhere; then the OS's), `spawnDetached(command, args, {env, cwd, logFile, label})` → `{pid, via, on}` (a detached process that holds none of this process's handles; on Windows started through WMI, else `Start-Process`), `spawnDetachedAsync` and `settleLaunches(ms)` (the same without holding the caller up; wait before exiting), `launcherCheck`, `powershellEnv(env)` (the environment for Windows PowerShell: its own module folders first), `userPort`, `portOwner`, `portOwnerAsync(port, address, {timeoutMs, signal})` (doctor and status only), `alive(pid)`, `ownerRecord`, `ownerGone`, `bootTime`, `hostName` |
 | `log.mjs` | `makeLog(settings, write)`, `fileSink(file)` |
 | `hooks.mjs` | `HookMemory` (`prompt`, `reply`, `begin`, `catchUp`, `end`, `endSync`, `sweep`, `flush`, `reached`, `withForgetsAgain`, `openTurn`), `alignTurns(heads, seen)`, `queueOwnerSessions(env)` |
 | `native.mjs` | `markNative(env, host)`, `nativeInstalled(env, host)`, `nativeMarkers(env)` (markers in `QUOTEMEM_STATE_DIR` when set, else `~/.quotemem/native`), `foreignHost(payload, env)` (`cursor` or `devin`), `nativeAdapterFor(host, env, payload)`: keep a turn from being saved twice when one host also runs another host's hooks (Cursor: hook files or a recent marker; Devin: hook files in the project, the folders above it up to the repository root, or the user config); `cursorPromptContext(mode, version)`, `CURSOR_CONTEXT_VERSION` (the app), `CURSOR_CLI_CONTEXT_VERSION` (the CLI): whether a Cursor prompt hook may add context; `cursorCliVersion(version)`: a version of Cursor's CLI (numbered by date) |

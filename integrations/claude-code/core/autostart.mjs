@@ -34,7 +34,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { lockOwned, readJson, tryLock, writeFileAtomic } from './lock.mjs';
-import { DIRECT_START_FILE, alive, bootTime, homeDir, hostName, spawnDetached } from './proc.mjs';
+import { DIRECT_START_FILE, alive, bootTime, homeDir, hostName, powershellEnv, spawnDetached } from './proc.mjs';
 
 /** The service release these plugins start; check_package.mjs keeps it equal to package.json. */
 export const SERVICE_RELEASE = '0.3.3';
@@ -269,7 +269,7 @@ export function commandLineOf(pid, { windows = true } = {}) {
     if (process.platform === 'win32') {
       if (!windows) return null;
       const out = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
-        `(Get-CimInstance Win32_Process -Filter "ProcessId=${pid}").CommandLine`], { encoding: 'utf8', timeout: 8000, windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] });
+        `(Get-CimInstance Win32_Process -Filter "ProcessId=${pid}").CommandLine`], { env: powershellEnv(), encoding: 'utf8', timeout: 8000, windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] });
       return out.trim() || null;
     }
     const out = execFileSync('ps', ['-o', 'command=', '-p', String(pid)], { encoding: 'utf8', timeout: 2000, stdio: ['ignore', 'pipe', 'ignore'] });
