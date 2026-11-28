@@ -27,7 +27,7 @@ const POLL_HINT_MAX_MS = 60_000;
  * @returns {Promise<{kind: 'stored', outcome: string, forgets: object[]} | {kind: 'pending', delay: number|null}
  *   | {kind: 'deferred', delay: number}
  *   | {kind: 'error', why: string}
- *   | {kind: 'retry', why: string, delay: number|null} | {kind: 'auth', status: number, why: string}
+ *   | {kind: 'retry', why: string, delay: number|null} | {kind: 'held', why: string} | {kind: 'auth', status: number, why: string}
  *   | {kind: 'rotate'} | {kind: 'drop', why: string}>}
  *   `stored`: `forgets` is what the service's in-chat forget did for a
  *   request in the batch (chatForgetsOf: counts only, no words).
@@ -36,6 +36,7 @@ const POLL_HINT_MAX_MS = 60_000;
  *   pollDelayMs later, to read the result.
  *   `deferred`: the service's daily spend cap is reached; send it again after `delay` ms.
  *   `error` is a transport failure (the request may have reached the service);
+ *   `held`: not sent, the listener on the service's port failed the check;
  *   `retry` carries the Retry-After hint, if any; `rotate` means the first
  *   attempt ended without an answer and the service closed that request id.
  */
@@ -44,6 +45,8 @@ export async function sendAdd(settings, job, signal) {
   try {
     response = await postJson(settings, '/memory/add', { ...job.body, request_id: job.request_id }, signal, ADD_HEADERS);
   } catch (error) {
+    // Not sent: the program on the service's port did not prove it holds the token.
+    if (error?.code === 'ELISTENER') return { kind: 'held', why: `listener ${error.kind ?? ''}`.trim() };
     return { kind: 'error', why: errKind(error) };
   }
   const { status, data } = response;

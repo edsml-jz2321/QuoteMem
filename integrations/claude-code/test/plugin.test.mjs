@@ -259,9 +259,17 @@ test('session end: the rest is handed to a detached flusher; the hook returns at
   await cc.turn('sess-e', 1, 'I am allergic to peanuts.', 'Noted.');
   await cc.turn('sess-e', 2, 'My birthday is on 3 May.', 'Noted.');
   const ended = await cc.end('sess-e');
+  const endedAt = Date.now();
   assert.deepEqual([ended.code, ended.out, ended.err], [0, '', '']);
   assert.ok(ended.ms < 1300, `SessionEnd took ${ended.ms} ms (budget 1.5 s)`);
-  assert.equal(server.of('/memory/add').length, 0, 'the hook did not wait for the service');
+  if (process.platform === 'win32') {
+    // On Windows the hook's own exit can take longer than the flusher's send:
+    // a batch may have arrived, but the service's answer, 400 ms later, came
+    // after the hook ended.
+    assert.ok(server.of('/memory/add').every((r) => r.at + 400 > endedAt), 'the hook did not wait for the service');
+  } else {
+    assert.equal(server.of('/memory/add').length, 0, 'the hook did not wait for the service');
+  }
   await waitFor(() => server.of('/memory/add').length === 1, 8000, 'the background flush');
   assert.deepEqual(server.of('/memory/add')[0].body.messages.map((m) => m.content), ['I am allergic to peanuts.', 'Noted.', 'My birthday is on 3 May.', 'Noted.']);
 });
@@ -555,6 +563,7 @@ test('MCP: the launcher applies the plugin options and serves the DSH bundle too
   const env = {
     PATH: process.env.PATH,
     HOME: path.join(root, 'mcp-home'),
+    USERPROFILE: path.join(root, 'mcp-home'),
     CLAUDE_PLUGIN_ROOT: PLUGIN,
     QUOTEMEM_URL: 'http://127.0.0.1:9',
     QUOTEMEM_PLUGIN_OPTION_URL: server.url,

@@ -1,12 +1,12 @@
 """When the user told a forgotten fact again as their own statement (``agent``).
 
-In the ``agent`` Add mode (the complete in-chat forget rule, ``explicit-request-v2``) a fact
-the user asked to forget is learned again when the user states it again, in their own
-words, after the forget: the store follows what the user says now. Nothing else brings it
-back:
+In the ``agent`` Add mode (the complete in-chat forget rule, ``explicit-request-v2``) a
+tombstone does not refuse the user's own statement of a forgotten fact, in their own words,
+after the forget, when it shows no name a forget took, and review judges it as a new fact:
+the store follows what the user says now. The exception never covers:
 
-- the assistant's text (an assistant message recounting the fact is still a restatement,
-  denied by the tombstone and withheld);
+- the assistant's text (an assistant message recounting the fact is still checked against
+  the tombstone as a restatement);
 - the user's forget request itself and the words it quotes ("please forget that I drink
   green tea"), and any sentence naming forgetting, erasing or the memory
   (``ingestion/relearn.asserts``);
@@ -15,6 +15,10 @@ back:
   from another tool;
 - a later user sentence about something else: it lifts no forget of another fact, even
   when a memory written from it also states the forgotten one.
+
+A fact that shows a name a forget took is settled first by the name rule
+(``ingestion/statement_settlement._without_forgotten_names``): it is cut around the name or
+refused, unless the user's own later words give the name.
 
 A memory the user's later words state in full also tells again the part of a forgotten fact
 it shares (`retells`), even when the forgotten statement holds more than the user repeated:
@@ -43,9 +47,7 @@ Bench modes never call it.
 Clocks: the forget's time and ``ingested_at`` are the server's, so "after the forget" never
 depends on a client clock. The part's date is the client's: requiring it after the forget
 keeps a late batch of messages told before the forget out, and a client clock running
-behind the server's only delays relearning by the skew (it never learns too early). A batch
-from a client whose clock runs ahead of the server's, received after the forget but told
-before it, is not told apart from a restatement.
+behind the server's only delays relearning by the skew (it never learns too early).
 """
 
 from __future__ import annotations

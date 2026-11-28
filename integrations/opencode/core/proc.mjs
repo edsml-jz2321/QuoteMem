@@ -132,6 +132,28 @@ function sleepSync(ms) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
+/**
+ * Remove a file or folder of a Windows start (the pid file, the `started`
+ * mark, the claim folder), never throwing: the cmd that wrote one may still
+ * hold it, and Windows then refuses its removal (EPERM, EACCES or EBUSY) for
+ * a moment. It is tried again for at most about 0.3 s; one left in the
+ * temporary folder is harmless (each start names its own).
+ * @param {{rm?: Function, wait?: Function}} hooks - for tests.
+ * @returns {boolean} whether it is gone.
+ */
+export function removeLaunchFile(file, { rm = fs.rmSync, wait = sleepSync } = {}) {
+  for (let attempt = 1; attempt <= 10; attempt += 1) {
+    try {
+      rm(file, { recursive: true, force: true });
+      return true;
+    } catch (error) {
+      if (!['EPERM', 'EACCES', 'EBUSY'].includes(error?.code)) return false;
+      if (attempt < 10) wait(5 * attempt);
+    }
+  }
+  return false;
+}
+
 function readPid(file) {
   try {
     const pid = Number.parseInt(fs.readFileSync(file, 'ascii').trim(), 10);
@@ -260,14 +282,14 @@ function finishLaunch(launch, command, args, { env = process.env, cwd, logFile =
       log?.debug?.(`started a background process through ${via}, pid ${pid}`);
       // The cmd WMI started made the claim and runs the program: no other
       // cmd of this start waits for it any more.
-      if (via === 'wmi') fs.rmSync(launch.claim, { recursive: true, force: true });
+      if (via === 'wmi') removeLaunchFile(launch.claim);
       return { pid, via, on: () => {} };
     }
     if (fs.existsSync(launch.started)) return { pid: null, started: true, on: () => {} };
     return startDirectly(command, args, { env, cwd, logFile, log, mark, reason });
   } finally {
-    fs.rmSync(launch.pidFile, { force: true });
-    fs.rmSync(launch.started, { force: true });
+    removeLaunchFile(launch.pidFile);
+    removeLaunchFile(launch.started);
   }
 }
 
@@ -302,12 +324,23 @@ export function spawnDetachedAsync(command, args = [], options = {}) {
   return task;
 }
 
-/** Wait, at most `ms`, for the starts spawnDetachedAsync has under way (before this process exits). */
+/**
+ * Wait, at most `ms`, for the starts spawnDetachedAsync has under way (before
+ * this process exits), and for those asked for while it waits: a start that
+ * is done may ask for another (DiskQueue.startFlusher tries a flusher start
+ * again then), which is waited for too, within the same time.
+ */
 export async function settleLaunches(ms) {
-  if (pending.size === 0) return;
-  let timer;
-  await Promise.race([Promise.allSettled([...pending]), new Promise((resolve) => { timer = setTimeout(resolve, Math.max(0, ms)); })]);
-  clearTimeout(timer);
+  const end = Date.now() + Math.max(0, ms);
+  while (pending.size > 0) {
+    const left = end - Date.now();
+    if (left <= 0) return;
+    let timer;
+    await Promise.race([Promise.allSettled([...pending]), new Promise((resolve) => { timer = setTimeout(resolve, left); })]);
+    clearTimeout(timer);
+    // What a settled start runs once it is done (a start it asks for) runs first.
+    await new Promise((resolve) => { setImmediate(resolve); });
+  }
 }
 
 /**
@@ -404,6 +437,20 @@ export function userPort(env = process.env) {
   return USER_PORT_BASE + (hash % USER_PORT_COUNT);
 }
 
+// Windows: a PowerShell script that prints, for each process listening on
+// `port` at `address` or a wildcard, "1" or "0" (its SID is this process's
+// user's), a tab and its Domain\User, or "?" when its owner cannot be read.
+// The pids come from Get-NetTCPConnection, else from netstat (the CIM
+// provider lists nothing on some machines); the SID, not a name rebuilt from
+// USERDOMAIN, which differs under a reduced environment and for domain accounts.
+function windowsOwnerScript(port, address) {
+  const want = `@('${address}', '0.0.0.0', '::')`;
+  return `$me = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value; $want = ${want}; `
+    + `$ids = @(Get-NetTCPConnection -LocalPort ${Number(port)} -State Listen -ErrorAction SilentlyContinue | Where-Object { $_.LocalAddress -in $want } | ForEach-Object { $_.OwningProcess }); `
+    + `if ($ids.Count -eq 0) { $ids = @(@(netstat -ano -p TCP) + @(netstat -ano -p TCPv6) | ForEach-Object { $f = -split $_; if ($f.Count -ge 5 -and $f[0] -eq 'TCP' -and $f[3] -eq 'LISTENING') { $i = $f[1].LastIndexOf(':'); if ([int]$f[1].Substring($i + 1) -eq ${Number(port)} -and $f[1].Substring(0, $i).Trim('[', ']') -in $want) { [int]$f[4] } } }) }; `
+    + `$ids | Select-Object -Unique | ForEach-Object { $p = Get-CimInstance Win32_Process -Filter ('ProcessId=' + $_); $o = $null; $s = $null; if ($p) { $o = Invoke-CimMethod -InputObject $p -MethodName GetOwner; $s = Invoke-CimMethod -InputObject $p -MethodName GetOwnerSid }; if ($o -and $o.User) { $(if ($s -and $s.Sid -eq $me) { '1' } else { '0' }) + [char]9 + $o.Domain + '\\' + $o.User } else { '?' } }`;
+}
+
 /**
  * The OS user that listens on a local TCP port, when it can be told: Linux
  * reads /proc/net/tcp; macOS asks lsof; Windows asks PowerShell for the
@@ -434,15 +481,129 @@ export function portOwner(port, { platform = process.platform } = {}) {
       return uid === undefined ? null : { mine: Number(uid) === process.getuid?.(), owner: `uid ${uid}` };
     }
     if (platform === 'win32') {
-      const script = `$c = Get-NetTCPConnection -LocalPort ${Number(port)} -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1; if ($c) { $p = Get-CimInstance Win32_Process -Filter ('ProcessId=' + $c.OwningProcess); if ($p) { $o = Invoke-CimMethod -InputObject $p -MethodName GetOwner; $o.Domain + '\\' + $o.User } }`;
-      const out = spawnSync(path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'), ['-NoProfile', '-NonInteractive', '-Command', script], { encoding: 'utf8', windowsHide: true, timeout: 10_000 });
-      const owner = String(out.stdout ?? '').trim();
-      if (!owner || owner === '\\') return null;
-      const me = `${process.env.USERDOMAIN || os.hostname()}\\${os.userInfo().username}`.toLowerCase();
-      return { mine: owner.toLowerCase() === me, owner };
+      const out = spawnSync(path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'), ['-NoProfile', '-NonInteractive', '-Command', windowsOwnerScript(port, '127.0.0.1')], { encoding: 'utf8', windowsHide: true, timeout: 10_000 });
+      const line = String(out.stdout ?? '').split(/\r?\n/).map((text) => text.trim()).find(Boolean);
+      if (!line || line === '?') return null;
+      return { mine: line.startsWith('1\t'), owner: line.slice(2) };
     }
   } catch {
     // unknown
   }
   return null;
+}
+
+// The /proc/net hex form of an address (Linux): IPv4 as 4 little-endian
+// bytes, IPv6 as four 32-bit little-endian words.
+function procHex(address) {
+  if (/^\d+\.\d+\.\d+\.\d+$/.test(address)) {
+    return address.split('.').map((part) => Number(part).toString(16).toUpperCase().padStart(2, '0')).reverse().join('');
+  }
+  const halves = address.split('::');
+  const head = halves[0] ? halves[0].split(':') : [];
+  const tail = halves.length > 1 && halves[1] ? halves[1].split(':') : [];
+  const groups = [...head, ...Array(8 - head.length - tail.length).fill('0'), ...tail].map((g) => g.padStart(4, '0'));
+  const bytes = groups.join('').match(/../g);
+  let out = '';
+  for (let i = 0; i < 16; i += 4) out += bytes.slice(i, i + 4).reverse().join('');
+  return out.toUpperCase();
+}
+
+const ANY_V4 = '00000000';
+const ANY_V6 = '0'.repeat(32);
+
+/**
+ * The owners of the sockets listening on `port` that a connection to
+ * `address` (an IP address) may reach: that address, or a wildcard. Every
+ * one must be this user's for `mine`; another owner is named. Null when none
+ * is seen or the owners cannot be read (macOS lists only the caller's own
+ * sockets to a user without administrator rights; Windows does not name
+ * another user's process to one). Asynchronous, and bounded by `timeoutMs`
+ * and `signal`: lsof (macOS) and PowerShell (Windows) can take seconds, so
+ * only `quotemem doctor` and `status` ask (listener.mjs describeRefusal).
+ * @returns {Promise<{mine: boolean, owner: string}|null>}
+ */
+export async function portOwnerAsync(port, address, { platform = process.platform, timeoutMs = 3000, signal } = {}) {
+  try {
+    if (platform === 'linux') {
+      const v4 = /^\d+\.\d+\.\d+\.\d+$/.test(address);
+      const wanted = new Set(v4
+        ? [procHex(address), ANY_V4, `0000000000000000FFFF0000${procHex(address)}`, ANY_V6]
+        : [procHex(address), ANY_V6]);
+      const uids = [];
+      for (const table of ['/proc/net/tcp', '/proc/net/tcp6']) {
+        let text = '';
+        try { text = fs.readFileSync(table, 'utf8'); } catch { continue; }
+        for (const line of text.split('\n').slice(1)) {
+          const parts = line.trim().split(/\s+/);
+          if (parts.length <= 7 || parts[3] !== '0A') continue;
+          const [hex, portHex] = parts[1].split(':');
+          if (Number.parseInt(portHex, 16) === Number(port) && wanted.has(hex.toUpperCase())) uids.push(Number(parts[7]));
+        }
+      }
+      return ownersVerdict(uids.map((uid) => ({ mine: uid === process.getuid?.(), owner: `uid ${uid}` })));
+    }
+    if (platform === 'darwin') {
+      const at = address.includes(':') ? `[${address}]` : address;
+      const out = await runBounded('lsof', ['-nP', `-iTCP@${at}:${Number(port)}`, '-sTCP:LISTEN', '-Fu'], { timeoutMs, signal });
+      const uids = [...String(out ?? '').matchAll(/^u(\d+)$/gm)].map((m) => Number(m[1]));
+      return ownersVerdict(uids.map((uid) => ({ mine: uid === process.getuid?.(), owner: `uid ${uid}` })));
+    }
+    if (platform === 'win32') {
+      const script = windowsOwnerScript(port, address);
+      const shell = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+      const out = await runBounded(shell, ['-NoProfile', '-NonInteractive', '-Command', script], { timeoutMs, signal });
+      const names = String(out ?? '').split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+      if (names.length === 0 || names.includes('?')) return null;
+      return ownersVerdict(names.map((name) => ({ mine: name.startsWith('1\t'), owner: name.slice(2) })));
+    }
+  } catch {
+    // unknown
+  }
+  return null;
+}
+
+// All seen owners together: null when none, else the first that is not this user's, else this user's.
+function ownersVerdict(owners) {
+  if (owners.length === 0) return null;
+  return owners.find((owner) => !owner.mine) ?? owners[0];
+}
+
+// A program's stdout, or null when it fails, outlasts `timeoutMs` or `signal`
+// aborts. The time limit holds even when a child of the program (netstat
+// under PowerShell) keeps its output open after it is stopped.
+function runBounded(command, args, { timeoutMs, signal }) {
+  return new Promise((resolve) => {
+    if (signal?.aborted) {
+      resolve(null);
+      return;
+    }
+    let child;
+    let timer;
+    let out = '';
+    let done = false;
+    const finish = (value) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', stop);
+      child?.stdout?.destroy();
+      resolve(value);
+    };
+    function stop() {
+      try { child?.kill(); } catch { /* already gone */ }
+      finish(null);
+    }
+    try {
+      child = spawn(command, args, { stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true });
+    } catch {
+      finish(null);
+      return;
+    }
+    timer = setTimeout(stop, Math.max(1, timeoutMs));
+    signal?.addEventListener('abort', stop, { once: true });
+    child.stdout.on('data', (d) => { if (out.length < 65_536) out += d; });
+    child.stdout.on('error', () => {});
+    child.on('error', () => finish(null));
+    child.on('close', (code, killed) => finish(killed ? null : out));
+  });
 }

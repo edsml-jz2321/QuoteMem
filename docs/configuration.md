@@ -72,7 +72,7 @@ Thinking (`QUOTEMEM_CHAT_REASONING`):
   `high`, `reasoning_effort` is still sent.
 - Under `high`, a reasoning reply that its bound cuts off, or that takes longer
   than `QUOTEMEM_CHAT_REASONING_SECONDS`, is asked again without thinking.
-  Thinking thus never truncates a reply or loses a fact.
+  A cut-off or slow reasoning reply is never used.
 - A reasoning attempt also waits at most half of the call's remaining time,
   and leaves at least 30 seconds for the resend. A call with too little time
   for that goes without thinking.

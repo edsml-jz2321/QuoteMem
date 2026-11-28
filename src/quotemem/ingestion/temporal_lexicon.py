@@ -605,6 +605,116 @@ CJK_NUMERALS: Final = MappingProxyType({
 })
 """Chinese and Japanese numerals of the twelve months."""
 
+_EN_PART = r"(?:in the )?(?:morning|afternoon|evening)|night|at night"
+_EN_MARKED = r"\d{1,2}(?::\d{2})? ?[ap]\.?m\.?|\d{1,2}:\d{2}|\d{1,2} o'clock|noon"
+_EN_AT = rf"(?:at )?(?:{_EN_MARKED})|at \d{{1,2}}"
+_EN_TAIL: Final = re.compile(
+    rf",? (?:(?:{_EN_PART})(?:,? (?:{_EN_AT}))?|(?:{_EN_AT})(?: (?:{_EN_PART}))?)",
+)
+"""A time of day written after a day: "at 3 pm", "afternoon", "morning at 9", "15:00"."""
+_EN_HEAD: Final = re.compile(rf"(?:{_EN_AT}),? (?:on )?")
+"""A clock time written before a day: "at 3 pm ", "3pm on "."""
+_EN_CLOCK: Final = re.compile(
+    r"(?P<hour>\d{1,2})(?::(?P<minute>\d{2}))?(?: ?(?P<twelve>[ap]\.?m\.?| o'clock))?",
+)
+
+_ZH_PART = "早上|早晨|上午|中午|下午|傍晚|晚上|夜里|夜裡|凌晨"
+_ZH_NUMBER = "\\d{1,2}|[零〇一二两三四五六七八九十]{1,3}"
+_ZH_CLOCK = (
+    f"(?P<hour>{_ZH_NUMBER})[点點时時](?:钟|鐘)?"
+    f"(?:(?P<named>整|半|一刻|三刻)|(?P<minute>{_ZH_NUMBER})分?)?"
+    "|(?P<colon_hour>\\d{1,2}):(?P<colon_minute>\\d{2})"
+)
+_ZH_SHAPE = re.sub(r"\?P<\w+>", "", _ZH_CLOCK)
+_ZH_TAIL: Final = re.compile(f"的? ?(?:(?:{_ZH_PART}) ?(?:{_ZH_SHAPE})?|(?:{_ZH_SHAPE}))")
+"""A time of day written after a day: 下午三点, 下午 3:30, 15点半, 晚上."""
+_ZH_DIGITS: Final = MappingProxyType({
+    "零": 0, "〇": 0, "一": 1, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8,
+    "九": 9,
+})
+_ZH_QUARTERS: Final = MappingProxyType({"整": 0, "一刻": 15, "半": 30, "三刻": 45})
+
+
+def _zh_count(text: str) -> int | None:
+    """A count from 0 to 99 written in digits or Chinese numerals, or None."""
+    if re.fullmatch(r"\d{1,2}", text):
+        return int(text)
+    if text == "两":
+        return 2
+    if text in _ZH_DIGITS:
+        return _ZH_DIGITS[text]
+    if len(text) == 2 and text[0] in "零〇" and text[1] in _ZH_DIGITS:
+        return _ZH_DIGITS[text[1]]
+    tens, ten, units = text.partition("十")
+    if not ten or len(tens) > 1 or len(units) > 1 or "十" in units:
+        return None
+    tens_value = 1 if not tens else _ZH_DIGITS.get(tens)
+    units_value = 0 if not units else _ZH_DIGITS.get(units)
+    if tens_value is None or units_value is None or tens_value == 0:
+        return None
+    return tens_value * 10 + units_value
+
+
+def _clock_valid(hour: int | None, minute: int | None, *, twelve: bool) -> bool:
+    if hour is None or minute is None:
+        return False
+    return (1 <= hour <= 12 if twelve else 0 <= hour <= 23) and 0 <= minute <= 59
+
+
+def _english_clock_valid(time_of_day: str) -> bool:
+    clock = _EN_CLOCK.search(time_of_day)
+    if clock is None:
+        return True  # A part of the day or "noon".
+    minute = clock["minute"]
+    return _clock_valid(
+        int(clock["hour"]), 0 if minute is None else int(minute), twelve=bool(clock["twelve"]),
+    )
+
+
+def _chinese_clock_valid(time_of_day: str) -> bool:
+    clock = re.search(_ZH_CLOCK, time_of_day)
+    if clock is None:
+        return True  # A part of the day alone: 下午.
+    if clock["colon_hour"] is not None:
+        return _clock_valid(int(clock["colon_hour"]), int(clock["colon_minute"]), twelve=False)
+    named, minute = clock["named"], clock["minute"]
+    return _clock_valid(
+        _zh_count(clock["hour"]),
+        _ZH_QUARTERS[named] if named else 0 if minute is None else _zh_count(minute),
+        twelve=False,
+    )
+
+
+def time_of_day_days(text: str) -> tuple[str, ...]:
+    """Return the candidate days of an expression that adds a time of day to a day.
+
+    An expression such as "next Tuesday at 3 pm", "at 3 pm tomorrow", "tomorrow
+    morning" or 下周二下午三点 is a day with a time of day: a part of the day, a
+    clock time with am or pm, a 24-hour time, "at" with an hour, "noon", or the
+    Chinese parts of the day and hours. Each way to split the expression into a
+    candidate day and such a time of day gives one candidate; `temporal` keeps
+    only candidates that name one whole day. A clock time out of range
+    ("at 25:00", "13 pm") gives none.
+
+    Args:
+        text (str): The expression in `fold_time` form.
+
+    Returns:
+        tuple[str, ...]: The candidate days, in `fold_time` form and split order;
+            empty when the expression has no time of day.
+    """
+    days: list[str] = []
+    for index in range(1, len(text)):
+        head, tail = text[:index], text[index:]
+        if (_EN_TAIL.fullmatch(tail) and _english_clock_valid(tail)) or (
+            _ZH_TAIL.fullmatch(tail) and _chinese_clock_valid(tail)
+        ):
+            days.append(head)
+        if _EN_HEAD.fullmatch(head) and _english_clock_valid(head):
+            days.append(tail)
+    return tuple(day for day in dict.fromkeys(days) if day == day.strip(" ,"))
+
+
 GREGORIAN_LIMIT: Final = 2400
 """The first year never read as Gregorian: from it on, a Thai year is Buddhist-era."""
 

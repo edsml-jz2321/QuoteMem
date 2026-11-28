@@ -30,7 +30,7 @@ from quotemem.core.recall_corpora import (
     sparse_terms,
 )
 from quotemem.core.recall_policy import RecallPolicySnapshotV4, Route
-from quotemem.core.recall_snapshot import MemoryRowV2, RecallSnapshot
+from quotemem.core.recall_snapshot import MemoryRowV2, RecallSnapshot, SourceRowV2
 from quotemem.core.statement import named_participants, token_seq
 from quotemem.core.vector_score import UnitVector, unit_vector
 from quotemem.ingestion.temporal import calendar_windows
@@ -311,9 +311,10 @@ def prepare_recall(
         held = root.held_evidence(grant.scope_id)
 
         def shown(document: EvidenceDocument) -> bool:
-            return mode not in {"auto", "core_hook"} or (
+            return (mode not in {"auto", "core_hook"} or (
                 document.row.security_level != "restricted"
                 and document.row.trust_tier not in {"inferred", "untrusted"})
+            ) and said_by(document.row, mode, at)
 
         evidence = tuple(
             document
@@ -402,6 +403,28 @@ def prepare_recall(
         evidence_vectors,
         remainders,
     )
+
+
+def said_by(row: SourceRowV2, mode: MemoryMode, at: int | None) -> bool:
+    """Whether a read may show an Evidence part: a ``world`` read only the parts said by its
+    instant.
+
+    A dated part was said at its source time; an undated one before the store received it.
+    A ``knowledge`` read ranks no Evidence (`select_query_routes`); every other read shows
+    every part.
+
+    Args:
+        row: The Evidence part.
+        mode: The read's mode.
+        at: The read's ``as_of`` instant; None outside an as-of read.
+
+    Returns:
+        False for a part a ``world`` read must not show: one said after its instant.
+    """
+    if at is None or mode != "world":
+        return True
+    said = row.ingested_at if row.source_observed_at is None else row.source_observed_at
+    return said <= at
 
 
 def listed_memories(

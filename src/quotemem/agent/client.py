@@ -40,6 +40,12 @@ A service is on this computer when the host of an accepted URL is ``localhost``,
 ``token.mjs``) use that same set. It excludes other IPv4 loopback addresses, ``0.0.0.0``, ``[::]``
 or ``localhost.``, which the WHATWG parser leaves as written.
 
+Before the token goes to a URL that reaches this computer (`on_this_computer`: the hosts
+above, any other ``127.x.y.z``, ``0.0.0.0`` and ``[::]``), `verify_listener` checks that
+the program on its port proves it holds that token, as the plugins do
+(``integrations/core/listener.mjs``): another user of the computer may have taken the port
+first.
+
 ``npx quotemem <command>`` runs these commands with the settings of
 ``~/.quotemem/service.env`` (such as its data directory) and the plugins'
 ``QUOTEMEM_URL``, ``QUOTEMEM_USER_ID`` and ``QUOTEMEM_TOKEN_FILE`` (the environment, then
@@ -49,17 +55,24 @@ token or its ``<data-dir>/token`` only for a service on this computer.
 
 from __future__ import annotations
 
+import hmac
 import ipaddress
+import json
 import os
 import re
+import secrets
+import ssl
 import stat
-from collections.abc import Mapping
+import time
+from collections.abc import Iterable, Mapping
 from pathlib import Path
-from typing import Final
+from typing import Final, cast
 from urllib.parse import SplitResult, urlsplit
 
+import httpcore
 import httpx
 
+from quotemem.agent.gateway import listener_proof, plain_address
 from quotemem.agent.serve import DEFAULT_PORT
 from quotemem.agent.settings import read_token
 from quotemem.core.errors import QuoteMemError
@@ -259,6 +272,239 @@ def service_serving(
         return response.status_code == 200 and response.json().get("ready") is True
     except (httpx.HTTPError, ValueError, AttributeError):
         return False
+
+
+LISTENER_ROUTE: Final = "/agent/listener"
+# The most of an answer to the listener check that is read (the plugins keep 4 KiB too).
+LISTENER_ANSWER_BYTES: Final = 4096
+# ``localhost``, ``localhost.`` and any name under it (``app.localhost``): names that always
+# mean this computer (core/listener.mjs LOCALHOST_NAME).
+_LOCALHOST_NAME: Final = re.compile(r"(?:[a-z0-9_-]+\.)*localhost\.?")
+
+
+class _OneConnection(httpcore.NetworkBackend):
+    """The network of a `ListenerClient`: one TCP connection, never a second.
+
+    The connection the listener check proved is the only one its requests may use: once it
+    closed, a request fails with ``service_unhealthy`` and nothing is sent, so a program that
+    took the port meanwhile gets nothing. While ``deadline`` (a `time.monotonic` value) is
+    set, every connect, read and write keeps to it, so a listener that trickles its status
+    line or headers is cut off too, not just one that trickles its body.
+    """
+
+    def __init__(self) -> None:
+        self._network = httpcore.SyncBackend()
+        self._opened = False
+        self.deadline: float | None = None
+
+    def remaining(self, timeout: float | None) -> float | None:
+        """``timeout`` cut to what is left before the deadline.
+
+        Raises:
+            httpcore.ReadTimeout: When the deadline has passed.
+        """
+        if self.deadline is None:
+            return timeout
+        left = self.deadline - time.monotonic()
+        if left <= 0:
+            raise httpcore.ReadTimeout("the listener check took too long")
+        return left if timeout is None else min(timeout, left)
+
+    def connect_tcp(
+        self, host: str, port: int, timeout: float | None = None,
+        local_address: str | None = None,
+        socket_options: Iterable[httpcore.SOCKET_OPTION] | None = None,
+    ) -> httpcore.NetworkStream:
+        if self._opened:
+            raise QuoteMemError("service_unhealthy", "The connection the listener check proved "
+                                "has closed; nothing was sent on another. Run the command again")
+        self._opened = True
+        stream = self._network.connect_tcp(host, port, self.remaining(timeout), local_address,
+                                           socket_options)
+        return _DeadlineStream(stream, self)
+
+    def connect_unix_socket(
+        self, path: str, timeout: float | None = None,
+        socket_options: Iterable[httpcore.SOCKET_OPTION] | None = None,
+    ) -> httpcore.NetworkStream:
+        raise httpcore.ConnectError("a unix socket is not used")
+
+    def sleep(self, seconds: float) -> None:
+        self._network.sleep(seconds)
+
+
+class _DeadlineStream(httpcore.NetworkStream):
+    """A connection of `_OneConnection` whose every step keeps to its deadline."""
+
+    def __init__(self, stream: httpcore.NetworkStream, network: _OneConnection) -> None:
+        self._stream = stream
+        self._network = network
+
+    def read(self, max_bytes: int, timeout: float | None = None) -> bytes:
+        return self._stream.read(max_bytes, self._network.remaining(timeout))
+
+    def write(self, buffer: bytes, timeout: float | None = None) -> None:
+        self._stream.write(buffer, self._network.remaining(timeout))
+
+    def close(self) -> None:
+        self._stream.close()
+
+    def start_tls(
+        self, ssl_context: ssl.SSLContext, server_hostname: str | None = None,
+        timeout: float | None = None,
+    ) -> httpcore.NetworkStream:
+        stream = self._stream.start_tls(ssl_context, server_hostname,
+                                        self._network.remaining(timeout))
+        return _DeadlineStream(stream, self._network)
+
+    def get_extra_info(self, info: str) -> object:
+        return self._stream.get_extra_info(info)
+
+
+class _OneConnectionTransport(httpx.HTTPTransport):
+    """httpx's transport over a pool of the one connection `_OneConnection` allows."""
+
+    def __init__(self, network: _OneConnection) -> None:
+        super().__init__(trust_env=False)
+        self._pool.close()
+        self._pool = httpcore.ConnectionPool(
+            ssl_context=httpx.create_ssl_context(trust_env=False), max_connections=1,
+            max_keepalive_connections=1, network_backend=network)
+
+
+class ListenerClient(httpx.Client):
+    """A client whose requests go only on the connection `verify_listener` proved.
+
+    Pass it to `verify_listener` (``client=``), then send the request with it, to the URL
+    the check returned: a program that takes the port between the check and the request
+    gets nothing. With ``transport`` (tests) requests go there instead.
+    """
+
+    def __init__(self, *, timeout_seconds: float,
+                 transport: httpx.BaseTransport | None = None) -> None:
+        self.connection = _OneConnection() if transport is None else None
+        super().__init__(timeout=timeout_seconds, trust_env=False,
+                         transport=transport if self.connection is None
+                         else _OneConnectionTransport(self.connection))
+
+
+def on_this_computer(url: str) -> bool:
+    """Whether an http(s) URL's host reaches this computer: ``localhost`` (also ``localhost.``
+    and a name under it, such as ``app.localhost``), an IPv4 loopback address (127.x.y.z,
+    also IPv4-mapped), ``::1``, or the unspecified ``0.0.0.0`` and ``::``, the hosts the plugins
+    check too."""
+    parts = urlsplit(url)
+    host = plain_address(parts.hostname or "")
+    if parts.scheme not in ("http", "https") or not host:
+        return False
+    if _LOCALHOST_NAME.fullmatch(host):
+        return True
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return address.is_loopback or address.is_unspecified
+
+
+def verify_listener(
+    url: str, token: str, *, timeout_seconds: float = 5.0,
+    transport: httpx.BaseTransport | None = None, client: ListenerClient | None = None,
+) -> str:
+    """Check, before the token goes to a service on this computer, that it holds the token.
+
+    The service answers ``GET /agent/listener`` with a fresh challenge by `listener_proof`
+    for the address and port it listens on. ``localhost`` and ``0.0.0.0`` mean 127.0.0.1,
+    ``[::]`` means ::1, and the returned URL names that address, so the check and the
+    request reach one address. Only a listener that proves the token passes: a service from
+    before that route (QuoteMem 0.3.2 or older) is refused too. A URL for another computer
+    (`on_this_computer`) is returned unchanged.
+
+    The whole check, from connecting to the last byte of the answer, keeps to
+    ``timeout_seconds``. With ``client`` (a `ListenerClient`) it goes on that client's one
+    connection, and the request it guards must be sent with the same client; else on a
+    connection of its own (``transport``: a test's).
+
+    Returns:
+        The URL to send the request to.
+
+    Raises:
+        httpx.ConnectError: When nothing listens (no request may be sent).
+        QuoteMemError: ``authentication_failed`` when the program on the port is not shown
+            to hold the token; ``service_unhealthy`` when it stalls or breaks off. The token
+            was not sent.
+    """
+    if not on_this_computer(url):
+        return url
+    parts = urlsplit(url)
+    port = parts.port or (443 if parts.scheme == "https" else 80)
+    address = plain_address(parts.hostname or "")
+    if _LOCALHOST_NAME.fullmatch(address) or address in ("0.0.0.0", "::"):
+        address = "::1" if address == "::" else "127.0.0.1"
+    if address != (parts.hostname or "").lower():
+        host = f"[{address}]" if ":" in address else address
+        url = parts._replace(netloc=f"{host}:{port}" if parts.port else host).geturl()
+
+    def refusal(why: str) -> QuoteMemError:
+        return QuoteMemError("authentication_failed", "No token and no memory data were sent "
+                             f"to {url}: the program on its port is not shown to be this "
+                             f"user's QuoteMem service: {why}. `npx quotemem doctor` tells more")
+
+    def stalled() -> QuoteMemError:
+        return QuoteMemError("service_unhealthy", f"The program at {url} did not finish "
+                             "answering the listener check; the token was not sent")
+
+    challenge = secrets.token_hex(16)
+    # The whole answer keeps to timeout_seconds and LISTENER_ANSWER_BYTES: a program that
+    # trickles its status line, headers or a long body is cut off, as by the plugins' check.
+    deadline = time.monotonic() + timeout_seconds
+    body = b""
+    own = None if client is not None else ListenerClient(timeout_seconds=timeout_seconds,
+                                                         transport=transport)
+    checker = cast(ListenerClient, client if client is not None else own)
+    if checker.connection is not None:
+        checker.connection.deadline = deadline
+    try:
+        with checker.stream(
+                "GET", url + LISTENER_ROUTE, timeout=timeout_seconds,
+                headers={"x-quotemem-challenge": challenge,
+                         "accept-encoding": "identity"}) as response:
+            status = response.status_code
+            # iter_bytes, not iter_raw: an answer read already (as from a mock transport)
+            # is replayed; `accept-encoding: identity` keeps it plain.
+            for chunk in response.iter_bytes():
+                body += chunk
+                if len(body) > LISTENER_ANSWER_BYTES or time.monotonic() > deadline:
+                    raise stalled()
+    except httpx.ConnectError:
+        raise  # nothing listens: no request is sent; the caller reports it as unreachable
+    except httpx.HTTPError:
+        # It took the connection, then stalled or broke off: as for any request.
+        raise stalled() from None
+    finally:
+        if checker.connection is not None:
+            checker.connection.deadline = None
+        if own is not None:
+            own.close()
+    if time.monotonic() > deadline:
+        raise stalled()
+    if status == 200:
+        try:
+            parsed: object = json.loads(body.decode("utf-8"))
+            proof = (cast("dict[str, object]", parsed).get("proof")
+                     if isinstance(parsed, dict) else None)
+        except (ValueError, UnicodeDecodeError):
+            proof = None
+        want = listener_proof(token, address, port, challenge)
+        if isinstance(proof, str) and hmac.compare_digest(proof.encode(), want.encode()):
+            return url
+    if status in (200, 400):
+        raise refusal("it answered the check without this user's token: another user's "
+                      "QuoteMem or program, or a service with another token, holds the port")
+    raise refusal(f"it does not answer the check ({status}): a QuoteMem service "
+                  "from before the check (0.3.2 or older) answers this way. If it is your own, "
+                  "restart it once with the current release: stop the `quotemem serve` you "
+                  "started and start the current one (`uvx quotemem@latest serve`), or run "
+                  "`npx quotemem stop` if an agent plugin started it")
 
 
 def unreachable(url: str) -> QuoteMemError:

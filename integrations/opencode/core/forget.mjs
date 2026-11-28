@@ -701,8 +701,8 @@ export function isForgetRequest(text, options) {
 // 0700 folder, one file per user and service): a forget a hook ran, and one
 // the model ran through the MCP tools, which run in another process. A
 // batch queued later that holds the user's words from before a forget gets
-// that forget again, right behind it (HookMemory.enqueue), so words saved
-// after a forget never bring the fact back: a turn read late from a
+// that forget again, right behind it (HookMemory.enqueue), so words said
+// before a forget and saved after it get that forget too: a turn read late from a
 // transcript, or a turn of this run that Cursor's CLI saves only when the run
 // ends. Kept as long as a turn said before it can still wait unsaved in a
 // session file: a week (SESSION_KEEP_MS); a session file older than that is
@@ -834,8 +834,8 @@ export const LOST_EFFECTS = new Map([['forgotten', 'dependents'], ['unreadable',
 /**
  * Count the effects a forget had on memories outside its targets, each
  * given when not 0: `dependents` (forgotten with it), `unreadable` (stored,
- * but cannot be read until the user says it again) and `reworded` (stored,
- * rewritten to leave out what was forgotten). Any other effect is not counted.
+ * but cannot be read) and `reworded` (stored, rewritten to leave out what was
+ * forgotten). Any other effect is not counted.
  */
 export function effectCounts(effects) {
   const out = {};
@@ -854,8 +854,8 @@ export function memoryKey(id) {
 // The service's `affected` list as [memory id, effect], without the words a
 // prepare gives with it: `forgotten`, a memory that relied only on what the
 // forget removes, so it goes too; `unreadable`, one that stays stored but
-// cannot be read until the user says it again; `reworded`, one that stays
-// stored, rewritten to leave out what is forgotten. Any other effect is left out.
+// cannot be read; `reworded`, one that stays stored, rewritten to leave out
+// what is forgotten. Any other effect is left out.
 function affectedOf(list) {
   return (Array.isArray(list) ? list : [])
     .filter((entry) => typeof entry?.memory_id === 'string' && LOST_EFFECTS.has(entry.effect))
@@ -909,6 +909,8 @@ function readCandidates(prepared, sum) {
 // a memory outcome forgets that memory, and the outcome whose memory_id is
 // null (a fact only the user's sentences stated) forgets `withheld_spans`
 // sentences. `forgotten_earlier` was gone before; `changed` was kept.
+// `left_readable` (no memory) says the service's own check found part of
+// what it forgot still readable: the forget is not complete (`left`).
 // `resent`: this plan was confirmed once already and that answer was lost or
 // was an error (the service may have forgotten some targets before it).
 // Every target was current when the plan was prepared, so one gone now was
@@ -936,6 +938,8 @@ function addOutcomes(sum, outcomes, plan, resent) {
       sum.earlier += 1;
     } else if (item?.outcome === 'changed') {
       sum.changed += 1;
+    } else if (item?.outcome === 'left_readable') {
+      sum.left = true;
     }
   }
   return { memories, sentences };
@@ -1037,6 +1041,8 @@ function finished(sum, status) {
   Object.assign(counts, others);
   if (lost.length > 0) counts.affectedKeys = lost.map(([id, effect]) => [memoryKey(id), effect]);
   const done = counts.forgotten + counts.sentences + (others.dependents ?? 0) + (others.reworded ?? 0);
+  // Part of it was left readable: never reported as forgotten, whatever came after.
+  if (counts.left === true) return { status: 'incomplete', ...counts };
   if (status === 'incomplete' && counts.changed > 0) return { status: 'incomplete', ...counts };
   if (done > 0) return { status: 'forgotten', ...counts };
   if (counts.earlier + counts.earlierSentences > 0) return { status: 'already', ...counts };
@@ -1067,7 +1073,7 @@ async function forgetOnce(settings, body, signal, carry = {}) {
       try {
         prepared = await postJson(settings, '/memory/forget/prepare', body, signal);
       } catch (error) {
-        return { status: 'retry', code: errKind(error), delay: null, transport: true, carry: { sum } };
+        return { status: 'retry', code: errKind(error), delay: null, transport: true, ...(error?.code === 'ELISTENER' ? { held: true } : {}), carry: { sum } };
       }
       if (prepared.status < 200 || prepared.status >= 300) {
         if (prepared.status === 422 && PREPARE_AGAIN.has(codeOf(prepared))) {
@@ -1102,6 +1108,8 @@ async function forgetOnce(settings, body, signal, carry = {}) {
     } catch (error) {
       // The confirmation may have reached the service: a retry resumes this
       // plan, and must not forget a neighbour when it finds it already gone.
+      // One not sent (the listener failed its check) did not.
+      if (error?.code === 'ELISTENER') return { status: 'retry', code: errKind(error), delay: null, transport: true, held: true, carry: { plan, sum } };
       return { status: 'retry', code: errKind(error), delay: null, transport: true, maybeDone: true, carry: { plan, sum } };
     }
     if (confirmed.status < 200 || confirmed.status >= 300) {
@@ -1124,6 +1132,14 @@ async function forgetOnce(settings, body, signal, carry = {}) {
       // A target changed after the plan: prepare once more for its new head.
       again = true;
       sum.changed = changedBefore;
+      plan = null;
+      continue;
+    }
+    if (confirmed.data?.status === 'incomplete' && sum.left === true && !again) {
+      // The service found part of what it forgot still readable: prepare once
+      // more, which may take what is left. The forget stays incomplete
+      // (`finished`): a later plan's check covers only what it takes.
+      again = true;
       plan = null;
       continue;
     }
@@ -1298,20 +1314,22 @@ function matchBodyOf(body, match) {
  *   `carry`: what a `retry` result carried, to resume its plan.
  * @returns {Promise<{status: 'forgotten'|'incomplete'|'already'|'nothing', forgotten: number,
  *     sentences: number, earlier: number, earlierSentences: number, changed: number, bundled: string[],
- *     dependents?: number, unreadable?: number, reworded?: number, affectedKeys?: [string, string][],
+ *     left?: boolean, dependents?: number, unreadable?: number, reworded?: number,
+ *     affectedKeys?: [string, string][],
  *     excluded: {statement: string, why: string}[], matched?: string, closest?: string[]}
- *   | {status: 'retry', code: string, delay: number|null, maybeDone?: boolean, carry: object}
+ *   | {status: 'retry', code: string, delay: number|null, maybeDone?: boolean, held?: boolean, carry: object}
  *   | {status: 'auth'|'failed', code: string}>}
  *   `forgotten` counts the memories the service verified forgotten now,
  *   `sentences` the sentences of the saved conversation that stated it,
  *   `earlier` the memories and `earlierSentences` the sentences already gone
  *   (forgotten before, by this request's in-chat forget or an earlier forget
  *   of the same words), and `changed` those kept because they changed
- *   meanwhile. `bundled`: forgotten memories that also held other
+ *   meanwhile. `left`: the service's own check found part of what it forgot
+ *   still readable (status `incomplete`). `bundled`: forgotten memories that also held other
  *   facts, so they went whole. `dependents`: memories outside the targets
  *   that relied only on what was forgotten, so they were forgotten too;
- *   `unreadable`: such memories that stay stored but cannot be read until the
- *   user says them again; `reworded`: such memories that stay stored,
+ *   `unreadable`: memories outside the targets that stay stored but cannot be read;
+ *   `reworded`: memories outside the targets that stay stored,
  *   rewritten to leave out what was forgotten (each only when not 0).
  *   `affectedKeys`: all of these memories, as [memoryKey, effect].
  *   `already`: everything it named was gone before. `retry`: the service was

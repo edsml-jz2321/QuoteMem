@@ -81,6 +81,21 @@ listening:
   URL never starts anything.
 - The service keeps running after the tools exit; `quotemem stop` stops the
   recorded instance only, after checking its command line.
+- Before any request that carries the token to a service on this computer,
+  `http.mjs` and the MCP server run `checkListener` (`listener.mjs`): the
+  program on the port must prove it holds the token (`GET /agent/listener`);
+  otherwise the request is not sent: `http.mjs` fails with `ELISTENER`, and
+  the MCP server answers `unreachable`. When it does not answer the check
+  (a service from 0.3.2 or older) and `service.lock` records an instance of
+  another release at this URL, `replaceOlder` stops that instance in a
+  detached `node autostart.mjs --replace` and starts the current release,
+  once per instance (`~/.quotemem/service.lock.replacing`); the hooks never
+  wait for it. Otherwise the first prompt of a session (`listenerNote`, or
+  the first memory question) gets one note saying what to do: `npx quotemem
+  stop` for an instance service.lock records, else stop the service the user
+  started (`olderState`). Queued batches and forgets refused this way keep
+  their attempts, and the time they are held does not count toward their age
+  (`heldMs`, at most a week).
 
 ## How an adapter uses it
 
@@ -255,8 +270,9 @@ longest a turn said before it can still wait unsaved, since a session file
 is closed, and its turns queued, a week after it was last touched. A batch
 queued later that holds the user's words from before a forget gets that
 forget again right behind it, waiting until the batch is stored. So words
-saved after a forget never bring the fact back: a turn read late from a
-transcript, or a run of Cursor's CLI, which is saved only when it ends.
+said before a forget and saved after it get that forget too: a turn read
+late from a transcript, or a run of Cursor's CLI, which is saved only when
+it ends.
 The same holds for the request's own message when the service's in-chat
 check does not read the request (a retraction, 把…忘掉, one after a list
 marker) and the message says something before it ("1. My locker code is
@@ -371,8 +387,8 @@ on; the adapter decides what counts as a subagent.
 - card numbers (Luhn checked), US social security numbers and Chinese
   resident ID numbers.
 
-It is pattern based and best effort. A message that is mostly a secret is
-skipped.
+It is pattern based: it redacts what these patterns match. A message that
+is mostly a secret is skipped.
 
 **The recall gate** (`isMemoryRelated`) is a local keyword test in English and
 Chinese.
@@ -385,33 +401,61 @@ Chinese.
   failed"), or a Chinese time word without one (上个月的销售数据).
 - **`broad`.** It also searches on such statements.
 
-`QUOTEMEM_RECALL=always` searches on every message, with a stricter score
-threshold.
+`QUOTEMEM_RECALL=always` searches on every message, and inserts only hits
+with a relevance of 0.3 or more.
+
+**What the service returns.** The agent service's `/memory/search` decides what
+comes back; the plugin keeps its order.
+- **Scores.** Each hit's score is a relevance in [0, 1): the query's cosine
+  with the text, joined with the share of the query's words it holds. It is
+  not scaled to the best hit.
+- **Floor.** No hit scored below 0.25 is returned. A near topic can still
+  pass it: a question about the user's dog may return the cat.
+- **Discounts.** An Evidence part (a quoted conversation line) keeps 0.8 of
+  its relevance, and so does a past memory.
+- **Order.** A smaller `top_k` returns the head of a larger one.
+- **Status.** Each memory hit carries a status, read from the whole store:
+  - `current`: it still holds. A past event that is still true, such as a
+    move last week, is current.
+  - `past`: it no longer holds. It was replaced, corrected or retracted, or
+    it is a state that has ended. When the service delivers what replaced
+    it, that hit comes directly above it.
+  - `possibly_outdated`: a later memory or message conflicts with it, and
+    nothing replaced it.
+- **Left out.** A user message that only asks or instructs is returned only
+  when the query asks what the user asked ("What did I ask you yesterday?").
+  A message whose memories are all past is not returned either; its
+  memories are, with their statuses.
 
 **Injection.**
+- `searchRecall` asks once for the service's largest list (`top_k` 20) and
+  inserts the first `QUOTEMEM_TOP_K` hits that fit. The later hits fill in
+  when a higher one is too long or was inserted a few turns ago.
+- An empty result inserts nothing: no block, no note.
+- Gated recall adds no score threshold of its own: the service's floor
+  applies. `QUOTEMEM_RECALL_MIN_SCORE` sets one; `always` mode uses 0.3, a
+  step above the service's floor of 0.25.
 - `formatRecall` marks the block as retrieved long-term memory and as
-  untrusted data, and keeps each hit's quoted source line.
-- It adds whole hits until `QUOTEMEM_MAX_INJECT_CHARS` is reached.
-- The agent service scores each hit as a relevance from 0 to 1 and returns
-  nothing below its own relevance floor, so a question it cannot answer gets
-  no hit and no block. Gated recall therefore adds no threshold of its own;
-  `QUOTEMEM_RECALL_MIN_SCORE` sets one (`always` mode uses 0.5).
-- A memory hit of the agent service carries a status read from the whole
-  store:
-  - `current`: it still holds. A past event that stays true, such as a move
-    last week, is current.
-  - `past`: it no longer holds. It was replaced, corrected or retracted, or
-    it is a state that has ended.
-  - `possibly_outdated`: something the user said later conflicts with it,
-    and nothing settled which holds.
-
-  A past or possibly outdated hit is marked `status="…"` on its tag. The
+  untrusted data, and keeps each hit's quoted source line. It adds whole
+  hits until `QUOTEMEM_MAX_INJECT_CHARS` is reached.
+- Each hit's tag shows its score. The block tells the model that a hit
+  matched a similar topic, not that it answers the message, to use a hit only
+  when it actually answers, and that a score below about 0.4 is a weak match.
+- A past or possibly outdated memory is marked `status="…"` on its tag. The
   block then says once what the marks mean: tell a past memory as how things
-  were and go by its replacement; say that a possibly outdated one may have
-  changed. An Evidence hit (one quoted conversation line, `role, date:
-  text`) is marked `kind="said"`: it is what was said on that date, not a
-  checked memory, and the notice says to go by a memory that says otherwise. The server's order is kept; it puts a replacement directly above
-  what it replaces.
+  were and go by its replacement; never state a possibly outdated one as
+  current, but say it may have changed, or ask.
+- A past memory goes in only directly below the hit the service put above it,
+  where the service puts its replacement, or first when the service put it
+  first. If that hit was inserted a few turns ago, it goes in again; if it
+  was left out for any other reason (too long, under the threshold, no room),
+  the past memory is left out too.
+- `QUOTEMEM_MAX_INJECT_CHARS` is at least 2500, and a smaller value is raised
+  to 2500: the block's own text and notes take about 2,000 characters.
+- An Evidence hit (one quoted conversation line, `role, date: text`) is
+  marked `kind="said"`. The block then says once that it is what was said
+  on that date, not a checked memory, and that a memory saying otherwise
+  wins.
 - Inject the block into the model context only, never into the user's
   visible transcript where the host offers the choice.
 
@@ -530,6 +574,12 @@ Periods inside a word ("v2.3", "a.b@example.com") never split.
      `withheld_spans` n, forgets n sentences: the fact was in the saved
      conversation, but no memory stated it. `forgotten_earlier` was gone
      before, and `changed` was kept.
+   - A last outcome `left_readable` (no memory id, status `incomplete`) says
+     the service's own check found part of what it forgot still readable.
+     The plan is prepared once more, which may take what is left, but the
+     forget is never reported as forgotten: the note tells the model that
+     part of it may still be stored and that the user can ask again in other
+     words.
    - A plan confirmed again (its first confirmation failed or its answer was
      lost) counts a `forgotten_earlier` target as forgotten by this forget:
      every target was current when the plan was prepared, so the first
@@ -609,7 +659,7 @@ Periods inside a word ("v2.3", "a.b@example.com") never split.
 
 | Outcome | The note says |
 |---|---|
-| Forgotten | Done, with the number of memories and of sentences forgotten (and the memory's text after a search match). A memory forgotten whole because it held other facts too is quoted, so the model can say what else went. Other memories that relied only on what was forgotten, and went with it, are counted with the memories and said apart ("2 stored memories were forgotten (1 of them because it relied only on what the user asked to forget)"); one that stays stored but can no longer be read until the user says it again is counted too. A memory the service reworded to leave out what was forgotten stays stored: it is counted apart, never as forgotten ("1 related memory was reworded to leave out what the user asked to forget"), and the model may tell the user that it was kept but reworded. These are never quoted. A memory the service quoted anew, which stays readable, is not counted |
+| Forgotten | Done, with the number of memories and of sentences forgotten (and the memory's text after a search match). A memory forgotten whole because it held other facts too is quoted, so the model can say what else went. Other memories that relied only on what was forgotten, and went with it, are counted with the memories and said apart ("2 stored memories were forgotten (1 of them because it relied only on what the user asked to forget)"); a related memory that stays stored but can no longer be read is counted too. A memory the service reworded to leave out what was forgotten stays stored: it is counted apart, never as forgotten ("1 related memory was reworded to leave out what the user asked to forget"), and the model may tell the user that it was kept but reworded. These are never quoted. A memory the service quoted anew, which stays readable, is not counted |
 | Already gone | It is not in memory: what matched was forgotten before; never "done" with a count |
 | Nothing matched | Nothing was forgotten now; when the service's in-chat forget reads the request too, that it may still find it when the turn is saved; never "done" |
 | Nothing matched, close memories found | Nothing was forgotten yet; the closest memories, which the model may forget by their exact text if one is clearly meant |
@@ -624,7 +674,7 @@ internal to repeat.
 **A forget reported later.** The note for a forget that finished in the
 background comes with the next message of the same user, perhaps in another
 conversation. A plain success (something was forgotten, and no related memory
-went with it, was forgotten whole or was reworded) is the exception: only the
+was affected, forgotten whole or reworded) is the exception: only the
 conversation that asked for it is told, at its next message. It says only
 that an earlier request to forget something has finished, with the same
 outcome and counts as above. It never quotes the request, the forgotten
@@ -708,6 +758,7 @@ mode 0700 and each file 0600.
 | `owners/<owner>/flusher.lock` | This owner's one running flusher (host, boot time, pid), refreshed every 10 s |
 | `idle/<hash>.lock` | The one flusher that waits for the idle chats of one service and credential (host, boot time, pid), refreshed at each wake |
 | `owners/<owner>/owner.json` | An owner whose idle chats that flusher saves: its user, its settings without the token, and a hash of its credential |
+| `state.key` | A random key of the state folder (0600): hashes of a token kept in the folder are HMACs under it |
 | `owners/<owner>/forgets.json` | This owner's forgets still running when their note was given |
 | `owners/<owner>/results/<key>.json` | A forget's outcome (counts only once its note was given), kept for a day |
 | `owners/<owner>/chat-forgets.json` | What the service's in-chat forget did, counts and request-word hashes only, until the next message reports it |
@@ -744,7 +795,9 @@ least), a session after a week.
 - Hooks only create new job files; only the flusher changes or removes them.
 - A stale lock is broken by renaming it aside. A lock is stale when its owner
   is gone (another boot, a dead pid), or when a file from another host has
-  not been written for hours.
+  not been written for hours. One process at a time breaks it, holding
+  `<lock>.break` with its own owner record; another process removes that
+  file only once its owner is gone.
 - A batch is dropped after `QUOTEMEM_CAPTURE_MAX_ATTEMPTS` attempts or
   `QUOTEMEM_CAPTURE_MAX_AGE_MS`.
 - A batch the service has not saved, or a forget, may get
@@ -920,14 +973,15 @@ All functions are exported from `index.mjs`.
 | `gate.mjs` | `isMemoryRelated(text, {statements})`, `sentences`, `isQuestion`, `isTrivial`, `isCommand`, `endsWithQuestion` |
 | `redact.mjs` | `redactText(text) → {text, secretOnly, kinds}` |
 | `format.mjs` | `formatRecall(hits, {maxChars, maxHits, minScore, keepUnscored, skipIds}) → {text, ids} \| null`, `hitMemory(content) → {statement, status, quotes} \| null`, `forgetNote(statement, result, {earlier})`, `unavailableNote()`, `fitContext(text, maxChars)` (cut to a size without cutting a block: the oldest notes go first), `RECALL_HEADER`, `FORGET_HEADER`, `UNAVAILABLE_HEADER` |
-| `http.mjs` | `healthOk(settings, timeoutMs)`, `postJson(settings, route, body, signal, headers)`, `callJson(settings, route, body, {deadlineMs, signal, attempts})`, `authHeaders`, `errKind`, `codeOf`, `retryable`, `retryAfterMs` |
+| `http.mjs` | `healthOk(settings, timeoutMs)`, `postJson(settings, route, body, signal, headers)` (to a service on this computer only after `checkListener`, at the address it checked), `callJson(settings, route, body, {deadlineMs, signal, attempts})`, `authHeaders`, `errKind`, `codeOf`, `retryable`, `retryAfterMs` |
+| `listener.mjs` | `checkListener(settings, {timeoutMs, signal, connection})` → `{ok, url}` or `{ok: false, kind, why}` (`older`, `foreign`, `no-token`, `no-answer`) or `{ok: false, refused}`: whether the program on the port of a service on this computer (`onThisComputer`: `localhost`, any `127.` address, `[::1]`, 0.0.0.0, `[::]`) proves it holds the token (`GET /agent/listener` and `listenerProof(token, address, port, challenge)`), and the one URL a request must use (`pinnedUrl`: `localhost` and 0.0.0.0 are 127.0.0.1, `[::]` is ::1); `refused`: nothing listens, send nothing. `describeRefusal(settings, verdict)` (doctor and status: reads the owner of the port), `listenerAddress`, `plainAddress` (IPv4-mapped IPv6 as IPv4), `thisComputerHost`, `OWNER_LOOKUP_MS`. Every request that carries the token is checked; no verdict is kept. `listenerConnection(url)` → `{agent, close}`: one connection for a check and the requests it guards; `requestOn(connection, url, init)` → `{status, headers, body}` sends on it, and fails with `ELISTENER_CLOSED` (nothing sent) once that connection closed. `onThisComputer` also covers `localhost.` and names under `localhost` |
 | `capture.mjs` | `newCaptureState()`, `recordTurn(settings, state, {users, assistant, turn, completed}, {label}) → due`, `cutBatch(settings, state, sessionId, {untimed}) → jobs`, `buildJobs(settings, sessionId, first, last, messages, now, {untimed})` (`untimed`: a request id from the words only, for turns read again from a transcript), `wireMessage`, `textOf`, `sha16` |
-| `recall.mjs` | `recallQuery(settings, text, {statements}) → query \| null`, `searchRecall(settings, query, {signal, skipIds, breaker, log, report}) → block \| null` (`report.unavailable` when the service could not answer), `searchBody` (asks for at least `SEARCH_MIN_HITS` = 10), `recallBlock`, `RecallBreaker`, `newRecallMemo`, `recallTurn`, `recentIds`, `rememberIds` |
+| `recall.mjs` | `recallQuery(settings, text, {statements}) → query \| null`, `searchRecall(settings, query, {signal, skipIds, breaker, log, report}) → block \| null` (`report.unavailable` when the service could not answer), `searchBody` (asks for `SEARCH_HITS` = 20), `recallBlock`, `RecallBreaker`, `newRecallMemo`, `recallTurn`, `recentIds`, `rememberIds` |
 | `forget.mjs` | `detectForget(text, {previous}) → statements`, `isForgetRequest`, `forgetBody(settings, sessionId, turnKey, statement)`, `forgetRequestId`, `requestKey(words)` (a hash of a request's words that matches the service's in-chat outcome of it), `noteForgotten(env, {url, userId}, statement, at)`, `forgottenOf(env, {url, userId})`, `forgottenFile`, `FORGOTTEN_KEEP_MS` (forgets to apply again, kept a week), `carryOnDisk(carry)`, `runForget(settings, body, {signal, substitute, carry}) → {status: 'forgotten' \| 'already' \| 'incomplete' \| 'nothing', forgotten, sentences, earlier, changed, bundled, excluded, matched?, closest?} \| {status: 'retry', code, carry} \| {status: 'auth' \| 'failed', code}`, `statementsOf(hits)`, `sameFact(words, statement)`, `saidIn(words, quote)`, `quotedMatch(words, hits)` |
 | `send.mjs` | `sendAdd(settings, job, signal) → stored \| pending \| deferred \| retry \| …`, `deferMs`, `pollDelayMs`, `ADD_HEADERS`, `rotateJob`, `backoffMs`, `validJob` |
 | `diskqueue.mjs` | `DiskQueue` (`enqueue`, `entries`, `has`, `result`, `markResultRead`, `waitResult`, `startFlusher({env})`, `flusherRunning`, `noteContact`, `contactAt`, `probedAt`), `PROBE_EVERY_MS`, `ACCEPTED_READ_TIMEOUT_MS`, `ACCEPTED_MAX_WAIT_MS`, `FORGET_CONFLICT_ATTEMPTS`, `runFlusher(settings, log, {signal})`, `FLUSHER_PATH` |
 | `lock.mjs` | `tryLock`, `releaseLock`, `touchLock`, `lockHeld`, `withLock(file, fn, {timeoutMs, staleMs})`, `writeFileAtomic`, `readJson` |
-| `proc.mjs` | `homeDir(env)` (the one home every part uses, as Python's Path.home(): USERPROFILE, then HOMEDRIVE+HOMEPATH on Windows; HOME elsewhere; then the OS's), `spawnDetached(command, args, {env, cwd, logFile, label})` → `{pid, via, on}` (a detached process that holds none of this process's handles; on Windows started through WMI, else `Start-Process`), `spawnDetachedAsync` and `settleLaunches(ms)` (the same without holding the caller up; wait before exiting), `launcherCheck`, `userPort`, `portOwner`, `alive(pid)`, `ownerRecord`, `ownerGone`, `bootTime`, `hostName` |
+| `proc.mjs` | `homeDir(env)` (the one home every part uses, as Python's Path.home(): USERPROFILE, then HOMEDRIVE+HOMEPATH on Windows; HOME elsewhere; then the OS's), `spawnDetached(command, args, {env, cwd, logFile, label})` → `{pid, via, on}` (a detached process that holds none of this process's handles; on Windows started through WMI, else `Start-Process`), `spawnDetachedAsync` and `settleLaunches(ms)` (the same without holding the caller up; wait before exiting), `launcherCheck`, `userPort`, `portOwner`, `portOwnerAsync(port, address, {timeoutMs, signal})` (doctor and status only), `alive(pid)`, `ownerRecord`, `ownerGone`, `bootTime`, `hostName` |
 | `log.mjs` | `makeLog(settings, write)`, `fileSink(file)` |
 | `hooks.mjs` | `HookMemory` (`prompt`, `reply`, `begin`, `catchUp`, `end`, `endSync`, `sweep`, `flush`, `reached`, `withForgetsAgain`, `openTurn`), `alignTurns(heads, seen)`, `queueOwnerSessions(env)` |
 | `native.mjs` | `markNative(env, host)`, `nativeInstalled(env, host)`, `nativeMarkers(env)` (markers in `QUOTEMEM_STATE_DIR` when set, else `~/.quotemem/native`), `foreignHost(payload, env)` (`cursor` or `devin`), `nativeAdapterFor(host, env, payload)`: keep a turn from being saved twice when one host also runs another host's hooks (Cursor: hook files or a recent marker; Devin: hook files in the project, the folders above it up to the repository root, or the user config); `cursorPromptContext(mode, version)`, `CURSOR_CONTEXT_VERSION` (the app), `CURSOR_CLI_CONTEXT_VERSION` (the CLI): whether a Cursor prompt hook may add context; `cursorCliVersion(version)`: a version of Cursor's CLI (numbered by date) |

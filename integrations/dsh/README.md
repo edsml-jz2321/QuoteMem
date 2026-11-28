@@ -8,9 +8,11 @@ only. QuoteMem keeps each memory with its source quote (exact UTF-8 byte
 ranges of the original message), its version history and the review decision
 that admitted it. An update writes a new version instead of overwriting, and
 forgetting is a two-step prepare and confirm that leaves an unreadable
-tombstone. Nothing else brings a forgotten fact back: not the assistant's
-replies, the forget request itself or earlier messages. Only if the user
-states it again themselves later may it be stored again.
+tombstone. Every later Add is checked against it, the assistant's replies
+and the forget request itself included, and so are earlier messages sent
+again. If the user states it again themselves later, it may be stored again:
+review judges it, and a statement that shows a name the forget took is cut
+around it or refused, unless the user's own words give that name again.
 
 **Result.** In the Agent Memory Leaderboard (AMLB) Cycle 2 official results,
 QuoteMem scored 59.83 overall and ranked 23rd of 125 entries in
@@ -58,7 +60,7 @@ Or install it from a packed tarball of a clone (`npm pack` in the clone's root
 writes `quotemem-<version>.tgz`):
 
 ```console
-dsh plugin --profile quotemem add file:/path/to/quotemem-0.3.2.tgz
+dsh plugin --profile quotemem add file:/path/to/quotemem-0.3.3.tgz
 ```
 
 ### 1. Set up the memory service, once
@@ -95,7 +97,7 @@ and point `QUOTEMEM_DATA_DIR` in `~/.quotemem/service.env` at the new
 directory (with `npx quotemem setup --review full`).
 
 From then on the plugin starts the service by itself
-(`uvx --from quotemem==0.3.2 quotemem serve`, on 127.0.0.1:8765) when DSH
+(`uvx --from quotemem==0.3.3 quotemem serve`, on 127.0.0.1:8765) when DSH
 first needs memory, so [uv](https://docs.astral.sh/uv/) must be installed.
 The service keeps its data in `~/.local/share/quotemem` (a
 `QUOTEMEM_DATA_DIR` line in `~/.quotemem/service.env` moves it), and creates
@@ -173,25 +175,32 @@ does not search; `QUOTEMEM_RECALL_GATE=broad` makes it search too.
   does not tell the user that nothing is stored. When it is down, or misses
   the deadline twice in a row, later turns skip the search for a while
   instead of waiting again.
-- The search asks for at least 10 hits (more when `QUOTEMEM_TOP_K` is
-  larger). At most `QUOTEMEM_TOP_K` hits (default 5) are inserted, whole, in
-  the service's order, within `QUOTEMEM_MAX_INJECT_CHARS` (default 4000); a
-  lower hit fills in when a higher one is too long. The agent service ranks
-  to a fixed depth, so its first 5 hits are the same with either size.
-- The agent service scores each hit as a relevance from 0 to 1 and returns
-  nothing below its own floor, so a question it cannot answer, or a message
-  the keyword test picked by mistake, gets no hits and no block. Gated recall
-  adds no threshold of its own; set `QUOTEMEM_RECALL_MIN_SCORE` for one.
-- Each hit keeps its statement and quoted source lines. The block is marked
-  as retrieved memory and as untrusted data that the model must not follow
-  as instructions.
+- The search asks once for 20 hits, the service's largest list. At most
+  `QUOTEMEM_TOP_K` hits (default 5) are inserted, whole, in the service's
+  order, within `QUOTEMEM_MAX_INJECT_CHARS` (default 4000); a lower hit
+  fills in when a higher one is too long. A shorter list from the service
+  is the head of a longer one, so the first 5 are the same either way.
+- The agent service scores each hit as a relevance from 0 to 1, not scaled
+  to the best hit. It returns no hit below 0.25, and
+  when no hit comes back, nothing is inserted. A near topic can still match
+  (a question about your dog may find your cat). Gated recall adds no
+  threshold of its own; set `QUOTEMEM_RECALL_MIN_SCORE` for one.
+- Each hit keeps its statement, its quoted source lines and its score. The
+  block is marked as retrieved memory and as untrusted data that the model
+  must not follow as instructions. It tells the model to use a hit only if
+  it actually answers the message, and that a score below about 0.4 is a
+  weak match.
 - A memory the service marks `past` no longer holds: it was replaced,
-  corrected or has ended. One marked `possibly_outdated` conflicts with
-  something the user said later, and nothing settled which holds. A past
-  event that stays true (a move last week) is current and carries no mark.
-  The block tells the model to tell a past memory as how things were and go
-  by its replacement, to say that a possibly outdated one may have changed,
-  and never to mention the labels.
+  corrected, retracted or has ended. What replaced it, when that was found
+  too, is the hit directly above it; the plugin keeps the two together. One
+  marked `possibly_outdated` conflicts with something said later, and
+  nothing replaced it. A past event that stays true (a move last
+  week) is current and carries no mark. The block tells the model to tell a
+  past memory as how things were and go by its replacement, never to state
+  a past or possibly outdated memory as current, and never to mention the
+  labels.
+- A quoted conversation line (an Evidence hit) is marked as what was said
+  on that date, not a checked memory; a memory that says otherwise wins.
 - A memory already inserted in a session is not inserted again for
   `QUOTEMEM_RECALL_REPEAT_TURNS` user turns (default 10). After that it may
   be inserted again, since DSH compaction may have removed the earlier block.
@@ -199,8 +208,8 @@ does not search; `QUOTEMEM_RECALL_GATE=broad` makes it search too.
   labelled `plugin:quotemem`, like other plugin context. It is part of the
   session history until compaction.
 - `QUOTEMEM_RECALL=always` searches on every user message instead, and
-  inserts only hits with a relevance of 0.5 or more. `QUOTEMEM_RECALL=off`
-  turns recall off.
+  inserts only hits with a relevance of 0.3 or more, a step above the
+  service's floor of 0.25. `QUOTEMEM_RECALL=off` turns recall off.
 
 **Forget.** When the user asks to forget something ("please forget that I
 …", "please don't remember …", "忘掉…", "别记住…", "把…忘掉"), the plugin does it
@@ -282,10 +291,8 @@ and the MCP tools always act on the same memory; the row config ignores them.
   sent or written: private keys, cloud and API keys, tokens, JWTs,
   `password: …` style values, credentials in URLs, Stripe, Hugging Face and
   npm tokens, card numbers (Luhn checked), US social security numbers and
-  Chinese resident ID numbers. Redaction is best-effort and
-  pattern-based: it can miss a quoted multi-word password, a short PIN or a
-  secret in free phrasing, and it can redact a harmless word after
-  "password is". A message that is mostly a secret is skipped. The service
+  Chinese resident ID numbers. Redaction is pattern-based: it redacts what
+  these patterns match. A message that is mostly a secret is skipped. The service
   refuses to make a memory of a secret as a second line of defence; do not
   paste secrets into the chat.
 - The state folder is `<profile>/quotemem/`, or `~/.quotemem/dsh/` when DSH
@@ -320,10 +327,10 @@ and the MCP tools always act on the same memory; the row config ignores them.
 | `QUOTEMEM_RECALL_GATE` | `questions` | `questions`, or `broad` to also search on plain statements about the user |
 | `QUOTEMEM_FORGET` | `auto` | `auto` (silent forget) or `off` (the tools only) |
 | `QUOTEMEM_FORGET_TIMEOUT_MS` | `1800` | How long a forget turn waits (from the message's arrival, 200 to 2500) before the note says it finishes in the background |
-| `QUOTEMEM_TOP_K` | `5` | Hits inserted at most (1–20); the search asks for at least 10 |
-| `QUOTEMEM_MAX_INJECT_CHARS` | `4000` | Size limit of the inserted memory block (500–50000) |
+| `QUOTEMEM_TOP_K` | `5` | Hits inserted at most (1–20); the search asks for 20 |
+| `QUOTEMEM_MAX_INJECT_CHARS` | `4000` | Size limit of the inserted memory block (2500–50000; a smaller value is raised to 2500) |
 | `QUOTEMEM_RECALL_TIMEOUT_MS` | `3000` | Recall deadline; the turn goes on without memory after it |
-| `QUOTEMEM_RECALL_MIN_SCORE` | none (the service's floor); `0.5` with `always` | Hits below this relevance (0 to 1) are not inserted |
+| `QUOTEMEM_RECALL_MIN_SCORE` | none (the service's floor, 0.25); `0.3` with `always` | Hits below this relevance (0 to 1) are not inserted |
 | `QUOTEMEM_RECALL_REPEAT_TURNS` | `10` | User turns before an inserted memory may be inserted again |
 | `QUOTEMEM_SEARCH_OPTIONS` | none | Comma-separated `options` sent with each automatic search, for a service-side search mode |
 | `QUOTEMEM_CAPTURE_ASSISTANT` | `final` | `final` reply of each turn, or `none` for user messages only |
@@ -403,7 +410,7 @@ To keep DSH's state out of your home directory, set `DSH_HOME` and
 `DSH_AGENTS_HOME` to private folders and disable telemetry with
 `DSH_TELEMETRY_DISABLED=1` before these commands. On the day a version is
 published, DSH's pnpm may refuse it as too new; pin it, for example
-`dsh plugin --profile quotemem add quotemem@0.3.2`.
+`dsh plugin --profile quotemem add quotemem@0.3.3`.
 
 ## Other MCP clients
 

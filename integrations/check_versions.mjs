@@ -48,7 +48,8 @@ export function docVersionProblems(root, version) {
   for (const file of docFiles(root)) {
     for (const mention of versionMentions(fs.readFileSync(file, 'utf8'))) {
       if (mention.version !== version) {
-        const where = `${path.relative(root, file)}:${mention.line}`;
+        // The path as the repository names it, with `/` on every system.
+        const where = `${path.relative(root, file).split(path.sep).join('/')}:${mention.line}`;
         problems.push(`${where} names quotemem ${mention.version}, not ${version}`);
       }
     }

@@ -34,7 +34,7 @@ answers each judge-batch-v8 request locally and deterministically:
 - every other target is ``independent``;
 - a tombstone whose statement the member nearly restates (Jaccard at least
   ``RESTATES_JACCARD``, or the member holding ``RESTATES_CONTAINMENT`` of its
-  tokens) is ``restates``, so a forgotten fact still is not learned again;
+  tokens) is ``restates``, which rejects the member;
   any other tombstone is ``other``.
 
 The verdicts pass the same acceptance, persistence, confirmation votes

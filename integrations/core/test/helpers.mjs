@@ -8,6 +8,7 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 export const CORE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const { listenerProof, plainAddress } = await import(pathToFileURL(path.join(CORE, 'listener.mjs')).href);
 
 // No test starts a real memory service: settings resolved from this process's
 // environment (and every child that inherits it) keep autostart off. The
@@ -22,15 +23,16 @@ export const TOKEN = 'qm-core-test-token-5d2b';
 // turns the check off (a machine whose own plugins write there meanwhile).
 const REAL_QUOTEMEM = path.join(os.userInfo().homedir, '.quotemem');
 const GUARDED = ['service.env', 'service.lock', 'env', 'token', 'direct-start.json'];
-// And the native-adapter markers (native/<host>.json).
-const nativeFiles = () => {
+// And the native-adapter markers (native/<host>.json) and the kept forgets
+// (forgotten/<owner>.json).
+const filesIn = (folder) => {
   try {
-    return fs.readdirSync(path.join(REAL_QUOTEMEM, 'native')).map((name) => path.join('native', name));
+    return fs.readdirSync(path.join(REAL_QUOTEMEM, folder)).map((name) => path.join(folder, name));
   } catch {
     return [];
   }
 };
-const snapshot = () => [...GUARDED, ...nativeFiles()].map((name) => {
+const snapshot = () => [...GUARDED, ...filesIn('native'), ...filesIn('forgotten')].map((name) => {
   try {
     const stat = fs.statSync(path.join(REAL_QUOTEMEM, name));
     return `${name}:${stat.size}:${stat.mtimeMs}`;
@@ -46,6 +48,14 @@ process.on('exit', () => {
   process.stderr.write(`a test changed the real profile's ${REAL_QUOTEMEM}:\nbefore:\n${before}\nafter:\n${now}\n`);
   process.exitCode = 1;
 });
+
+// What a Windows program needs in an environment a test builds from scratch:
+// SystemRoot (and cmd.exe's ComSpec and PATHEXT), as every real host passes
+// them; the background sender's start through PowerShell reads SystemRoot.
+// Empty on other systems.
+export const WINDOWS_ENV = process.platform === 'win32'
+  ? Object.fromEntries(['SystemRoot', 'ComSpec', 'PATHEXT'].filter((k) => process.env[k]).map((k) => [k, process.env[k]]))
+  : {};
 
 export const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -84,6 +94,23 @@ export function treeTexts(dir) {
   return out;
 }
 
+/**
+ * A stub's answer to a plugin's listener check (GET /agent/listener) when
+ * the test gives the route no handler: the proof of a current service that
+ * holds `token`, for the address and port the request reached (as the
+ * service's listener_proof). True when it answered.
+ */
+export function listenerCheck(req, res, handlers = {}, token = TOKEN) {
+  if (req.url !== '/agent/listener' || handlers[req.url]) return false;
+  const challenge = String(req.headers['x-quotemem-challenge'] ?? '');
+  const proof = listenerProof(token, plainAddress(req.socket.localAddress), req.socket.localPort, challenge);
+  // Keep-alive, as the real service: the request goes on the connection the
+  // check proved (core/listener.mjs listenerConnection).
+  res.writeHead(200, { 'content-type': 'application/json' });
+  res.end(JSON.stringify({ proof }));
+  return true;
+}
+
 /** A fresh private temp folder, removed at exit. */
 export function tempDir(prefix = 'qm-core-') {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -111,7 +138,9 @@ export function forgetTargetRefusal(route, body) {
   return { status: 422, body: { code: 'invalid_request', retryable: false, detail: 'invalid_request' } };
 }
 
-export async function stubServer(handlers = {}, port = 0) {
+export async function stubServer(handlers = {}, port = 0, { token = TOKEN } = {}) {
+  // The token whose proof the stub gives (setToken: the service of another token).
+  let proofToken = token;
   const requests = [];
   let inflight = 0;
   const stats = { maxInflight: 0 };
@@ -121,6 +150,12 @@ export async function stubServer(handlers = {}, port = 0) {
     stats.maxInflight = Math.max(stats.maxInflight, inflight);
     req.on('data', (c) => chunks.push(c));
     req.on('end', async () => {
+      // The listener check of a plugin (core/http.mjs checkListener) is not
+      // recorded, unless a test gives the route a handler of its own.
+      if (listenerCheck(req, res, handlers, proofToken)) {
+        inflight -= 1;
+        return;
+      }
       let body = null;
       try { body = JSON.parse(Buffer.concat(chunks).toString('utf8') || 'null'); } catch { body = null; }
       const entry = { route: req.url, headers: req.headers, body, at: Date.now() };
@@ -131,7 +166,8 @@ export async function stubServer(handlers = {}, port = 0) {
       if (answer.delay) await sleep(answer.delay);
       inflight -= 1;
       if (res.destroyed) return;
-      res.writeHead(answer.status ?? 200, { 'content-type': 'application/json', connection: 'close', ...(answer.headers ?? {}) });
+      // A listener check (a test's own handler) keeps the connection, as the real service.
+      res.writeHead(answer.status ?? 200, { 'content-type': 'application/json', ...(req.url === '/agent/listener' ? {} : { connection: 'close' }), ...(answer.headers ?? {}) });
       res.end(JSON.stringify(answer.body ?? {}));
     });
   });
@@ -143,6 +179,7 @@ export async function stubServer(handlers = {}, port = 0) {
     requests,
     stats,
     handlers,
+    setToken: (value) => { proofToken = value; },
     of: (route) => requests.filter((r) => r.route === route),
     close: () => new Promise((resolve) => {
       server.closeAllConnections?.();

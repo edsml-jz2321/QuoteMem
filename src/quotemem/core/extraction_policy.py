@@ -226,8 +226,8 @@ Both find the same requests. ``explicit-request-v1`` (the benchmark modes) forge
 memories the judge picks, keeps the memory recording the request and the request sentence,
 and marks the sentences that still state the fact, which Search shows with a note.
 
-``explicit-request-v2`` (the ``agent`` mode) leaves nothing that states the
-forgotten fact readable (``service/forget_statement.py``):
+``explicit-request-v2`` (the ``agent`` mode) also takes what still states the
+forgotten fact (``service/forget_statement.py``):
 
 - the memories recording this Add's requests ("The user asked to forget that ...") are
   forgotten with the fact, so a memory made in the same Add never outlives the request;
@@ -236,12 +236,13 @@ forgotten fact readable (``service/forget_statement.py``):
   only Search's hits, and the sentences it picks are withheld by the forget instead of
   marked;
 - every other current memory that shares words with a forgotten statement is judged against
-  it, so a memory whose own statement still states the fact goes too, whatever its quotes;
+  it, and one the judge finds still stating the fact goes too, whatever its quotes;
 - a memory left with no readable support, every quote withheld by a forget, is forgotten as
   well (also after a confirmed forget by statement), so new support cannot bring it back;
 - what the user states again in their own words after the forget (no request, no question,
-  dated after it) is learned again, by review and in Search (``core/relearn.py``);
-  every other restatement is still denied.
+  dated after it, and showing no forgotten name) is not refused by its tombstone, and
+  Search lifts its shadow terms for it; review judges it (``core/relearn.py``); every other
+  restatement is still checked against the tombstone.
 """
 CHAT_FORGET_COMPLETE: Final[ChatForgetRule] = "explicit-request-v2"
 """The in-chat forget rule that forgets completely (``ChatForgetRule``)."""

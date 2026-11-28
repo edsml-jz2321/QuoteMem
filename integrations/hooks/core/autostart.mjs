@@ -10,6 +10,7 @@
 //   ~/.quotemem/service.env   the service's settings (mode 0600; keys stay here)
 //   ~/.quotemem/service.lock  the one started instance: pid, start time, URL
 //   ~/.quotemem/service.log   its output (the previous start's in service.log.1)
+//   ~/.quotemem/service.lock.replacing  the older instance last replaced (replaceOlder)
 //
 // Rules:
 // - Only a loopback service URL is ever started (QUOTEMEM_URL unset, or
@@ -36,7 +37,7 @@ import { lockOwned, readJson, tryLock, writeFileAtomic } from './lock.mjs';
 import { DIRECT_START_FILE, alive, bootTime, homeDir, hostName, spawnDetached } from './proc.mjs';
 
 /** The service release these plugins start; check_package.mjs keeps it equal to package.json. */
-export const SERVICE_RELEASE = '0.3.2';
+export const SERVICE_RELEASE = '0.3.3';
 /** Where `quotemem serve` listens unless told otherwise (the service's DEFAULT_PORT). */
 export const DEFAULT_PORT = 8765;
 const LOOPBACK = new Set(['localhost', '127.0.0.1', '[::1]']);
@@ -334,6 +335,10 @@ export function capLog(file, { rotate = false } = {}) {
 }
 
 const NOTES = {
+  older: 'The QuoteMem memory service the agents started on this computer cannot show it holds your token, so the agents send it nothing and have no memory; what you say is kept on this computer until it can. If it is from an older release, restart it once with the current release: run `npx quotemem stop` (the agents then start the current one; if automatic start is off, start it as you usually do). Otherwise `npx quotemem doctor` shows who holds the port.',
+  'older-hand': 'The program on the port of the QuoteMem memory service on this computer was not started by the agents and cannot show it holds your token, so the agents send it nothing and have no memory; what you say is kept on this computer until it can. If it is a QuoteMem service you started yourself from an older release, stop it (in its terminal or service manager; `npx quotemem stop` cannot, as no agent started it) and start the current release, for example with `uvx quotemem@latest serve`. Otherwise `npx quotemem doctor` shows who holds the port.',
+  listener: 'Another program holds the port of the QuoteMem memory service on this computer and cannot show it holds your token, so the agents send it nothing and have no memory; what you say is kept on this computer until the service is back. Run `npx quotemem doctor` to see what holds the port (two people signed in at once need a port each).',
+  restarting: 'After an upgrade, the QuoteMem memory service is being restarted with the current release, so memory is off for now. It is back once the new service has started, usually within a minute or two (the first start of a new release can take a few minutes); what you say meanwhile is kept and saved then.',
   'no-setup': 'The QuoteMem memory service is not running, and it is not set up to start by itself. Run `npx quotemem setup` once; after that it starts whenever an agent needs it.',
   'no-uvx': 'The QuoteMem memory service is not running and cannot start by itself: uvx is not on PATH. Install uv (https://docs.astral.sh/uv/), then it starts whenever an agent needs it.',
   'other-url': 'Another agent tool already started the QuoteMem memory service on this computer, at a different address than this tool uses (QUOTEMEM_URL). Use the same QUOTEMEM_URL in every tool, or leave it unset everywhere.',
@@ -574,6 +579,15 @@ export async function stopService(env = process.env, { waitMs = 15_000 } = {}) {
   }
   if (pid === null) return { stopped: false, message: 'the memory service was started, but its pid is not known; stop the process that runs `quotemem serve` yourself' };
   if (state.ours === null) return { stopped: false, message: `could not read the command line of pid ${pid}; stop it yourself if it is the memory service` };
+  if (!(await stopProcess(pid, waitMs))) return { stopped: false, message: `the memory service (pid ${pid}) did not stop` };
+  removeLock(paths.lock, state.record.nonce);
+  return { stopped: true, message: `stopped the memory service (pid ${pid})` };
+}
+
+// Stop a started service process: its whole process group on POSIX (uvx and
+// the service under it), SIGTERM and then SIGKILL after `waitMs`; its tree on
+// Windows. Whether it is gone.
+async function stopProcess(pid, waitMs) {
   if (process.platform === 'win32') {
     try {
       execFileSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true, timeout: 15_000 });
@@ -581,8 +595,6 @@ export async function stopService(env = process.env, { waitMs = 15_000 } = {}) {
       // checked below
     }
   } else {
-    // The started process leads its own process group (uvx and the service
-    // under it): the whole group is stopped, and waited for.
     const signal = (name) => {
       try { process.kill(-pid, name); } catch { try { process.kill(pid, name); } catch { /* gone */ } }
     };
@@ -593,12 +605,96 @@ export async function stopService(env = process.env, { waitMs = 15_000 } = {}) {
   }
   const end = Date.now() + 5000;
   while (groupAlive(pid) && Date.now() < end) await sleep(100);
-  if (alive(pid)) return { stopped: false, message: `the memory service (pid ${pid}) did not stop` };
-  removeLock(paths.lock, state.record.nonce);
-  return { stopped: true, message: `stopped the memory service (pid ${pid})` };
+  return !alive(pid);
+}
+
+// How long a replacement of one recorded instance is not asked for again
+// (a stop that failed is tried again after it).
+export const REPLACE_AGAIN_MS = 10 * 60_000;
+
+/**
+ * For a listener that does not answer the listener check (listener.mjs):
+ * `older` when service.lock records a running service these plugins
+ * started at this URL (`npx quotemem stop` stops it), else `older-hand`
+ * (the user started it some other way, so only the user can stop it).
+ * Reads the lock only; never waits.
+ * @returns {'older'|'older-hand'}
+ */
+export function olderState(settings) {
+  return recordedHere(settings) ? 'older' : 'older-hand';
+}
+
+// The running instance service.lock records for this URL, or null.
+function recordedHere(settings) {
+  const local = settings?.localService;
+  if (!local?.dir) return null;
+  try {
+    const current = stateOf(pathsIn(local.dir), { checkCommand: false });
+    const record = current.record;
+    if (!record || !current.running || typeof record.url !== 'string' || endpointOf(record.url) !== endpointOf(settings.url)) return null;
+    return record;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The listener at the service URL does not answer the listener check
+ * (listener.mjs): when it may be the service these plugins started from an
+ * older release (service.lock records this URL, a release other than
+ * SERVICE_RELEASE and a running pid), stop that instance in the background
+ * and start the current release, once per instance. Quick: it never waits.
+ * No token goes to the listener meanwhile; the next call finds the
+ * current service, which proves itself.
+ * @returns {{state: 'restarting'|'older'|'older-hand', pid?: number}}
+ *   `older`: a running instance is recorded for this URL, but it cannot be
+ *   replaced (automatic start is off, or it is the current release): `npx
+ *   quotemem stop` stops it. `older-hand`: none is recorded (the user started
+ *   the service another way): the user must stop it.
+ */
+export function replaceOlder(settings, { env = process.env, log, spawnFn = spawnDetached, now = Date.now() } = {}) {
+  const local = settings?.localService;
+  const record = recordedHere(settings);
+  if (!record) return { state: 'older-hand' };
+  if (!local?.autostart) return { state: 'older' };
+  const paths = pathsIn(local.dir);
+  if (!Number.isInteger(record.pid) || !Number.isFinite(record.startedAt)) return { state: 'older' };
+  if (record.release === SERVICE_RELEASE) return { state: 'older' };
+  const mark = `${paths.lock}.replacing`;
+  const marked = readJson(mark);
+  if (marked?.nonce === record.nonce && now >= marked.at && now - marked.at < REPLACE_AGAIN_MS) return { state: 'restarting', pid: record.pid };
+  if (!/^(node|bun)(\.exe)?$/i.test(path.basename(process.execPath))) return { state: 'older' };
+  try {
+    writeFileAtomic(mark, JSON.stringify({ nonce: record.nonce, pid: record.pid, at: now }));
+    const child = spawnFn(process.execPath, [fileURLToPath(import.meta.url), '--replace', paths.lock, String(record.nonce), String(record.pid), settings.url], { env, cwd: paths.dir, label: 'quotemem replace', log, mark: path.join(paths.dir, DIRECT_START_FILE) });
+    child.on?.('error', () => {});
+  } catch {
+    return { state: 'older' };
+  }
+  log?.warnOnce?.('autostart:replace', `the memory service the plugins started (pid ${record.pid}, release ${record.release ?? 'not recorded'}) does not answer the listener check: it is stopped, and the current release (${SERVICE_RELEASE}) is started`);
+  return { state: 'restarting', pid: record.pid };
+}
+
+// The background replacement: stop the recorded instance (only the one asked
+// about, and only when its command line is the service's), then start the
+// current release for `url`.
+async function replaceRecorded(lock, nonce, pid, url) {
+  const record = readJson(lock);
+  if (!record || record.nonce !== nonce || record.pid !== pid) return;
+  const line = commandLineOf(pid);
+  if (line === null || !isServiceCommand(line)) return;
+  if (!(await stopProcess(pid, 15_000))) return;
+  removeLock(lock, nonce);
+  const env = process.env;
+  const local = localService(env, url);
+  if (local && path.resolve(local.dir) === path.resolve(path.dirname(lock))) ensureService({ url, localService: local }, { env });
 }
 
 // `node autostart.mjs --check-lock <lock> <nonce> <pid>`: the background check (Windows).
 if (process.argv[2] === '--check-lock' && process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   dropReusedLock(process.argv[3], process.argv[4], Number(process.argv[5]));
+}
+// `node autostart.mjs --replace <lock> <nonce> <pid> <url>`: replaceOlder's background step.
+if (process.argv[2] === '--replace' && process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  replaceRecorded(process.argv[3], process.argv[4], Number(process.argv[5]), process.argv[6]).catch(() => {});
 }

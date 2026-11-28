@@ -49,8 +49,10 @@ order:
    whether the replay still finds it or not, is tombstoned over the withheld markers
    (``AgentStore.forget_withheld``). After every Add a safety pass forgets each one
    again over the Evidence of the Adds ingested at or before it alone
-   (``AgentStore.forget_earlier``), so nothing said before a forget comes back,
-   whatever the rebuild's chat model decides. They are the only forgotten content
+   (``AgentStore.forget_earlier``): a current memory the replay drew again from what
+   was said before a forget is forgotten again, without a vote when its words or the
+   forget shadow match it, else when the judge finds it states the fact. They are the
+   only forgotten content
    the journal holds, and never appear in clear; the file is still written with
    mode 0600, since the Adds are the user's own words.
 4. ``end``: the record counts and ``sha256``, the SHA-256 of every byte before

@@ -8,11 +8,10 @@ QuoteMem is a long-term memory service for AI agents that keeps the exact words 
   tied by byte range to the words it came from.
 - **Updates keep the old memory.** When a fact changes, a new memory replaces
   the old one. The old one is kept, marked `past`, and linked to the new one.
-- **"Forget" is carried out and stays forgotten.** The memories the request
-  matches are taken out of reads and are not learned again later. The one
-  way back is the user stating the fact again in a message dated after the
-  forget. The plugins send each prompt with the time it was said, so
-  telling the fact again in a later chat counts.
+- **"Forget" withholds the fact and checks what comes later.** The memories
+  the request matches are taken out of reads, and the words of their quotes
+  that the forget removes are withheld. A tombstone of the fact is kept, and
+  every later Add is checked against it.
 
 <p align="center"><img src="https://raw.githubusercontent.com/edsml-jz2321/QuoteMem/main/docs/images/how-quotemem-works.svg" width="900" alt="Conversation, extraction with a byte-range quote, review against the nearby memories, memory with versions, then recall with the quote, or forget with a tombstone"></p>
 
@@ -24,8 +23,8 @@ what happens inside, step by step.
 QuoteMem is one local service with one data folder. Every tool and every
 user goes through it, and each user's memories are kept apart. This section
 shows what happens inside the store, for one user's story. The values come
-from one real run of `quotemem serve` (QuoteMem 0.3.1) with its defaults: the
-`agent` Add mode and the `standard` review (output shortened). The user said:
+from real runs of `quotemem serve` with its defaults: the `agent` Add mode
+and the `standard` review (output shortened). The user said:
 
 | Date | The user said |
 |---|---|
@@ -38,6 +37,7 @@ from one real run of `quotemem serve` (QuoteMem 0.3.1) with its defaults: the
 | 22 Nov | "Please forget that I have a dentist appointment." |
 | later | A forget through the API: "Forget that I work at Ruijin Hospital." |
 | later | "Thanks for the help today." The assistant answered: "You're welcome! Good luck at Ruijin Hospital." |
+| later | "I still work at Ruijin Hospital." |
 
 Two words come up below. A forget *withholds* the words it removes, so no read
 shows them again. It also writes a *tombstone*, a record of the forgotten fact
@@ -97,9 +97,9 @@ Take the message of 20 November, "I moved from Beijing to Shanghai last month."
 | The user says | What QuoteMem does |
 |---|---|
 | "I live in Beijing. My cat is called Bob. I work as a nurse." | Adds four memories, each with its quote. |
-| "I'm a nurse, by the way." | The judge finds the same fact (`same`). No memory is added; the nurse memory gets a new version that also quotes "I'm a nurse". |
+| "I'm a nurse, by the way." | The judge finds the same fact (`same`). No memory is added; the nurse memory gets a new version that also quotes "I'm a nurse, by the way.". |
 | "I work as a nurse at Ruijin Hospital." | Adds "The user works at Ruijin Hospital." and "A hospital is named Ruijin Hospital.". The nurse part is the same fact again, so the nurse memory quotes it too. |
-| "Sorry, I got that wrong earlier: my cat is called Max, not Bob." | The judge finds a correction (`correct`). The cat's-name memory becomes "The user's cat is named Max, not Bob.", and its first version stays in its history. |
+| "Sorry, I got that wrong earlier: my cat is called Max, not Bob." | The judge finds a correction (`correct`). The cat's-name memory becomes "The user's cat is named Max, not Bob.", and its first version stays in its history. "The user has a cat.", which states no name, now quotes "My cat" instead of "My cat is called Bob". |
 | "I moved from Beijing to Shanghai last month." | The judge finds an update (`update`), as above. "The user lives in Beijing." is now `past`. |
 | "I have a dentist appointment next Tuesday at 3 pm." | Adds an event memory. |
 
@@ -111,37 +111,51 @@ Take the message of 20 November, "I moved from Beijing to Shanghai last month."
 |---|---|
 | The user says "Please forget that I have a dentist appointment." | A forget said in chat, carried out with that Add. QuoteMem forgets the appointment memory, withholds both messages and writes a tombstone. Once it has started erasing, it runs to the end, even if the Add has already answered. |
 | A forget through the API: "Forget that I work at Ruijin Hospital." | The prepare step returns a plan and changes nothing. The plan names "The user works at Ruijin Hospital." as the target and lists "A hospital is named Ruijin Hospital." as affected and the nurse memory as unrelated. The confirm step forgets both, withholds "at Ruijin Hospital" in the message of 8 November, and writes two tombstones. The nurse memory stays. |
-| Later, the assistant says "Good luck at Ruijin Hospital." | The message is kept, but no memory is added. An assistant message does not bring a forgotten fact back. |
+| Later, the assistant says "Good luck at Ruijin Hospital." | The message is kept, but no memory is added. An assistant message is never read as the user's own words. |
+| Then the user says "I still work at Ruijin Hospital." | The message shows the hospital's forgotten name, so the fact it states is refused (`denied_by_forget`) and no memory is added. |
 
 A forget deletes each memory that states the fact, or rewords it without the
 forgotten detail: after "Forget my cat's name", "The user's cat is named
 Bob." can become "The user has a cat." The tombstone keeps the forgotten
-statement and its vector, and no read returns it. A new fact with the same
-subject and the same words, up to case, spacing and closing punctuation, is
-refused, unless it is the way back below. A close one goes to review, which
-decides whether it restates the forgotten fact. As a second check, Search
-drops any hit that names a forgotten name, holds two of its topic words, or
-is a memory close in meaning to the forgotten statement.
+statement and its vector, and no read returns it. Every later Add is checked
+against it:
+
+- A new fact with the same subject and the same words, up to case, spacing
+  and closing punctuation, is refused.
+- A close one goes to review, which is shown the forgotten statement and
+  decides whether the new fact restates it.
+- In the `agent` Add mode, after a forget that took a name, a new fact that
+  shows the name of the one who bore it is cut around it or refused, and the
+  name's words are withheld before review, unless the user's own later words
+  give the name again.
+- In the `agent` Add mode, the user's own statement of the fact in a message
+  received and dated after the forget, when it shows no name a forget took,
+  is not refused by its tombstone: review judges it as a new fact
+  ([Forgetting](https://github.com/edsml-jz2321/QuoteMem/blob/main/docs/forgetting.md)
+  lists every condition).
+  The plugins send each prompt with the time it was said. Over HTTP, a
+  message counts only with a `timestamp`; the MCP add tool sends none.
+
+As a second check, Search uses what a forget recorded (the forgotten names,
+its topic words and the forgotten statement's vector) to drop hits it reads
+as about the forgotten fact. It does not count a name that two or more
+remaining memories still state, a name in a hit the forget that took it read
+and kept, or what the user's own later statement above gives again.
 `quotemem delete-user` removes a user's tombstones with the rest of their
 data.
-
-**The one way back** is the user stating the fact again, in their own words,
-in a message dated after the forget: the service receives it after the
-forget, and the message's own `timestamp` is later. The plugins send each
-prompt with the time it was said. Over HTTP, a message counts only with a
-`timestamp`; the MCP add tool sends none.
 
 ### What Search returns
 
 Search ranks memories and stored message parts together, and a higher score
 ranks first. It returns each memory with its status and its quotes. It leaves
-out forgotten memories and withheld words, and drops a hit that names a
-forgotten fact. After the story (and one more message, which added no memory):
+out forgotten memories and withheld words, and drops the hits that a
+forget's record marks as about the forgotten fact. After the story:
 
 | Question | What came back |
 |---|---|
-| Where does the user live now? | "The user moved from Beijing to Shanghai last month." first (0.69, current), then "The user lives in Beijing." (0.58, past). |
-| Where does the user work? | "The user works as a nurse." first (0.78, current). Lower down, the message of 8 November (0.42), with "at Ruijin Hospital" left out. |
+| Where does the user live now? | "The user moved from Beijing to Shanghai last month." first (0.70, current), then "The user lives in Beijing." (0.58, past). |
+| What is the name of the user's cat? | "The user's cat is named Max, not Bob." first (0.90, current), then "The user has a cat." (0.84, current), quoting "My cat". |
+| Where does the user work? | "The user works as a nurse." first (0.80, current). Lower down, the message of 8 November (0.45), with "at Ruijin Hospital" left out. |
 | When is the user's dentist appointment? | Nothing about the appointment. |
 
 The agent receives the first hit of the first question as:
@@ -209,9 +223,9 @@ from [bailian.console.aliyun.com](https://bailian.console.aliyun.com) (China reg
    ```
 
    Setup asks for the preset (Enter takes `default`), the review (Enter takes
-   `standard`) and your key, which is not shown as you type. It checks the
-   settings with one call to each model and ends with
-   `ok: the settings work. ...`. For scripts,
+   `standard`) and your key. When its input is a terminal, the key shows one
+   `*` per character. It checks the key with one call to each model and, when
+   it works, ends with `Key works.` For scripts,
    `quotemem setup --yes --preset default --review standard` takes the key
    from `DASHSCOPE_API_KEY`.
 
@@ -237,15 +251,16 @@ from [bailian.console.aliyun.com](https://bailian.console.aliyun.com) (China reg
 
 5. Say "Forget my cat's name." The plugin forgets it and tells the agent.
    Then `quotemem memories` shows `The user has a cat.` with the quote
-   `My cat`, and no name. A later "What is my cat called?" finds no name.
+   `My cat`, and no name. For a later "What is my cat called?", Search drops
+   a hit that names the forgotten name.
 
 `quotemem status` shows the service; `quotemem stop` stops it.
 
 ## Works with your tools, and they share one memory
 
 Every tool's plugin talks to one local service, so what you tell one tool is
-recalled in the others, and what you ask one tool to forget is forgotten in
-all of them. They all use one memory by default: `QUOTEMEM_USER_ID`, which
+recalled in the others, and a forget you ask for in one tool acts on the
+memory they all share. They all use one memory by default: `QUOTEMEM_USER_ID`, which
 defaults to your OS user name.
 
 | Tool | Set it up |
@@ -336,6 +351,8 @@ Changes are in the [changelog](https://github.com/edsml-jz2321/QuoteMem/blob/mai
 CI runs ruff, pyright, a service smoke test and a checked build on Python 3.12,
 3.13 and 3.14, and the Node tests (`npm test`, `npm run check`) on Node 20 and 24
 ([ci.yml](https://github.com/edsml-jz2321/QuoteMem/blob/main/.github/workflows/ci.yml)).
+On Windows it runs the Node tests on Node 20 and 24 and the service smoke test
+on Python 3.12.
 To send a change, see [CONTRIBUTING.md](https://github.com/edsml-jz2321/QuoteMem/blob/main/CONTRIBUTING.md).
 Please open a GitHub issue for questions, bug reports and suggestions. Report a
 security issue privately, as [SECURITY.md](https://github.com/edsml-jz2321/QuoteMem/blob/main/SECURITY.md) describes.

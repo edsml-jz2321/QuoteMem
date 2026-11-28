@@ -77,8 +77,17 @@ service as the plugins do.
   then the file that `QUOTEMEM_TOKEN_FILE` names. For a service on this
   computer only, it is then `<data-dir>/token` (`--data-dir`, else
   `QUOTEMEM_DATA_DIR`).
-- A service is on this computer when its host is `localhost`, `127.0.0.1` or
-  `[::1]`. `127.0.0.2`, `0.0.0.0`, `[::]` and `localhost.` are not.
+- A service is on this computer, for its token file, when its host is
+  `localhost`, `127.0.0.1` or `[::1]`. `127.0.0.2`, `0.0.0.0`, `[::]` and
+  `localhost.` are not.
+- Before the token goes to a URL that reaches this computer (those three
+  hosts, any other `127.` address, `0.0.0.0`, `[::]`, `localhost.` and names
+  under `localhost`), the program on its port must prove that it holds the
+  token (`GET /agent/listener`), and the request goes on the connection the
+  check went on; the check itself keeps to `--timeout-seconds` in all.
+  Without that proof no request with the token is sent, to a service from
+  0.3.2 or older too: see "Two people signed in at once" in
+  [agents.md](agents.md).
 - A URL is refused with `schema_invalid` exactly when the plugins refuse it.
   After `http://` or `https://` it needs a host of letters, digits and
   `._~-`, or a bracketed IPv6 address. An optional `:port` of digits may

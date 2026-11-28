@@ -17,7 +17,7 @@ import path from 'node:path';
 import { after, test } from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-import { HIT, TOKEN, plan, sleep, stubServer, tempDir, waitFor } from '../../core/test/helpers.mjs';
+import { HIT, TOKEN, WINDOWS_ENV, plan, sleep, stubServer, tempDir, waitFor } from '../../core/test/helpers.mjs';
 
 const HERE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const adapter = await import(pathToFileURL(path.join(HERE, 'adapter.js')).href);
@@ -44,8 +44,10 @@ let dirSeq = 0;
 function env(url, extra = {}) {
   const stateDir = path.join(root, `state-${++dirSeq}`);
   return {
+    ...WINDOWS_ENV,
     PATH: process.env.PATH,
     HOME: home,
+    USERPROFILE: home,
     QUOTEMEM_URL: url,
     QUOTEMEM_TOKEN: TOKEN,
     QUOTEMEM_USER_ID: 'quei',
@@ -54,6 +56,11 @@ function env(url, extra = {}) {
     ...extra,
   };
 }
+
+// How long a test waits for a background send: on Windows each start of the
+// background sender goes through PowerShell, which a loaded machine can take
+// seconds to start, so the wait there is three times longer.
+const WAIT_MS = process.platform === 'win32' ? 24_000 : 8000;
 
 const ok = () => ({ body: { success: true } });
 const verified = (n) => ({ body: { status: 'verified', outcomes: Array.from({ length: n }, () => ({ outcome: 'verified' })) } });
@@ -186,7 +193,7 @@ test('1.x: capture every 3 turns, gated recall injected into the request only, n
 
   const c = await host.user('ses_A', 'Where do I live?');
   assert.equal(server.of('/memory/search').length, 1, 'a memory question searches');
-  assert.deepEqual(server.of('/memory/search')[0].body, { user_id: 'quei', query: 'Where do I live?', top_k: 10 });
+  assert.deepEqual(server.of('/memory/search')[0].body, { user_id: 'quei', query: 'Where do I live?', top_k: 20 });
   assert.equal(server.of('/memory/search')[0].headers.authorization, `Bearer ${TOKEN}`);
   const s1 = await host.step('ses_A', c);
   const s2 = await host.step('ses_A', c);
@@ -201,7 +208,7 @@ test('1.x: capture every 3 turns, gated recall injected into the request only, n
   }
   assert.equal(c.parts.length, 1, 'the stored user message is untouched');
   await host.assistant('ses_A', c, 'You live in Lisbon.');
-  await waitFor(() => server.of('/memory/add').length === 1, 8000, 'the batch');
+  await waitFor(() => server.of('/memory/add').length === 1, WAIT_MS, 'the batch');
   const add = server.of('/memory/add')[0].body;
   assert.equal(add.user_id, 'quei');
   assert.equal(add.session_id, 'opencode:ses_A');
@@ -248,7 +255,7 @@ test('1.x: slash commands, subagents and aborted turns', async () => {
   await host.assistant('ses_C', u, null, { fail: true });
   await host.turn('ses_C', 'My editor is Helix.', 'Helix it is.');
   await host.turn('ses_C', 'My shell is fish.', 'Fish.');
-  await waitFor(() => server.of('/memory/add').length === 1, 8000, 'the batch');
+  await waitFor(() => server.of('/memory/add').length === 1, WAIT_MS, 'the batch');
   assert.deepEqual(server.of('/memory/add')[0].body.messages.map((m) => m.content), [
     'I moved to Porto last month.',
     'My editor is Helix.', 'Helix it is.',
@@ -259,7 +266,7 @@ test('1.x: slash commands, subagents and aborted turns', async () => {
   // Deleting a session queues what is left; no earlier turn is sent again.
   await host.turn('ses_C', 'I prefer tabs.', 'Tabs.');
   await host.hooks.event({ event: { type: 'session.deleted', properties: { info: { id: 'ses_C', projectID: 'prj', directory: root, title: 't', version: '1', time: { created: 1, updated: 1 } } } } });
-  await waitFor(() => server.of('/memory/add').length === 2, 8000, 'the session-end batch');
+  await waitFor(() => server.of('/memory/add').length === 2, WAIT_MS, 'the session-end batch');
   assert.deepEqual(server.of('/memory/add')[1].body.messages.map((m) => m.content), ['I prefer tabs.', 'Tabs.']);
 });
 
@@ -296,7 +303,7 @@ test('1.x: silent forget runs after the pending turns are stored, then one note'
   await host.assistant('ses_F', u, 'Done, I forgot where you live.');
   await host.turn('ses_F', 'I work at a bakery.', 'Bakery.');
   await host.turn('ses_F', 'I play chess.', 'Chess.');
-  await waitFor(() => server.of('/memory/add').length === 2, 8000, 'the next batch');
+  await waitFor(() => server.of('/memory/add').length === 2, WAIT_MS, 'the next batch');
   assert.equal(server.of('/memory/add')[1].body.messages[0].content, 'Please forget that I live in Lisbon.', 'the forget turn is captured after the forget');
   assert.equal(server.of('/memory/forget/prepare').length, 1, 'one forget only');
 });
@@ -383,9 +390,9 @@ test('1.x: dispose hands what is left to the detached background sender', async 
   const started = Date.now();
   await host.hooks.dispose();
   assert.ok(Date.now() - started < 1000, 'dispose does not wait for /memory/add');
-  await waitFor(() => server.of('/memory/add').length === 1, 8000, 'the batch from the detached sender');
+  await waitFor(() => server.of('/memory/add').length === 1, WAIT_MS, 'the batch from the detached sender');
   assert.deepEqual(server.of('/memory/add')[0].body.messages.map((m) => m.content), ['I am learning Rust.', 'Nice.']);
-  await waitFor(() => !fs.readdirSync(e.QUOTEMEM_STATE_DIR, { recursive: true }).some((name) => path.basename(name) === 'flusher.lock'), 8000, 'the sender exits when idle');
+  await waitFor(() => !fs.readdirSync(e.QUOTEMEM_STATE_DIR, { recursive: true }).some((name) => path.basename(name) === 'flusher.lock'), WAIT_MS, 'the sender exits when idle');
 });
 
 test('1.x: a stop signal without dispose still hands the rest to the background sender', async () => {
@@ -409,14 +416,14 @@ test('1.x: a stop signal without dispose still hands the rest to the background 
   assert.equal(proc.listenerCount('exit'), 0);
   await new Promise((resolve) => setImmediate(resolve));
   assert.deepEqual(kills, [[4242, 'SIGTERM']], 'the signal is raised again, so OpenCode\'s own handler stops the process');
-  await waitFor(() => server.of('/memory/add').length === 2, 8000, 'both batches, sent by the detached sender');
+  await waitFor(() => server.of('/memory/add').length === 2, WAIT_MS, 'both batches, sent by the detached sender');
   assert.deepEqual(server.of('/memory/add').map((r) => r.body.messages[0].content).sort(), ['I collect vinyl records.', 'My favourite band is Radiohead.']);
   // `exit` alone also queues; dispose stops watching.
   const proc2 = fakeProcess();
   const other = await v1(e, { process: proc2 });
   await other.turn('ses_U', 'I play the cello.', 'Lovely.');
   proc2.emit('exit');
-  await waitFor(() => server.of('/memory/add').length === 3, 8000, 'the exit batch');
+  await waitFor(() => server.of('/memory/add').length === 3, WAIT_MS, 'the exit batch');
   await other.hooks.dispose();
   assert.equal(proc2.listenerCount('exit'), 0, 'dispose stops watching');
 });
@@ -426,7 +433,7 @@ test('1.x: a partial batch is queued once the session has been idle', async () =
   const host = await v1(env(server.url, { QUOTEMEM_IDLE_FLUSH_MS: '300' }));
   await host.turn('ses_Y', 'I am vegetarian.', 'Noted.');
   assert.equal(server.of('/memory/add').length, 0);
-  await waitFor(() => server.of('/memory/add').length === 1, 8000, 'the idle batch');
+  await waitFor(() => server.of('/memory/add').length === 1, WAIT_MS, 'the idle batch');
   assert.deepEqual(server.of('/memory/add')[0].body.messages.map((m) => m.content), ['I am vegetarian.', 'Noted.']);
 });
 
@@ -436,7 +443,7 @@ test('1.x: without node or bun the batches are sent from inside OpenCode', async
   await host.turn('ses_I', 'I like jazz.', 'Jazz.');
   await host.turn('ses_I', 'I like tea.', 'Tea.');
   await host.turn('ses_I', 'I like chess.', 'Chess.');
-  await waitFor(() => server.of('/memory/add').length === 1, 8000, 'the in-process batch');
+  await waitFor(() => server.of('/memory/add').length === 1, WAIT_MS, 'the in-process batch');
   assert.equal(server.of('/memory/add')[0].body.messages.length, 6);
   // The final reply is read back from OpenCode when no text event came.
   const client = {
@@ -457,7 +464,7 @@ test('1.x: without node or bun the batches are sent from inside OpenCode', async
   assert.equal(server.of('/memory/add').length, 1, 'unloaded without a sender: the batch waits on disk');
   assert.match(logOf(e), /stay queued until OpenCode starts again/);
   await v1(e, { runtime: null });
-  await waitFor(() => server.of('/memory/add').length === 2, 8000, 'the dispose batch, sent at the next start');
+  await waitFor(() => server.of('/memory/add').length === 2, WAIT_MS, 'the dispose batch, sent at the next start');
   assert.deepEqual(server.of('/memory/add')[1].body.messages.map((m) => m.content), ['I collect stamps.', 'Read back.']);
 });
 
@@ -593,7 +600,7 @@ test('2.x: prompt, context and events give capture, recall and forget', async ()
   assert.ok(b.ms < 2500);
   // An interrupted turn keeps the user's words only.
   await host.turn('ses_V', 'My dog is Rex.', 'Rex is a', { outcome: 'interrupted' });
-  await waitFor(() => server.of('/memory/add').length === 1, 8000, 'the batch');
+  await waitFor(() => server.of('/memory/add').length === 1, WAIT_MS, 'the batch');
   assert.deepEqual(server.of('/memory/add')[0].body.messages.map((m) => [m.role, m.content]), [
     ['user', 'I live in Porto.'], ['assistant', 'Porto, noted.'],
     ['user', 'Where do I live?'], ['assistant', 'You live in Porto.'],
@@ -604,17 +611,31 @@ test('2.x: prompt, context and events give capture, recall and forget', async ()
   // Silent forget.
   await host.turn('ses_V', 'My bike is green.', 'Green.');
   const f = await host.prompt('ses_V', 'Forget that my bike is green.');
-  assert.deepEqual(server.requests.slice(-3).map((r) => r.route), ['/memory/add', '/memory/forget/prepare', '/memory/forget/confirm']);
+  const forgetRoutes = ['/memory/add', '/memory/forget/prepare', '/memory/forget/confirm'];
+  if (process.platform === 'win32') {
+    // On a loaded Windows machine the start of the background sender (through
+    // PowerShell) can take longer than the forget's wait: the note then says
+    // that it goes on in the background, and it finishes there.
+    const note = await host.request('ses_V');
+    assert.ok(note[1].text.startsWith(FORGET_HEADER));
+    if (!/Done: 1 stored memory was forgotten/.test(note[1].text)) {
+      assert.match(note[1].text, /It is being forgotten in the background/);
+      await waitFor(() => server.of('/memory/forget/confirm').length === 1, 15_000, 'the forget in the background');
+    }
+    assert.deepEqual(server.requests.slice(-3).map((r) => r.route), forgetRoutes);
+  } else {
+    assert.deepEqual(server.requests.slice(-3).map((r) => r.route), forgetRoutes);
+    const note = await host.request('ses_V');
+    assert.ok(note[1].text.startsWith(FORGET_HEADER));
+    assert.match(note[1].text, /Done: 1 stored memory was forgotten/);
+  }
   assert.equal(server.of('/memory/forget/prepare')[0].body.statement, 'my bike is green');
-  const note = await host.request('ses_V');
-  assert.ok(note[1].text.startsWith(FORGET_HEADER));
-  assert.match(note[1].text, /Done: 1 stored memory was forgotten/);
   assert.ok(f.ms < 8000);
   await host.finish('ses_V', 'Done.');
 
   // Cleanup (OpenCode unloads the plugin) queues the rest.
   await host.cleanup();
-  await waitFor(() => server.of('/memory/add').length === 3, 8000, 'the unload batch');
+  await waitFor(() => server.of('/memory/add').length === 3, WAIT_MS, 'the unload batch');
   assert.deepEqual(server.of('/memory/add')[2].body.messages.slice(-2).map((m) => m.content), ['Forget that my bike is green.', 'Done.']);
   assert.ok(!logOf(e).includes(TOKEN));
   assert.deepEqual(written, []);
@@ -634,7 +655,7 @@ test('2.x: subagents skipped, final reply read back, missing APIs degrade', asyn
   await host.prompt('ses_P', 'I run marathons.');
   await host.finish('ses_P', null);
   await host.bus.emit(ev('session.deleted', { sessionID: 'ses_P' }));
-  await waitFor(() => server.of('/memory/add').length === 1, 8000, 'the session-end batch');
+  await waitFor(() => server.of('/memory/add').length === 1, WAIT_MS, 'the session-end batch');
   assert.deepEqual(server.of('/memory/add')[0].body.messages.map((m) => m.content), ['I run marathons.', 'Impressive.']);
 
   // A host without the context hook and without events still captures user words.
@@ -644,7 +665,7 @@ test('2.x: subagents skipped, final reply read back, missing APIs degrade', asyn
   await bare.prompt('ses_B', 'I teach maths.');
   await bare.prompt('ses_B', 'I live by the sea.');
   await bare.cleanup();
-  await waitFor(() => server.of('/memory/add').length === 2, 8000, 'the bare batch');
+  await waitFor(() => server.of('/memory/add').length === 2, WAIT_MS, 'the bare batch');
   assert.deepEqual(server.of('/memory/add')[1].body.messages.map((m) => m.content), ['I teach maths.', 'I live by the sea.']);
   assert.match(logOf(e), /did not accept the "context" session hook/);
   assert.match(logOf(e), /no event stream/);
@@ -680,15 +701,15 @@ test('settings from ~/.quotemem/env reach the plugin and the MCP launcher', asyn
   fs.mkdirSync(path.join(fileHome, '.quotemem'), { recursive: true });
   const envFile = path.join(fileHome, '.quotemem', 'env');
   fs.writeFileSync(envFile, `# QuoteMem\nexport QUOTEMEM_URL=${server.url}\nQUOTEMEM_TOKEN="${TOKEN}"\nQUOTEMEM_USER_ID=quei\nOTHER=ignored\n`, { mode: 0o600 });
-  const e = { PATH: process.env.PATH, HOME: fileHome, QUOTEMEM_STATE_DIR: path.join(root, `state-${++dirSeq}`), QUOTEMEM_CAPTURE_EVERY: '1' };
+  const e = { ...WINDOWS_ENV, PATH: process.env.PATH, HOME: fileHome, USERPROFILE: fileHome, QUOTEMEM_STATE_DIR: path.join(root, `state-${++dirSeq}`), QUOTEMEM_CAPTURE_EVERY: '1' };
   const host = await v1(e);
   await host.turn('ses_E', 'I speak Portuguese.', 'Noted.');
-  await waitFor(() => server.of('/memory/add').length === 1, 8000, 'a batch with settings from the file');
+  await waitFor(() => server.of('/memory/add').length === 1, WAIT_MS, 'a batch with settings from the file');
   assert.equal(server.of('/memory/add')[0].headers.authorization, `Bearer ${TOKEN}`);
   assert.equal(server.of('/memory/add')[0].body.user_id, 'quei');
 
   // The MCP launcher reads the same file and hides quotemem_add.
-  const child = spawn(process.execPath, [path.join(HERE, 'mcp.js')], { env: { PATH: process.env.PATH, HOME: fileHome }, stdio: ['pipe', 'pipe', 'pipe'] });
+  const child = spawn(process.execPath, [path.join(HERE, 'mcp.js')], { env: { ...WINDOWS_ENV, PATH: process.env.PATH, HOME: fileHome, USERPROFILE: fileHome }, stdio: ['pipe', 'pipe', 'pipe'] });
   let out = '';
   let err = '';
   child.stdout.on('data', (chunk) => { out += chunk; });
@@ -720,7 +741,7 @@ test('install snippets parse and point at real files', () => {
   for (const name of ['opencode.v1.jsonc', 'opencode.v2.jsonc']) {
     const text = fs.readFileSync(path.join(HERE, 'install', name), 'utf8')
       .split('\n').filter((line) => !line.trim().startsWith('//')).join('\n')
-      .replaceAll('/path/to/QuoteMem', repo);
+      .replaceAll('/path/to/QuoteMem', JSON.stringify(repo).slice(1, -1));
     const config = JSON.parse(text);
     const plugins = config.plugin ?? config.plugins;
     assert.equal(plugins.length, 1);

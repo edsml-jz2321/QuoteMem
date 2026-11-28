@@ -13,6 +13,7 @@ import { after, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 import { HIT, TOKEN, stubServer, tempDir, waitFor } from '../../core/test/helpers.mjs';
+import { listenerProof } from '../../core/listener.mjs';
 
 const INTEGRATIONS = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const CLI = path.join(INTEGRATIONS, 'cli', 'quotemem.mjs');
@@ -145,7 +146,9 @@ test('install: a dry run writes nothing; --write merges and keeps other entries;
   assert.ok(fs.existsSync(path.join(project, '.continue', 'mcpServers', 'quotemem.yaml')));
   assert.ok(fs.existsSync(path.join(project, '.continue', 'rules', 'quotemem.md')));
   const clineHook = path.join(home, 'Documents', 'Cline', 'Hooks', 'UserPromptSubmit');
-  assert.ok(fs.statSync(clineHook).mode & 0o100, 'the Cline hook is executable');
+  // Windows has no exec bit; Cline runs the hook through its shell there.
+  if (process.platform !== 'win32') assert.ok(fs.statSync(clineHook).mode & 0o100, 'the Cline hook is executable');
+  else assert.ok(fs.existsSync(clineHook), 'the Cline hook is written');
   assert.ok(fs.existsSync(path.join(home, '.agents', 'plugins', 'quotemem', 'hooks', 'hooks.json')));
 
   const codex = await quotemem(['install', 'codex', '--write'], { env, cwd: project });
@@ -153,14 +156,17 @@ test('install: a dry run writes nothing; --write merges and keeps other entries;
   assert.match(fs.readFileSync(path.join(home, '.codex', 'config.toml'), 'utf8'), /\[mcp_servers\.quotemem\][\s\S]*QUOTEMEM_AUTO = "1"/);
 
   // The written Cline hook runs; with QuoteMem down it lets the turn go on.
-  const cline = await new Promise((resolve) => {
-    const child = spawn(clineHook, [], { env: { ...env, QUOTEMEM_URL: 'http://127.0.0.1:9' }, stdio: ['pipe', 'pipe', 'pipe'] });
-    let out = '';
-    child.stdout.on('data', (d) => { out += d; });
-    child.on('exit', (code) => resolve({ code, out }));
-    child.stdin.end(JSON.stringify({ taskId: 't1', hookName: 'UserPromptSubmit', userPromptSubmit: { prompt: 'hi' } }));
-  });
-  assert.deepEqual([cline.code, JSON.parse(cline.out)], [0, { cancel: false }]);
+  // It is a /bin/sh script, which Windows does not start by its #! line.
+  if (process.platform !== 'win32') {
+    const cline = await new Promise((resolve) => {
+      const child = spawn(clineHook, [], { env: { ...env, QUOTEMEM_URL: 'http://127.0.0.1:9' }, stdio: ['pipe', 'pipe', 'pipe'] });
+      let out = '';
+      child.stdout.on('data', (d) => { out += d; });
+      child.on('exit', (code) => resolve({ code, out }));
+      child.stdin.end(JSON.stringify({ taskId: 't1', hookName: 'UserPromptSubmit', userPromptSubmit: { prompt: 'hi' } }));
+    });
+    assert.deepEqual([cline.code, JSON.parse(cline.out)], [0, { cancel: false }]);
+  }
 
   // Never the token: not in a written file, not in the output.
   const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(path.join(dir, e.name)) : [path.join(dir, e.name)]));
@@ -237,14 +243,16 @@ test('install: print-only tools, an unknown tool, and invalid JSON in a config f
   const expected = {
     'claude-code': /claude plugin marketplace add edsml-jz2321\/QuoteMem[\s\S]*claude plugin install quotemem@quotemem/,
     dsh: /needs Node 24 and pnpm[\s\S]*dsh plugin --profile quotemem add quotemem\n[\s\S]*dsh --profile quotemem/,
-    gemini: /gemini extensions install ".*integrations\/gemini-cli"/,
-    openclaw: /openclaw plugins install ".*integrations\/openclaw"/,
-    opencode: /"plugin": \[[\s\S]*integrations\/opencode"[\s\S]*"plugins": \[/,
+    gemini: /gemini extensions install ".*integrations[\\/]gemini-cli"/,
+    openclaw: /openclaw plugins install ".*integrations[\\/]openclaw"/,
+    opencode: /"plugin": \[[\s\S]*integrations(\/|\\\\)opencode"[\s\S]*"plugins": \[/,
   };
   for (const [tool, pattern] of Object.entries(expected)) {
     const result = await quotemem(['install', tool, '--write'], { env, cwd });
     assert.equal(result.code, 0, `${tool}: ${result.err}`);
     assert.match(result.out, pattern, tool);
+    // A printed path is copied into a Windows shell as it is: no doubled backslash.
+    if (process.platform === 'win32' && tool !== 'opencode') assert.doesNotMatch(result.out, /\\\\/, tool);
   }
   assert.deepEqual(fs.readdirSync(home), ['project'], 'print-only tools write nothing');
   const unknown = await quotemem(['install', 'vim'], { env, cwd });
@@ -276,13 +284,16 @@ test('doctor: reports the token check and the shared default owner, never the to
   assert.ok(!good.out.includes(TOKEN));
   const bad = await quotemem(['doctor'], { env: { PATH: process.env.PATH, HOME: home, USERPROFILE: home, QUOTEMEM_URL: server.url, QUOTEMEM_TOKEN: 'wrong-token-1' }, cwd });
   assert.equal(bad.code, 1);
-  assert.match(bad.out, /FAIL {2}the service refused the token/);
-  // A service on this computer: it may be another user's, and a port of this user's own is named.
-  assert.match(bad.out, /another user's QuoteMem on this computer[^\n]*QUOTEMEM_URL=http:\/\/127\.0\.0\.1:2\d{4} in ~\/\.quotemem\/env and in the environment Claude Code, Codex and DSH start in/);
+  // The service on this computer proves another token, so this one is not sent; the port is
+  // this user's own (this test process), so the doctor says the tokens differ.
+  assert.match(bad.out, /FAIL {2}no token and no memory data were sent to http:\/\/127\.0\.0\.1:\d+: [^\n]*without this user's token/);
+  // Where the owner can be read (Linux; macOS and Windows for this user's own), the tokens differ.
+  if (process.platform === 'linux') assert.match(bad.out, /It runs as this user, so its token differs from this user's/);
+  if (process.platform === 'linux') assert.doesNotMatch(bad.out, /QUOTEMEM_URL=http:\/\/127\.0\.0\.1:2\d{4}/, 'no port advice for the user\'s own service');
   assert.ok(!bad.out.includes('wrong-token-1'));
   // The token is checked with GET /agent/status: no search request reaches the service.
   assert.equal(server.of('/memory/search').length, 0);
-  assert.ok(server.of('/agent/status').length >= 2);
+  assert.equal(server.of('/agent/status').length, 1, 'only the good token reached it');
   // An exported token is flagged: an agent started from this shell hands it to its shell tool.
   assert.match(good.out, /note {2}the token is exported in this shell: an agent started from it hands it to its own shell tool/);
 
@@ -293,15 +304,56 @@ test('doctor: reports the token check and the shared default owner, never the to
   fs.writeFileSync(path.join(fileHome, '.local', 'share', 'quotemem', 'token'), `${TOKEN}\n`, { mode: 0o600 });
   const fromFile = await quotemem(['doctor'], { env: { PATH: process.env.PATH, HOME: fileHome, USERPROFILE: fileHome, QUOTEMEM_URL: server.url }, cwd: path.join(fileHome, 'project') });
   assert.equal(fromFile.code, 0, fromFile.out);
-  assert.match(fromFile.out, /token found in the service's own token file \(.*\.local\/share\/quotemem\/token\) \(not shown\)/);
+  assert.match(fromFile.out, /token found in the service's own token file \(.*\.local[\\/]share[\\/]quotemem[\\/]token\) \(not shown\)/);
   assert.match(fromFile.out, /the service accepts the token/);
   assert.doesNotMatch(fromFile.out, /exported in this shell/);
   assert.ok(!fromFile.out.includes(TOKEN), 'the token is never printed');
   // A token file named by QUOTEMEM_TOKEN_FILE that cannot be read: the
   // doctor says so, and nothing else.
-  const missing = await quotemem(['doctor'], { env: { PATH: process.env.PATH, HOME: freshHome(), QUOTEMEM_URL: server.url, QUOTEMEM_TOKEN_FILE: '~/no-such-token' }, cwd });
+  const missingHome = freshHome();
+  const missing = await quotemem(['doctor'], { env: { PATH: process.env.PATH, HOME: missingHome, USERPROFILE: missingHome, QUOTEMEM_URL: server.url, QUOTEMEM_TOKEN_FILE: '~/no-such-token' }, cwd });
   assert.equal(missing.code, 1);
   assert.match(missing.out, /FAIL {2}no token: QUOTEMEM_TOKEN_FILE cannot be read/);
+});
+
+test('doctor and status send no token to a program on the port that cannot prove it holds it', async () => {
+  const server = await serve({
+    '/health': () => ({ body: {} }),
+    '/agent/listener': () => ({ body: { proof: '0'.repeat(64) } }),
+    '/agent/status': () => ({ body: { phase: 'serving' } }),
+  });
+  const home = freshHome();
+  const cwd = path.join(home, 'project');
+  const env = { PATH: process.env.PATH, HOME: home, USERPROFILE: home, QUOTEMEM_URL: server.url, QUOTEMEM_TOKEN: TOKEN };
+  const doctor = await quotemem(['doctor'], { env, cwd });
+  assert.equal(doctor.code, 1, doctor.out);
+  assert.match(doctor.out, /FAIL {2}no token and no memory data were sent to http:\/\/127\.0\.0\.1:\d+: the program on its port is not shown to be this user's QuoteMem service: it answered the check without this user's token/);
+  const status = await quotemem(['status'], { env, cwd });
+  assert.equal(status.code, 1, status.out);
+  assert.match(status.out, /problem: no token and no memory data were sent to http:\/\/127\.0\.0\.1:\d+: /);
+  assert.equal(server.of('/agent/status').length, 0, 'no request with the token');
+  assert.ok(!JSON.stringify(server.requests.map((r) => r.headers)).includes(TOKEN), 'the token never reached it');
+});
+
+test('doctor and status reach a localhost service at 127.0.0.1 only, where they checked it', async () => {
+  const handlers = {
+    '/health': () => ({ body: {} }),
+    '/agent/status': statusRoute('authorization', `Bearer ${TOKEN}`),
+  };
+  const server = await serve(handlers);
+  const port = new URL(server.url).port;
+  handlers['/agent/listener'] = (_body, entry) => ({ body: { proof: listenerProof(TOKEN, '127.0.0.1', Number(port), String(entry.headers['x-quotemem-challenge'])) } });
+  const home = freshHome();
+  const cwd = path.join(home, 'project');
+  const env = { PATH: process.env.PATH, HOME: home, USERPROFILE: home, QUOTEMEM_URL: `http://localhost:${port}`, QUOTEMEM_TOKEN: TOKEN };
+  const doctor = await quotemem(['doctor'], { env, cwd });
+  assert.match(doctor.out, /the service accepts the token/);
+  const status = await quotemem(['status'], { env, cwd });
+  assert.doesNotMatch(status.out, /problem:/);
+  assert.ok(server.of('/agent/listener').length >= 2, 'both checked the listener');
+  // The check and the token's request went to one address: 127.0.0.1, not whatever a
+  // resolver lists first for localhost (::1 on macOS and Windows).
+  assert.ok(server.requests.every((r) => r.headers.host === `127.0.0.1:${port}`), JSON.stringify(server.requests.map((r) => [r.route, r.headers.host])));
 });
 
 test('doctor and status check the token in the configured header mode (x-api-key)', async () => {

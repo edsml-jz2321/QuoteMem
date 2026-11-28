@@ -92,6 +92,10 @@ const RESULT_KEEP_MS = 86_400_000;
 // hook that waits on it (a hook's clock and the flusher's run together).
 const RESULT_QUOTE_GRACE_MS = 2000;
 const MAX_LIFETIME_MS = 3_600_000;
+// The most time held back by the listener check (holdForListener) that does
+// not count toward a job's age: a program that keeps the port for longer
+// does not keep the conversation on disk for ever.
+export const MAX_HELD_MS = 7 * 86_400_000;
 // Reading an acknowledged batch again should answer at once (202 or 200);
 // an answer slower than this is taken as "still pending", so one slow read
 // does not hold the queue, and the read is sent again later.
@@ -353,7 +357,21 @@ export class DiskQueue {
   startFlusher({ env = process.env, execPath = process.execPath, sync = false, idle = false, launch = {} } = {}) {
     try {
       // One start at a time; an exit handler starts one anyway (the other dies with the process).
-      if (this.launching && !sync) return false;
+      if (this.launching && !sync) {
+        // The flusher on its way (on Windows PowerShell can take seconds to
+        // start it) may have read the queue before this call's jobs were
+        // added, and exited: the start is tried again once that one is done.
+        // It starts nothing when a flusher still runs or nothing is queued.
+        if (!this.startAgain) {
+          this.launching.finally(() => {
+            const again = this.startAgain;
+            this.startAgain = null;
+            if (again) this.startFlusher(again);
+          });
+        }
+        this.startAgain = { env, execPath, idle, launch };
+        return false;
+      }
       // Chats wait for their idle time and no flusher waits for them: one
       // starts, whatever the queue holds (it sends that first). This process
       // takes idle.lock for it first and hands it over (handLock, adoptLock),
@@ -689,9 +707,38 @@ function waitBusy(queue, entry, job, delay) {
   queue.log.debug(`busy ${job.request_id}; the service holds it back for now, send again in ${wait} ms`);
 }
 
+// Not sent: the program on the service's port did not prove it holds the
+// token (an older service from before the check, or another program). That
+// uses no attempt, and the time held does not count toward the job's age
+// (heldOf, up to MAX_HELD_MS): the job keeps its place and is sent once the
+// service proves itself (a hook that reaches it makes the job due at once),
+// for example after the user restarts an older service by hand.
+function holdForListener(queue, entry, job, why) {
+  const at = Date.now();
+  if (Number.isFinite(job.heldAt)) job.heldMs = (Number(job.heldMs) || 0) + Math.max(0, at - job.heldAt);
+  job.heldAt = at;
+  job.attempts = Math.max(0, job.attempts - 1);
+  job.nextAt = Date.now() + backoffMs(queue.settings, { attempts: Math.min(job.held = (job.held || 0) + 1, 6) });
+  save(queue, entry, job);
+  queue.log.debug(`held ${job.request_id}; not sent (${why}), again in ${job.nextAt - Date.now()} ms`);
+}
+
 function endBusy(job) {
   delete job.busySince;
   delete job.busyTries;
+}
+
+// Any outcome other than a hold ends the time held: it is kept in heldMs.
+function endHeld(job) {
+  if (!Number.isFinite(job.heldAt)) return;
+  job.heldMs = (Number(job.heldMs) || 0) + Math.max(0, Date.now() - job.heldAt);
+  delete job.heldAt;
+}
+
+/** The time a job was held back by the listener check, which does not count toward its age (at most MAX_HELD_MS). */
+export function heldOf(job, now = Date.now()) {
+  const open = Number.isFinite(job?.heldAt) ? Math.max(0, now - job.heldAt) : 0;
+  return Math.min(MAX_HELD_MS, (Number(job?.heldMs) || 0) + open);
 }
 
 // When a job is due: its retry time, not before a pause (a refused token).
@@ -807,7 +854,8 @@ export async function runFlusher(settings, log, { signal, maxLifetimeMs = MAX_LI
         // A saved batch's time held by the spend cap does not age it: the
         // service starts its completion only on a resend after the reset.
         const capped = data.accepted ? Number(data.cappedMs) || 0 : 0;
-        if (now - data.created - capped > settings.captureMaxAgeMs) {
+        // Nor does its time held back by the listener check (heldOf).
+        if (now - data.created - capped - heldOf(data, now) > settings.captureMaxAgeMs) {
           drop(queue, candidate, data, data.accepted ? 'saved by the service but not confirmed stored in time' : 'too old');
           continue;
         }
@@ -890,6 +938,7 @@ export async function runFlusher(settings, log, { signal, maxLifetimeMs = MAX_LI
         if (signal?.aborted) return 'stopped';
         const busy = result.status === 'retry' && result.code === 'delivery_busy';
         if (!busy) endBusy(job);
+        if (!result.held) endHeld(job);
         if (result.status === 'retry' && result.transport) job.unreachableAt = Date.now();
         else delete job.unreachableAt;
         if (['forgotten', 'incomplete', 'already', 'nothing'].includes(result.status)) {
@@ -915,6 +964,7 @@ export async function runFlusher(settings, log, { signal, maxLifetimeMs = MAX_LI
             continue;
           }
           if (busy) waitBusy(queue, entry, job, result.delay);
+          else if (result.held) holdForListener(queue, entry, job, result.code);
           else retryOrDrop(queue, entry, job, result.code, result.delay ?? backoffMs(settings, job));
         } else if (result.status === 'auth') {
           queue.setState({ ...queue.state(), pausedUntil: Date.now() + AUTH_PAUSE_MS });
@@ -930,9 +980,11 @@ export async function runFlusher(settings, log, { signal, maxLifetimeMs = MAX_LI
       // (waitBusy); a saved one being read is never dropped anyway.
       const busy = result.kind === 'retry' && result.why === 'delivery_busy' && !reading;
       if (!busy) endBusy(job);
-      // Not reached (refused, reset, a network error): the next hook that
-      // reaches the service makes it due at once (dueAt). Any answer clears it.
-      if (result.kind === 'error' && !(reading && attempt.aborted)) job.unreachableAt = Date.now();
+      if (result.kind !== 'held') endHeld(job);
+      // Not reached (refused, reset, a network error, a listener that failed
+      // its check): the next hook that reaches the service makes it due at
+      // once (dueAt). Any answer clears it.
+      if ((result.kind === 'error' && !(reading && attempt.aborted)) || result.kind === 'held') job.unreachableAt = Date.now();
       else delete job.unreachableAt;
       if (result.kind === 'error' && reading && attempt.aborted && !signal?.aborted) {
         // A slow read of a batch the service already holds: still pending.
@@ -997,6 +1049,8 @@ export async function runFlusher(settings, log, { signal, maxLifetimeMs = MAX_LI
         log.debug(`retry reading ${job.request_id} in ${delay} ms (${result.why})`);
       } else if (busy) {
         waitBusy(queue, entry, job, result.delay);
+      } else if (result.kind === 'held') {
+        holdForListener(queue, entry, job, result.why);
       } else if (result.kind === 'retry') {
         retryOrDrop(queue, entry, job, result.why, result.delay ?? backoffMs(settings, job));
       } else if (result.kind === 'auth') {

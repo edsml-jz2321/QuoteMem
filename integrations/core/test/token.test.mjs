@@ -56,7 +56,8 @@ test('token order: the environment, then QUOTEMEM_TOKEN_FILE, then the local ser
   assert.match(missing.problem, /^QUOTEMEM_TOKEN_FILE cannot be read/);
   // The service's own file is for a service on this computer only.
   assert.deepEqual(resolveToken({ HOME: home, USERPROFILE: home }, 'https://memory.example.org'), { token: '', source: null, problem: null });
-  assert.deepEqual(resolveToken({ HOME: homeWith({}) }, LOCAL), { token: '', source: null, problem: null });
+  const empty = homeWith({});
+  assert.deepEqual(resolveToken({ HOME: empty, USERPROFILE: empty }, LOCAL), { token: '', source: null, problem: null });
 });
 
 test('settings: the token source is kept, never the token in a message', () => {

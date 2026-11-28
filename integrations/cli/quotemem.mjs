@@ -298,15 +298,25 @@ async function cmdDoctor() {
     ? `uvx at ${uvx} (runs \`quotemem serve\` and the other service commands)`
     : 'uvx not on PATH: `quotemem serve` and the other service commands need uv (https://docs.astral.sh/uv/); a service started another way is not affected');
   if (settings.url) {
-    const health = await probe(`${settings.url}/health`, { method: 'GET' });
+    const http = await import(pathToFileURL(path.join(here, '..', 'core', 'http.mjs')).href);
+    // A service on this computer is reached at one address (`localhost` is 127.0.0.1).
+    const base = http.onThisComputer(settings.url) ? http.pinnedUrl(settings.url) : settings.url;
+    const health = await probe(`${base}/health`, { method: 'GET' });
     const down = settings.localService?.autostart
       ? `service not running at ${settings.url} (${health.error}); a plugin starts it when an agent needs it, or start it with \`${startHint(settings.url)}\``
       : `service unreachable at ${settings.url} (${health.error}); start it with \`${startHint(settings.url)}\`${settings.localService ? ', or run `quotemem setup` once so it starts by itself' : ''}`;
     line(health.status >= 200 && health.status < 300 ? true : settings.localService?.autostart ? null : false, health.status ? `service answers /health with ${health.status}` : down);
-    if (health.status && settings.token) {
-      // GET /agent/status needs the token and touches no memory.
-      const { authHeaders } = await import(pathToFileURL(path.join(here, '..', 'core', 'http.mjs')).href);
-      const auth = await probe(`${settings.url}/agent/status`, { method: 'GET', headers: authHeaders(settings) });
+    // A service on this computer gets the token only once the program on its
+    // port proved it holds it (the plugins' own check), at the address it checked.
+    // GET /agent/status needs the token and touches no memory; it goes on the
+    // connection the check proved.
+    const checked = health.status && settings.token ? await http.checkedGet(settings, '/agent/status') : null;
+    const listener = checked?.verdict ?? { ok: true, url: base };
+    if (!listener.ok) {
+      const { describeRefusal } = await import(pathToFileURL(path.join(here, '..', 'core', 'listener.mjs')).href);
+      line(false, await describeRefusal(settings, listener, { env }));
+    } else if (health.status && settings.token) {
+      const auth = { status: checked.status, error: checked.error };
       if (auth.status === 401 && settings.localService) {
         // Two people signed in at once share 127.0.0.1:8765: the first one's service refuses the second one's token.
         const { portOwner, userPort } = await import(pathToFileURL(path.join(here, '..', 'core', 'proc.mjs')).href);

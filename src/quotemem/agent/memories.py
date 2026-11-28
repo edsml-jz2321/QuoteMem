@@ -85,20 +85,29 @@ def collect(
 
 def fetch_online(
     url: str, token: str, *, timeout_seconds: float = 30.0,
-    transport: httpx.BaseTransport | None = None,
+    transport: httpx.BaseTransport | None = None, client: httpx.Client | None = None,
 ) -> Callable[[MemoryListRequestV1], MemoryListV1]:
     """A page function over the running service's ``/memory/list``.
+
+    With ``client`` (the `ListenerClient` the listener check went on) every page goes on
+    it; else each page on a client of its own.
 
     Raises (from the page function):
         httpx.ConnectError: When no service answers at ``url``.
         QuoteMemError: With the service's error code for any answer but 200.
     """
+    def post(sender: httpx.Client, request: MemoryListRequestV1) -> httpx.Response:
+        return sender.post(url + "/memory/list", content=request.model_dump_json(),
+                           headers={"Authorization": f"Bearer {token}",
+                                    "Content-Type": "application/json"})
+
     def page(request: MemoryListRequestV1) -> MemoryListV1:
-        with httpx.Client(base_url=url, timeout=timeout_seconds, trust_env=False,
-                          transport=transport) as client:
-            response = client.post("/memory/list", content=request.model_dump_json(),
-                                   headers={"Authorization": f"Bearer {token}",
-                                            "Content-Type": "application/json"})
+        if client is not None:
+            response = post(client, request)
+        else:
+            with httpx.Client(timeout=timeout_seconds, trust_env=False,
+                              transport=transport) as own:
+                response = post(own, request)
         if response.status_code != 200:
             try:
                 code = cast(dict[str, Any], response.json()).get("code")
@@ -430,11 +439,13 @@ def list_memories(
             answers but no token was found; offline, `read_offline`'s refusals.
     """
     from quotemem.agent.client import (
+        ListenerClient,
         is_local,
         service_answers,
         service_serving,
         service_token,
         unreachable,
+        verify_listener,
     )
 
     local = is_local(url)
@@ -452,25 +463,43 @@ def list_memories(
                                 "QUOTEMEM_DATA_DIR)") from None
         token = None
     refused: QuoteMemError | None = None
-    if token is not None:
-        try:
-            return collect(fetch_online(url, token, transport=transport), user_id=user_id,
-                           status=status, limit=limit), "service"
-        except (httpx.ConnectError, httpx.ConnectTimeout):
-            if not local:
-                raise unreachable(url) from None
-        except httpx.HTTPError:
-            # It answered, then stalled or broke off: never fall back to a store it holds.
-            raise QuoteMemError("service_unhealthy",
-                                "The service did not finish answering the listing") from None
-        except QuoteMemError as error:
-            if not local or error.code != "authentication_failed":
-                raise
-            if not service_serving(url, transport=transport):
-                raise QuoteMemError("authentication_failed", f"The service at {url} refused the "
-                                    "token and is not serving yet, or is not a QuoteMem service; "
-                                    "run the command again once it serves") from None
-            refused = error
+    target: str | None = None
+    with ListenerClient(timeout_seconds=30.0, transport=transport) as client:
+        if token is not None:
+            try:
+                # The token goes only to a listener that holds it (another user may have the port),
+                # and the listing only on the connection the check proved.
+                target = verify_listener(url, token, client=client)
+            except (httpx.ConnectError, httpx.ConnectTimeout):
+                if not local:
+                    raise unreachable(url) from None
+            except QuoteMemError as error:
+                # The check's own words: the token was not sent, so it was not refused.
+                if not local or error.code != "authentication_failed":
+                    raise
+                if not service_serving(url, transport=transport):
+                    raise
+                refused = error
+        if target is not None and token is not None:
+            try:
+                return collect(fetch_online(target, token, client=client), user_id=user_id,
+                               status=status, limit=limit), "service"
+            except (httpx.ConnectError, httpx.ConnectTimeout):
+                if not local:
+                    raise unreachable(url) from None
+            except httpx.HTTPError:
+                # It answered, then stalled or broke off: never fall back to a store it holds.
+                raise QuoteMemError("service_unhealthy",
+                                    "The service did not finish answering the listing") from None
+            except QuoteMemError as error:
+                if not local or error.code != "authentication_failed":
+                    raise
+                if not service_serving(url, transport=transport):
+                    raise QuoteMemError("authentication_failed", f"The service at {url} "
+                                        "refused the token and is not serving yet, or is not "
+                                        "a QuoteMem service; run the command again once it "
+                                        "serves") from None
+                refused = error
     with ExitStack() as stack:
         try:
             page = stack.enter_context(read_offline(data_dir))

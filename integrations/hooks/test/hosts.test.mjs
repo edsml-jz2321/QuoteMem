@@ -13,7 +13,7 @@ import path from 'node:path';
 import { after, test } from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-import { HIT, TOKEN, plan, sleep, stubServer, tempDir, waitFor } from '../../core/test/helpers.mjs';
+import { HIT, TOKEN, WINDOWS_ENV, plan, sleep, stubServer, tempDir, waitFor } from '../../core/test/helpers.mjs';
 import { DiskQueue, forgottenOf, ownerKey, releaseLock, sha16, tryLock } from '../../core/index.mjs';
 import { hostEnv, nativeInstalled, parseEnvFile } from '../env.mjs';
 import { fallback, hostTime, normalize, render } from '../hosts.mjs';
@@ -23,11 +23,24 @@ const INTEGRATIONS = path.dirname(HOOKS);
 const RECALL_HEADER = '[QuoteMem: retrieved long-term memory]';
 const FORGET_HEADER = '[QuoteMem: automatic forget]';
 
+// Windows has no /bin/sh: there a hook command runs through cmd.exe, as
+// Windows hosts run it, with SystemRoot, ComSpec and PATHEXT in its
+// environment (WINDOWS_ENV). A test that needs a /bin/sh script or a POSIX
+// tool is skipped there, each with its own reason.
+const WINDOWS = process.platform === 'win32';
+const posixOnly = (reason) => (WINDOWS ? { skip: reason } : {});
+
 const root = tempDir('qm-hosts-');
-// `npm install -g quotemem` puts quotemem-hook on PATH; this does the same.
+// `npm install -g quotemem` puts quotemem-hook on PATH; this does the same:
+// a symlink, or on Windows a .cmd file as npm writes (a symlink there needs
+// Developer Mode).
 const BIN = path.join(root, 'bin');
 fs.mkdirSync(BIN);
-fs.symlinkSync(path.join(HOOKS, 'quotemem-hook.mjs'), path.join(BIN, 'quotemem-hook'));
+if (WINDOWS) {
+  fs.writeFileSync(path.join(BIN, 'quotemem-hook.cmd'), `@"${process.execPath}" "${path.join(HOOKS, 'quotemem-hook.mjs')}" %*\r\n`);
+} else {
+  fs.symlinkSync(path.join(HOOKS, 'quotemem-hook.mjs'), path.join(BIN, 'quotemem-hook'));
+}
 
 const servers = new Set();
 after(async () => { await Promise.all([...servers].map((s) => s.close())); });
@@ -70,11 +83,19 @@ function env(server, home, extra = {}) {
   };
 }
 
-/** Run a configured hook command the way hosts do: `sh -c`, payload on stdin. */
+/** Start a hook command the way hosts do: `sh -c`, or `cmd.exe /d /s /c` on Windows. */
+function shell(command, options) {
+  if (!WINDOWS) return spawn('/bin/sh', ['-c', command], options);
+  return spawn(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', `"${command}"`], {
+    ...options, env: { ...WINDOWS_ENV, ...options.env }, windowsVerbatimArguments: true, windowsHide: true,
+  });
+}
+
+/** Run a configured hook command the way hosts do (shell()), payload on stdin. */
 function sh(command, payload, childEnv, cwd = root, { stdinDelayMs = 0 } = {}) {
   return new Promise((resolve, reject) => {
     const started = Date.now();
-    const child = spawn('/bin/sh', ['-c', command], { env: childEnv, cwd, stdio: ['pipe', 'pipe', 'pipe'] });
+    const child = shell(command, { env: childEnv, cwd, stdio: ['pipe', 'pipe', 'pipe'] });
     let stdout = '';
     let stderr = '';
     // firstOutMs: when the hook's answer came, before it exits.
@@ -557,6 +578,37 @@ test('Cursor app with every hook: a turn the hooks saved is never saved again fr
 });
 
 // A Cursor <timestamp> text for a time, to the minute, as UTC.
+// What the stub service was asked (route, request id, statement, each
+// message's role, time and first words), and the forgets kept under each
+// HOME: printed when a forget count is not the one a test expects.
+function forgetTrace(server, homes) {
+  const lines = server.requests.map((r) => {
+    const messages = (r.body?.messages ?? []).map((m) => `${m.role}@${m.timestamp ?? '-'}:${String(m.content).slice(0, 40)}`);
+    return `${r.at} ${r.route} ${r.body?.request_id ?? ''} ${r.body?.statement ?? ''} ${messages.join(' | ')}`;
+  });
+  for (const home of homes) {
+    const dir = path.join(home, '.quotemem', 'forgotten');
+    for (const name of fs.existsSync(dir) ? fs.readdirSync(dir) : []) {
+      if (name.endsWith('.json')) lines.push(`kept in ${path.basename(home)}: ${fs.readFileSync(path.join(dir, name), 'utf8')}`);
+    }
+  }
+  return lines.join('\n');
+}
+// Cursor's stamps have minutes only. A test whose turns share one minute
+// with a forget made after the first of them reads that minute first, and
+// the forget must be kept within it: a minute that ended before the forget
+// proves the words were said before it, whatever the bound says. When the
+// clock reaches the next minute before the forget is kept (a slow start of
+// a hook or of the MCP server), the scenario begins again, in that minute.
+// `scenario(minute)` runs until the forget is kept.
+async function inOneMinute(scenario) {
+  for (let attempt = 1; ; attempt += 1) {
+    const began = Date.now();
+    const result = await scenario(stampAt(began));
+    if (Math.floor(Date.now() / 60_000) === Math.floor(began / 60_000)) return result;
+    assert.ok(attempt < 3, 'the forget is kept within the minute its turns are stamped with');
+  }
+}
 function stampAt(ms) {
   const d = new Date(ms);
   const hour = d.getUTCHours();
@@ -654,7 +706,8 @@ test('Cursor CLI: a forget the model makes through the tools during a run is app
   assert.ok(again.at >= saved.at && again.at >= server.of('/memory/add').at(-1).at, 'after the batches that hold it');
   const kept = JSON.parse(fs.readFileSync(path.join(home, '.quotemem', 'forgotten', `${ownerKey(server.url, 'quei')}.json`), 'utf8'));
   assert.deepEqual(kept.items.map((item) => item.statement), ['the locker code'], 'the statement only');
-  assert.equal(fs.statSync(path.join(home, '.quotemem', 'forgotten', `${ownerKey(server.url, 'quei')}.json`)).mode & 0o777, 0o600);
+  // Windows files have no POSIX mode.
+  if (!WINDOWS) assert.equal(fs.statSync(path.join(home, '.quotemem', 'forgotten', `${ownerKey(server.url, 'quei')}.json`)).mode & 0o777, 0o600);
 });
 
 test('Cursor: transcript turns are matched with the hooks\' prompts in order; a chat begun before the record, or a mismatch, saves nothing twice and resynchronizes', async () => {
@@ -743,18 +796,21 @@ test('Cursor CLI: a turn whose reply is not written yet waits; a rewritten trans
   assert.equal(new Set(turnOne.map((b) => JSON.stringify(b))).size, 1, 'turn 1 sent again has the same id and body');
 
   // The queue cannot be written: nothing is lost; the next run sends it.
-  const queueDir = path.join(home, '.quotemem', 'cursor', 'queue');
-  appendRun(file, transcriptTurn('Thursday, Nov 20, 2025, 11:07 AM (UTC+8)', 'My bike is a Brompton.', 'Nice.'));
-  fs.chmodSync(queueDir, 0o500);
-  try {
+  // (Not on Windows: a folder's mode there does not stop a write.)
+  if (!WINDOWS) {
+    const queueDir = path.join(home, '.quotemem', 'cursor', 'queue');
+    appendRun(file, transcriptTurn('Thursday, Nov 20, 2025, 11:07 AM (UTC+8)', 'My bike is a Brompton.', 'Nice.'));
+    fs.chmodSync(queueDir, 0o500);
+    try {
+      output(await run('sessionEnd', cliEnd(file)));
+    } finally {
+      fs.chmodSync(queueDir, 0o700);
+    }
+    await sleep(500);
+    assert.ok(!adds().some((b) => /Brompton/.test(JSON.stringify(b))));
     output(await run('sessionEnd', cliEnd(file)));
-  } finally {
-    fs.chmodSync(queueDir, 0o700);
+    await waitFor(() => adds().some((b) => /Brompton/.test(JSON.stringify(b))), 8000, 'the turn, on the next run');
   }
-  await sleep(500);
-  assert.ok(!adds().some((b) => /Brompton/.test(JSON.stringify(b))));
-  output(await run('sessionEnd', cliEnd(file)));
-  await waitFor(() => adds().some((b) => /Brompton/.test(JSON.stringify(b))), 8000, 'the turn, on the next run');
 
   // A stamp in another language: no time, so a resend after the state is lost is the same batch.
   const home2 = newHome();
@@ -774,25 +830,18 @@ test('Cursor CLI: a turn whose reply is not written yet waits; a rewritten trans
 
 test('Cursor CLI: a forget made through the tools is not applied to words said in a later run of the chat, in the same minute; within its own run it is', async () => {
   const nothing = (body) => ({ body: { schema_version: 1, status: 'nothing_matched', confirmation: null, expires_at: null, candidates: [], decision: null, request_id: body.request_id } });
-  const server = await memoryServer({ '/memory/forget/prepare': nothing });
-  const toolForget = async (home, statement) => {
-    const mcp = mcpSession('quotemem-hook', ['mcp'], env(server, home));
-    try {
-      await mcp.request('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'test', version: '0' } });
-      await mcp.request('tools/call', { name: 'quotemem_forget_prepare', arguments: { statement } });
-    } finally {
-      mcp.close();
-    }
-  };
   // One minute for every turn: Cursor's stamps have minutes only.
-  const minute = stampAt(Date.now());
-  const home = newHome();
-  const run = cursorHooks(server, home, { version: CLI_VERSION });
-  const file = cliTranscript(home);
-  output(await run('sessionStart', cliFields()));
-  // Run 1: the fact, then a forget through the tools.
-  appendRun(file, transcriptTurn(minute, 'My locker code is HERON.', 'Noted.'));
-  await toolForget(home, 'the locker code');
+  const { server, home, run, file, minute } = await inOneMinute(async (minute) => {
+    const server = await memoryServer({ '/memory/forget/prepare': nothing });
+    const home = newHome();
+    const run = cursorHooks(server, home, { version: CLI_VERSION });
+    const file = cliTranscript(home);
+    output(await run('sessionStart', cliFields()));
+    // Run 1: the fact, then a forget through the tools.
+    appendRun(file, transcriptTurn(minute, 'My locker code is HERON.', 'Noted.'));
+    await toolForget(server, home, 'the locker code');
+    return { server, home, run, file, minute };
+  });
   output(await run('sessionEnd', cliEnd(file)));
   await waitFor(() => server.of('/memory/forget/prepare').length === 2, 8000, 'the forget applied again to run 1');
   // Run 2 (--resume), the same minute: a new code, said after the forget.
@@ -800,7 +849,7 @@ test('Cursor CLI: a forget made through the tools is not applied to words said i
   output(await run('sessionEnd', cliEnd(file)));
   await waitFor(() => server.of('/memory/add').some((r) => /OWL/.test(JSON.stringify(r.body))), 8000, 'run 2');
   await sleep(800);
-  assert.equal(server.of('/memory/forget/prepare').length, 2, 'the new code is kept');
+  assert.equal(server.of('/memory/forget/prepare').length, 2, `the new code is kept\n${forgetTrace(server, [home])}`);
 
   // The same, within one run: whether the second turn came after the
   // forget cannot be told within its minute, so the forget covers it too.
@@ -809,7 +858,7 @@ test('Cursor CLI: a forget made through the tools is not applied to words said i
   const file2 = cliTranscript(home2, 'chat-same-run');
   output(await run2('sessionStart', cliFields('chat-same-run')));
   appendRun(file2, transcriptTurn(minute, 'My bike lock code is 4711.', 'Noted.'));
-  await toolForget(home2, 'the bike lock code');
+  await toolForget(server, home2, 'the bike lock code');
   appendRun(file2, transcriptTurn(minute, 'My new bike lock code is 0815.', 'Noted.'));
   const before = server.of('/memory/forget/prepare').length;
   output(await run2('sessionEnd', cliEnd(file2, 'chat-same-run')));
@@ -972,13 +1021,15 @@ test('Cursor app: a chat whose transcript is missing at its start, or named othe
 });
 
 test('Cursor app: a chat reopened and rewritten: a turn added after its start keeps the bound, though Cursor moved its turn_ended line', async () => {
-  const server = await memoryServer({ '/memory/forget/prepare': nothingMatched });
-  const home = newHome();
-  const run = cursorHooks(server, home, { version: '3.24.9' });
-  const file = cliTranscript(home, 'c-1');
-  appendRun(file, transcriptTurn(stampAt(Date.now() - 3_600_000), 'My locker code word is HERON.', 'Noted.'));
-  const minute = stampAt(Date.now());
-  await toolForget(server, home, 'the locker code word');
+  const { server, home, run, file, minute } = await inOneMinute(async (minute) => {
+    const server = await memoryServer({ '/memory/forget/prepare': nothingMatched });
+    const home = newHome();
+    const run = cursorHooks(server, home, { version: '3.24.9' });
+    const file = cliTranscript(home, 'c-1');
+    appendRun(file, transcriptTurn(stampAt(Date.now() - 3_600_000), 'My locker code word is HERON.', 'Noted.'));
+    await toolForget(server, home, 'the locker code word');
+    return { server, home, run, file, minute };
+  });
   output(await run('sessionStart', { session_id: 'c-1', is_background_agent: false, transcript_path: file }));
   // The next run rewrites the file: the turn_ended line goes, a new turn takes its place.
   appendRun(file, transcriptTurn(minute, 'My new locker code word is OWL.', 'Noted.'));
@@ -987,8 +1038,8 @@ test('Cursor app: a chat reopened and rewritten: a turn added after its start ke
   await sleep(500);
   const owl = server.of('/memory/add').find((r) => /OWL/.test(JSON.stringify(r.body)));
   const again = server.of('/memory/forget/prepare')[1];
-  assert.equal(server.of('/memory/forget/prepare').length, 2);
-  assert.ok(again.at <= owl.at, 'the forget follows the old turn only: the new code, said after it, is kept');
+  assert.equal(server.of('/memory/forget/prepare').length, 2, forgetTrace(server, [home]));
+  assert.ok(again.at <= owl.at, `the forget follows the old turn only: the new code, said after it, is kept\n${forgetTrace(server, [home])}`);
 });
 
 test('Cursor CLI: a turn whose time proves it was said before a forget gets the forget again, even when the clock was set back between runs', async () => {
@@ -1258,7 +1309,7 @@ test('Cursor app: a new chat whose start and first prompt come together finds a 
   assert.equal(server.of('/memory/add').length, 2);
 });
 
-test('Cline: a new task\'s first prompt finds what a task left between turns said just now', async () => {
+test('Cline: a new task\'s first prompt finds what a task left between turns said just now', posixOnly('the Cline hook files are /bin/sh scripts'), async () => {
   const stored = [];
   const server = await memoryServer({
     '/memory/add': async (body) => {
@@ -1511,7 +1562,10 @@ test('a run given its own QUOTEMEM_STATE_DIR and QUOTEMEM_ENV_FILE writes nothin
   await waitFor(() => ['My bike is blue.', 'My kite is orange.'].every((text) => server.of('/memory/add').some((r) => JSON.stringify(r.body).includes(text))), 8000, 'the run\'s turns');
   await sleep(500);
   // Only the kept forget, which hooks without that state folder read there.
-  const written = snapshot().filter((line) => !untouched.includes(line)).map((line) => line.split(' ')[0]);
+  // (On Windows PowerShell, which starts the background sender, keeps a cache
+  // of its own under the home's AppData: not QuoteMem's.)
+  const written = snapshot().filter((line) => !untouched.includes(line)).map((line) => line.split(' ')[0])
+    .filter((file) => !(WINDOWS && file.startsWith(path.join('AppData', 'Local', 'Microsoft', 'Windows', 'PowerShell'))));
   assert.deepEqual(written, [path.join('.quotemem', 'forgotten', `${ownerKey(server.url, 'quei')}.json`)], 'nothing else under the home was written');
   assert.ok(!server.of('/memory/add').some((r) => JSON.stringify(r.body).includes('HERON')), 'another user\'s pending turn was left as it was');
   for (const host of ['devin', 'cursor']) {
@@ -1572,7 +1626,7 @@ test('Cursor CLI: a transcript with more new text than one reading holds is name
   await waitFor(() => server.of('/memory/add').some((r) => /kite is orange/.test(JSON.stringify(r.body))), 8000, 'the next turn');
 });
 
-test('Cline: hook files in ~/.cline/hooks inject recall as contextModification and capture TaskComplete', async () => {
+test('Cline: hook files in ~/.cline/hooks inject recall as contextModification and capture TaskComplete', posixOnly('the Cline hook files are /bin/sh scripts'), async () => {
   const server = await memoryServer();
   const home = newHome();
   const dir = path.join(home, '.cline', 'hooks');
@@ -1608,7 +1662,7 @@ test('Cline: hook files in ~/.cline/hooks inject recall as contextModification a
 
 // --------------------------------------------------------------------- goose
 
-test('goose: plugin hooks write recall to the MOIM file, clear it at Stop, and capture', async () => {
+test('goose: plugin hooks write recall to the MOIM file, clear it at Stop, and capture', posixOnly('the goose hook is a /bin/sh script (quotemem-hook.sh)'), async () => {
   const server = await memoryServer();
   const home = newHome();
   const plugin = path.join(home, '.agents', 'plugins', 'quotemem');
@@ -1814,7 +1868,7 @@ test('every host carries on at once when QuoteMem is down, slow, or not configur
   const home = newHome();
   assert.equal((await sh('quotemem-hook cursor beforeSubmitPrompt', undefined, env(slow, home))).stdout.trim(), '{"continue":true}');
   const junk = await new Promise((resolve) => {
-    const child = spawn('/bin/sh', ['-c', 'quotemem-hook cline UserPromptSubmit'], { env: env(slow, home) });
+    const child = shell('quotemem-hook cline UserPromptSubmit', { env: env(slow, home) });
     let out = '';
     child.stdout.on('data', (d) => { out += d; });
     child.on('exit', (code) => resolve({ code, out }));
@@ -1891,6 +1945,64 @@ test('OpenClaw userScope sender: one flusher waits for every sender\'s idle chat
   }
   await waitFor(() => idleWaiters(stateDir).length === 0, 8000, 'the waiting flusher to exit');
   group.handlers.gateway_stop.handler({}, {});
+});
+
+test('OpenClaw plugin: a maxInjectChars from 500 to 2499 is accepted and raised to 2500', async () => {
+  const schema = config('openclaw/openclaw.plugin.json').configSchema.properties.maxInjectChars;
+  assert.equal(schema.minimum, 500, 'a config that was valid before stays valid');
+  assert.equal(schema.maximum, 50000);
+  const mod = await import(pathToFileURL(path.join(INTEGRATIONS, 'openclaw', 'index.mjs')).href);
+  for (const [given, used] of [[500, 2500], [2499, 2500], [2500, 2500], [6000, 6000], [50000, 50000]]) {
+    const api = fakeApi({ maxInjectChars: given });
+    const registered = mod.registerQuoteMem(api, { env: env({ url: 'http://127.0.0.1:9' }, newHome()) });
+    assert.ok(registered, `memory stays on with maxInjectChars ${given}`);
+    assert.equal(registered.settings.maxInjectChars, used, `maxInjectChars ${given}`);
+  }
+});
+
+test('OpenClaw plugin: a recallMinScore outside 0 to 1 is accepted and used as given', async () => {
+  const schema = config('openclaw/openclaw.plugin.json').configSchema.properties.recallMinScore;
+  assert.equal(schema.type, 'number');
+  assert.equal(schema.minimum, undefined, 'a config that was valid before stays valid');
+  assert.equal(schema.maximum, undefined, 'a config that was valid before stays valid');
+  const mod = await import(pathToFileURL(path.join(INTEGRATIONS, 'openclaw', 'index.mjs')).href);
+  for (const given of [-1, 0, 0.3, 1, 1.2]) {
+    const api = fakeApi({ recallMinScore: given });
+    const registered = mod.registerQuoteMem(api, { env: env({ url: 'http://127.0.0.1:9' }, newHome()) });
+    assert.ok(registered, `memory stays on with recallMinScore ${given}`);
+    assert.equal(registered.settings.recallMinScore, given, `recallMinScore ${given}`);
+  }
+});
+
+test('OpenClaw plugin: the config schema keeps the 0.3.2 constraints, so a config valid then stays valid', () => {
+  const constraints = (value) => {
+    if (Array.isArray(value)) return value.map(constraints);
+    if (!value || typeof value !== 'object') return value;
+    return Object.fromEntries(Object.entries(value)
+      .filter(([key]) => key !== 'description')
+      .map(([key, inner]) => [key, constraints(inner)]));
+  };
+  // The 0.3.2 configSchema without its descriptions, which may change.
+  assert.deepEqual(constraints(config('openclaw/openclaw.plugin.json').configSchema), {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      captureEvery: { type: ['integer', 'string'] },
+      recall: { type: 'string', enum: ['gated', 'always', 'off'] },
+      recallGate: { type: 'string', enum: ['questions', 'broad'] },
+      topK: { type: 'integer', minimum: 1, maximum: 20 },
+      maxInjectChars: { type: 'integer', minimum: 500, maximum: 50000 },
+      recallTimeoutMs: { type: 'integer', minimum: 100, maximum: 15000 },
+      recallMinScore: { type: 'number' },
+      forget: { type: 'string', enum: ['auto', 'off'] },
+      forgetTimeoutMs: { type: 'integer', minimum: 200, maximum: 60000 },
+      idleFlushMs: { type: ['integer', 'string'] },
+      includeSubagents: { type: 'boolean' },
+      stateDir: { type: 'string' },
+      userScope: { type: 'string', enum: ['owner', 'sender'] },
+      ownerSenders: { type: 'array', items: { type: 'string' } },
+    },
+  });
 });
 
 test('OpenClaw plugin: prependContext recall, capture from agent_end, forget, provenance and per-sender memory', async () => {
@@ -1989,7 +2101,12 @@ test('OpenClaw plugin: prependContext recall, capture from agent_end, forget, pr
 // ----------------------------------------------------------------------- MCP
 
 function mcpSession(command, args, childEnv) {
-  const child = spawn(command, args, { env: childEnv, stdio: ['pipe', 'pipe', 'pipe'] });
+  // On Windows quotemem-hook on PATH is a .cmd file, which Node does not start
+  // without a shell: the script it runs is started with this Node instead.
+  const [file, argv] = WINDOWS && command === 'quotemem-hook'
+    ? [process.execPath, [path.join(HOOKS, 'quotemem-hook.mjs'), ...args]]
+    : [command, args];
+  const child = spawn(file, argv, { env: { ...WINDOWS_ENV, ...childEnv }, stdio: ['pipe', 'pipe', 'pipe'] });
   let buffer = '';
   const waiting = new Map();
   child.stdout.on('data', (d) => {
@@ -2015,7 +2132,14 @@ function mcpSession(command, args, childEnv) {
       });
     },
     notify(method, params) { child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', method, params })}\n`); },
-    close() { child.stdin.end(); child.kill(); },
+    close() {
+      child.stdin.end();
+      // On Windows a kill also stops the PowerShell that is still starting the
+      // server's background sender (it runs in the server's job): there the
+      // server ends by itself when its input ends, as a host lets it.
+      if (WINDOWS) setTimeout(() => child.kill(), 10_000).unref();
+      else child.kill();
+    },
   };
 }
 
@@ -2061,7 +2185,8 @@ test('env file and token sources: the environment wins, only QUOTEMEM_* names ar
   const { env: merged, notes } = hostEnv({ HOME: home, USERPROFILE: home, QUOTEMEM_URL: 'http://env' });
   assert.equal(merged.QUOTEMEM_URL, 'http://env');
   assert.equal(merged.QUOTEMEM_TOKEN, 'from-file');
-  assert.match(notes.join(' '), /chmod 600/);
+  // Windows files have no POSIX mode, so there is no mode to warn about.
+  if (!WINDOWS) assert.match(notes.join(' '), /chmod 600/);
   assert.ok(!notes.join(' ').includes('from-file'));
   assert.equal(hostEnv({ HOME: home, USERPROFILE: home, QUOTEMEM_TOKEN: 'e', GEMINI_CLI_QUOTEMEM_TOKEN: 'g' }).env.QUOTEMEM_TOKEN, 'e');
 });
@@ -2127,13 +2252,13 @@ test('shipped install files are well formed and point at real files and events',
   assert.match(fs.readFileSync(path.join(INTEGRATIONS, 'cursor', 'rules', 'quotemem.mdc'), 'utf8'), /^---\n[\s\S]*alwaysApply: true/);
   for (const name of ['UserPromptSubmit', 'TaskComplete', 'TaskCancel']) {
     const file = path.join(INTEGRATIONS, 'cline', 'hooks', name);
-    assert.ok(fs.statSync(file).mode & 0o111, `${name} is executable`);
+    if (!WINDOWS) assert.ok(fs.statSync(file).mode & 0o111, `${name} is executable`);
     assert.match(fs.readFileSync(file, 'utf8'), new RegExp(`cline ${name}\\n`));
   }
-  assert.ok(fs.statSync(path.join(INTEGRATIONS, 'goose', 'quotemem', 'scripts', 'quotemem-hook.sh')).mode & 0o111);
+  if (!WINDOWS) assert.ok(fs.statSync(path.join(INTEGRATIONS, 'goose', 'quotemem', 'scripts', 'quotemem-hook.sh')).mode & 0o111);
   assert.equal(config('goose/quotemem/plugin.json').name, 'quotemem');
   assert.deepEqual(Object.keys(config('devin/hooks.v1.json')).sort(), ['SessionEnd', 'Stop', 'UserPromptSubmit']);
-  assert.ok(fs.statSync(path.join(HOOKS, 'quotemem-hook.mjs')).mode & 0o111, 'the bin is executable');
+  if (!WINDOWS) assert.ok(fs.statSync(path.join(HOOKS, 'quotemem-hook.mjs')).mode & 0o111, 'the bin is executable');
 });
 
 test('model instructions: a forget request without a note is carried out through the tools, and a forget is claimed only when a note or a tool says so', () => {

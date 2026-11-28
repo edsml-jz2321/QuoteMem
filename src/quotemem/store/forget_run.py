@@ -128,10 +128,19 @@ from quotemem.core.forget_receipts import ErasureReceiptResultIndexV1
 from quotemem.core.forget_remainder import FORGET_REASONS, remainder_text, stored_remainder
 from quotemem.core.forget_reword import (
     MAX_REWORDINGS,
+    code_forms,
+    contrasted_values,
+    forgotten_values,
     han_forms,
     keeps_predicate,
+    kin_word,
     kind_of,
     left_out,
+    name_kinds,
+    named_part,
+    replaced_values,
+    reworded_statement,
+    shows,
     tie_descriptions,
     value_pattern,
 )
@@ -181,6 +190,7 @@ from quotemem.core.statement import (
     MAX_KEYWORDS,
     MAX_SUPPORT_GROUPS,
     MAX_TOMBSTONE_SOURCES,
+    canonical_statement,
     name_norm,
     own_token,
     statement_digest,
@@ -1049,6 +1059,7 @@ class ForgetOwner:
             held = self._restating(scope, restating) if restating and memory_ids else ()
             words_seen: set[str] = set()
             terms: set[str] = set()
+            said: list[str] = []
             for span in spans:
                 if any(span.evidence_id == other.evidence_id
                        and other.byte_start <= span.byte_start
@@ -1059,6 +1070,7 @@ class ForgetOwner:
                     return []
                 words_seen |= support_words(text)
                 terms |= fact_terms(text)
+                said.append(text)
             versions = [version for _, plan in planned for version in plan.versions
                         if version.snapshot.statement_digest not in digests]
             told = [version.snapshot.statement for version in versions]
@@ -1069,7 +1081,7 @@ class ForgetOwner:
                                           version.snapshot.embedding_space)
                                          for version in versions), modifier=modifier,
                                    name_asked=any(asks_name(word) for word in words),
-                                   kept=self._kept_names(told, asked))
+                                   kept=self._kept_names(told, asked), said=tuple(said))
             pairs = {(version.snapshot.entity_id, version.snapshot.statement_digest)
                      for version in versions}
             admitted: list[ForgetRewordV1] = []
@@ -1152,22 +1164,32 @@ class ForgetOwner:
         # Only while every Han run the plan withholds in its quotes is matched by a name or
         # value the new wording leaves out ("上海" by "Shanghai", "我弟弟叫李伟" by "李伟"): a
         # Latin form of a forgotten value it still showed ("Li Wei" for a withheld "李伟")
-        # would otherwise pass as the head's own reading.
+        # would otherwise pass as the head's own reading. A kin word withheld beside it
+        # ("儿子") is no name another script could show.
         if forgotten.any_script and english(wording.statement) and not all(
-                text.isascii() for text in quoted) and len(_withheld_runs(
-                    txn, read, snapshot.quote_spans)) <= len(removed):
+                text.isascii() for text in quoted) and len([
+                    run for run in _withheld_runs(txn, read, snapshot.quote_spans)
+                    if not kin_word(run)]) <= len(removed):
             said = " ".join(word for word in said.split() if not (
                 word[:1].isupper() and word.strip(".,;").isascii()
                 and token_contained(word.strip(".,;"), snapshot.statement)
                 and word.strip(".,;").casefold() not in {"the", "a", "an"}))
         probe = snapshot.model_copy(update={"statement": said})
+        # The word a kept name ends with that the forgotten one ends with too ("幼儿园" of a
+        # kept 蓝湾幼儿园 beside a forgotten 启明幼儿园, "Kindergarten" of Lanwan and Qiming
+        # Kindergarten) names neither: a rewording that only drops the phrases naming
+        # forgotten values as replaced keeps it (`_contrast_values`).
+        shared = frozenset(term for suffix in name_kinds(wording.statement)
+                           for term in (*shown(suffix), *fact_terms(suffix))) if (
+            _contrast_values(snapshot.statement, wording, forgotten)) else frozenset[str]()
         # A Han form is read by its terms, as the withheld spans are (``fact_terms``): "琴"
         # of a forgotten "陈雅琴" is no word of a kept "钢琴老师".
         trimmed = trimmed_support(probe, read, forgotten=words.union(*(
-            fact_terms(form) if forgotten.any_script else shown(form) for form in removed)),
+            fact_terms(form) if forgotten.any_script else shown(form) for form in removed))
+                                  - shared,
                                   quoted=lambda span: _quoted_text(txn, span),
                                   speakers=lambda span: _speaker_words(txn, span),
-                                  any_script=forgotten.any_script)
+                                  any_script=forgotten.any_script, shared=shared)
         groups += [] if trimmed is None else list(trimmed.groups)
         return tuple(dict.fromkeys(groups))[:MAX_SUPPORT_GROUPS]
 
@@ -1461,8 +1483,15 @@ class ForgetOwner:
         # quotes' own script ("上海" of "我上个月从上海搬到了杭州" for "Shanghai"); one kept as
         # it is cites what a replacer's quotes name of the forgotten value.
         forgotten_quotes = self._quoted_texts(txn, (memory_id, *refuted))
-        left = {memory: self._left_forms(txn, memory, left_out(statement, row.statement),
-                                         forgotten_quotes)
+        # The values a contrast tail it drops names are left out too ("4471" of "The user's
+        # locker code is 8836 now, not 4471." beside a forgotten "My locker code is 4471."),
+        # though no capitalized run shows them (`contrasted_values`).
+        told = [*forgotten_quotes, *(said for memory in (memory_id, *refuted)
+                                    if (said := self._head_statement(txn, memory)) is not None)]
+        left = {memory: self._left_forms(txn, memory, list(dict.fromkeys([
+                    *left_out(statement, row.statement),
+                    *(value for value in contrasted_values(statement, told)
+                      if not shows(row.statement, value))])), forgotten_quotes)
                 for row in rewordings if (memory := row.memory_id) in staying
                 and (statement := self._head_statement(txn, memory)) not in (None, row.statement)}
         cited_as = (*replacers, *(memory for memory in staying if memory not in left))
@@ -1524,8 +1553,10 @@ class ForgetOwner:
         forms = list(values)
         for value in values:
             if not any(value_pattern(value).search(text) for text in texts):
-                forms += [form for text in texts if not text.isascii()
-                          for form in han_forms(text, forgotten)]
+                # A code its quotes give by its core is shown so ("3K728" for "浙A3K728").
+                coded = [form for text in texts for form in code_forms(value, text)]
+                forms += coded or [form for text in texts if not text.isascii()
+                                   for form in han_forms(text, forgotten)]
         return list(dict.fromkeys(forms))
 
     def _head_quotes(self, txn: TxnRows, memory_id: str) -> list[QuoteSpanV1]:
@@ -1888,7 +1919,9 @@ class ForgetOwner:
         no benchmark workspace gains a shadow this way.
 
         A memory the forget rewords keeps its words found; only the names and values its new
-        wording leaves out (``left``, "Henrik", "林晓雨") join the shadow.
+        wording leaves out (``left``, "Henrik", "林晓雨") join the shadow, a place's by what
+        names it (`named_part`: "Qiming" of "Qiming Kindergarten"): the word ending it names
+        nothing, and a kept name may end with it ("Lanwan Kindergarten").
 
         A statement naming the value the user asked to forget beside another (``asked``, the
         keyed digests of the asked values' names) gives only the asked names: "The user moved
@@ -1908,7 +1941,7 @@ class ForgetOwner:
         if seed is not None:
             terms = terms | shadow_terms(seed.statement)
         for form in left:
-            terms = terms | shadow_terms(f"the name {form}")
+            terms = terms | shadow_terms(f"the name {named_part(form)}")
         return self._shadow_rows(scope, terms, now, controller_id, enforces=enforces)
 
     def record_shadow(self, scope: ScopeV1, texts: Sequence[str]) -> None:
@@ -2721,11 +2754,13 @@ class ForgetOwner:
         if words is None:
             return None
         # Besides what it leaves out by rule, it drops only words the forget withholds (a
-        # lowercase name: "bob" of "The user took the user's cat bob to the vet yesterday.").
+        # lowercase name: "bob" of "The user took the user's cat bob to the vet yesterday."),
+        # or a phrase naming forgotten values as replaced, whole (`_contrast_values`).
         kept = set(token_seq(wording.statement))
+        tail = bool(_contrast_values(snapshot.statement, wording, forgotten))
         removed = [*left_out(snapshot.statement, wording.statement), *(
             token for token in token_seq(snapshot.statement)
-            if token not in kept and shown(token) & words)]
+            if token not in kept and (tail or shown(token) & words))]
         # A colour or a breed left out of the thing it describes keeps the
         # statement's predicate by the rule that wrote it (`attribute_reworded`).
         attributed = attribute_reworded(snapshot.statement, wording.statement)
@@ -2775,6 +2810,23 @@ class ForgetOwner:
         the tie a rewording keeps ("The user has a cat." on "我的猫"), "女儿" of "忘掉我女儿学校
         的名字" what one of the daughter keeps."""
         shown = shown_terms if forgotten.any_script else support_words
+        kept = {term for name in forgotten.kept
+                for term in (name, *support_words(name), *fact_terms(name))}
+        if contrast := _contrast_values(statement, wording, forgotten):
+            # A rewording that only drops the phrases naming forgotten values as replaced (a
+            # contrast tail, a clause saying one no longer holds, a place left for another)
+            # states what holds now: of the forget, only the words of its names, values and
+            # numbers are forgotten for it, never a word it shares with the old fact ("live"
+            # of "The user used to live at 14 Oak Street." for "The user lives at 27 Pine Lane
+            # now."), nor one of the value that holds now ("jonah" of a new
+            # "jonah@new.example.com" for an old "jonah@old.example.com", "浙" of a new plate
+            # "浙A9M105", "幼儿园" of a new "蓝湾幼儿园"), which shows none of the forgotten
+            # values whole (`reworded_statement`). The values are those of the forgotten
+            # statements written in English, which give their values whole ("The user works
+            # at 青禾科技."): the user's own words of the request ("我原来的车牌") are a kind,
+            # never a value ("车牌" of "车牌现在是浙A9M105").
+            return _value_terms([*(told for told in forgotten.statements if english(told)),
+                                 *contrast], shown) - kept - shown(wording.statement)
         tie: frozenset[str] = frozenset() if wording.tie is None else (
             shown(wording.tie) - {"user"})
         # Only a request for a name lets a tie stand, and then a forgotten statement showing
@@ -2826,8 +2878,6 @@ class ForgetOwner:
         forgotten = replace(forgotten, statements=tuple(
             other for other in forgotten.statements
             if not asks_name(other) and not detailed(other)))
-        kept = {term for name in forgotten.kept
-                for term in (name, *support_words(name), *fact_terms(name))}
         return (_forgotten_terms(forgotten, statement)
                 | _forgotten_terms(forgotten, wording.statement)) - tie - asked - kept
 
@@ -2851,6 +2901,7 @@ class ForgetOwner:
                 restating, modifier = intent.restating_spans, intent.modifier_only
         words: set[str] = set()
         terms: set[str] = set()
+        said: list[str] = []
         for span in fence.spans:
             if any(span.evidence_id == other.evidence_id and other.byte_start <= span.byte_start
                    and span.byte_end <= other.byte_end for other in restating):
@@ -2864,6 +2915,7 @@ class ForgetOwner:
                 return None
             words |= support_words(text)
             terms |= fact_terms(text)
+            said.append(text)
         statements: list[str] = []
         vectors: list[tuple[tuple[float, ...], str]] = []
         kept = _wording_digests(fence)
@@ -2879,7 +2931,7 @@ class ForgetOwner:
         return _Forgotten(frozenset(words), tuple(statements), fence.any_script,
                           frozenset(terms), tuple(vectors), modifier=modifier,
                           name_asked=fence.name_asked,
-                          kept=self._kept_names(statements, fence.asked))
+                          kept=self._kept_names(statements, fence.asked), said=tuple(said))
 
     def _kept_names(self, statements: Sequence[str],
                     asked: Collection[str]) -> frozenset[str]:
@@ -5001,6 +5053,43 @@ def _detail_dependent(forgotten: _Forgotten, statement: str) -> _Forgotten | Non
                                  if index < len(forgotten.vectors)))
 
 
+_VALUE_TOKEN: Final = re.compile(r"[^\s,;:()]*[\d@][^\s,;:()]*")
+"""A token with a digit or an at sign: a number, a code or an address."""
+
+
+def _contrast_values(statement: str, wording: ForgetRewordV1,
+                     forgotten: _Forgotten) -> list[str]:
+    """The forgotten values a rewording leaves out with the phrases naming them as replaced,
+    when that is all it changes (`replaced_values`, `reworded_statement`): "14 Oak Street" of
+    "The user lives at 27 Pine Lane now, not 14 Oak Street." reworded "The user lives at 27
+    Pine Lane now.", "启明幼儿园" of "The user's son has transferred from 启明幼儿园 to
+    蓝湾幼儿园." reworded "The user's son has transferred to 蓝湾幼儿园."; none for any other
+    rewording. A name the wording leaves out with a clause or a departure naming it as
+    replaced counts though no tombstone of this forget shows it in its script: the prepare
+    planned the wording against every forget of the plan, which the first one may precede
+    ("Qiming Kindergarten" of "... no longer attends Qiming Kindergarten and has transferred
+    to Lanwan Kindergarten." under a forget tombstoned by "启明幼儿园")."""
+    if wording.tie is not None:
+        return []
+    values = replaced_values(statement, [*forgotten.statements, *forgotten.said]) or [
+        value for value in left_out(statement, wording.statement)
+        if replaced_values(statement, [value])]
+    found = reworded_statement(statement, names={}, values=values) if values else None
+    if found is None or found[1] is not None or (
+            canonical_statement(found[0]) != canonical_statement(wording.statement)):
+        return []
+    return values
+
+
+def _value_terms(texts: Sequence[str], shown: Callable[[str], frozenset[str]],
+                 ) -> frozenset[str]:
+    """The words of the names, values and numbers ``texts`` show (`forgotten_values` of
+    each, and each token with a digit or an at sign), never their other words."""
+    return frozenset(term for text in texts
+                     for value in (*forgotten_values(text, [text]), *_VALUE_TOKEN.findall(text))
+                     for term in shown(value))
+
+
 def _forgotten_terms(forgotten: _Forgotten, statement: str) -> frozenset[str]:
     """What a dependent stating ``statement`` may not show: the words of S, and
     what each tombstone's statement says of its subject (``predicate_words``); in any script a
@@ -5045,6 +5134,9 @@ class _Forgotten:
     kept: frozenset[str] = frozenset()
     """The names the user kept of a forgotten statement naming an asked value beside them
     (``ForgetOwner._kept_names``): no rewording reads them as forgotten."""
+    said: tuple[str, ...] = ()
+    """The texts of S: a contrast tail naming a value one shows names a forgotten value
+    (`_contrast_values`), as one naming a value of a tombstone's statement does."""
 
 
 def _trim_refused(txn: TxnRows, snapshot: MemorySnapshotV2, forgotten: _Forgotten) -> bool:

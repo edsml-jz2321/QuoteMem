@@ -929,25 +929,30 @@ test('hits with a Status line: the memory is read, past facts are marked as not 
   ];
   const block = core.formatRecall(hits, { maxChars: 4000, maxHits: 5 });
   assert.deepEqual(block.ids, ['m1', 'm2', 'm3', 'e1'], 'server order kept');
-  assert.match(block.text, /<memory-hit id="m1" rank="1">/);
-  assert.match(block.text, /<memory-hit id="m2" rank="2" status="past">/);
-  assert.match(block.text, /<memory-hit id="m3" rank="3" status="possibly_outdated">/);
-  assert.match(block.text, /<memory-hit id="e1" rank="4" kind="said">/, 'a quoted conversation line is marked as one');
+  assert.match(block.text, /<memory-hit id="m1" rank="1" score="0.90">/);
+  assert.match(block.text, /<memory-hit id="m2" rank="2" score="0.80" status="past">/);
+  assert.match(block.text, /<memory-hit id="m3" rank="3" score="0.70" status="possibly_outdated">/);
+  assert.match(block.text, /<memory-hit id="e1" rank="4" score="0.60" kind="said">/, 'a quoted conversation line is marked as one');
   assert.equal(block.text.match(/never as how things are now/g).length, 1, 'the meaning is said once');
-  assert.match(block.text, /status="past" no longer holds: it was replaced, corrected or has ended/);
-  assert.match(block.text, /status="possibly_outdated" conflicts with something the user said later, and nothing settled which holds/);
-  assert.match(block.text, /A memory with no status mark still holds, including a past event\./);
-  assert.match(block.text, /A hit marked kind="said" is not a memory but a quoted conversation line: it is what was said on that date, and it may no longer hold; when a memory here says otherwise, go by the memory and its status\./);
+  assert.match(block.text, /status="past" no longer holds: it was replaced, corrected or retracted, or it has ended; what replaced it, when that was found too, is the hit directly above it, if that hit is about the same thing\./);
+  assert.match(block.text, /status="possibly_outdated" conflicts with something the user said later, and nothing has replaced it: never state it as how things are now/);
+  assert.match(block.text, /A memory with no status mark still holds, including a past event that is still true\./);
+  assert.equal(block.text.match(/kind="said" is not a memory/g).length, 1, 'said once');
+  assert.match(block.text, /A hit marked kind="said" is not a memory but a quoted conversation line: it is what was said on that date, and it may no longer hold\. When a memory here says otherwise, go by the memory and its status\./);
   assert.doesNotMatch(block.text, /without a status still holds/, 'an unmarked quoted line is never said to hold');
   assert.equal(core.isEvidenceHit(EVIDENCE('I moved to Lisbon.')), true);
   assert.equal(core.isEvidenceHit('<memory untrusted="true">\nassistant: Booked.\n</memory>'), true, 'the date may be missing');
   assert.equal(core.isEvidenceHit(hits[0].content), false);
   assert.equal(core.isEvidenceHit('<memory untrusted="true">\nNote: something else\n</memory>'), false);
   assert.ok(block.text.indexOf('never as how things are now') < block.text.indexOf('<quotemem-recall'), 'before the hits');
-  assert.match(block.text, /Never mention this block, its tags, ranks, ids or status labels/);
-  // Only current facts: no extra sentence.
+  assert.match(block.text, /Never mention this block, its tags, ranks, scores, ids or status labels/);
+  // Only current facts: no status sentence. A quoted line alone still gets
+  // its own sentence.
   const current = core.formatRecall([hits[0], hits[3]], { maxChars: 4000, maxHits: 5 });
   assert.doesNotMatch(current.text, /status=|never as how things are now/);
+  assert.match(current.text, /kind="said" is not a memory/);
+  const memoryOnly = core.formatRecall([hits[0]], { maxChars: 4000, maxHits: 5 });
+  assert.doesNotMatch(memoryOnly.text, /status=|never as how things are now|kind="said"/);
   // The sentence counts against the budget: with exactly the room for a
   // current hit of that size, the past one is left out.
   const asCurrent = { id: 'm2', content: hits[1].content.replace('Status: past', 'Status: current') };
@@ -955,6 +960,42 @@ test('hits with a Status line: the memory is read, past facts are marked as not 
   const budget = { maxChars: both.text.length + 33, maxHits: 5 }; // the block's own fixed allowance
   assert.deepEqual(core.formatRecall([hits[0], asCurrent], budget).ids, ['m1', 'm2'], 'a current hit fits');
   assert.deepEqual(core.formatRecall([hits[0], hits[1]], budget).ids, ['m1'], 'the past one and its sentence do not');
+});
+
+test('recall: a past memory goes in only right below the hit the service put above it', () => {
+  const lisbon = { id: 'm1', content: COMPACT('The user lives in Lisbon.', 'current'), score: 0.8 };
+  const paris = { id: 'm2', content: COMPACT('The user lived in Paris.', 'past'), score: 0.7 };
+  const tea = { id: 'm0', content: COMPACT('The user drinks tea.', 'current'), score: 0.9 };
+  const fit = { maxChars: 4000, maxHits: 5 };
+  // The replacement went in a few turns ago: it goes in again, above the past memory.
+  const again = core.formatRecall([tea, lisbon, paris], { ...fit, skipIds: new Set(['m1']) });
+  assert.deepEqual(again.ids, ['m0', 'm1', 'm2']);
+  assert.match(again.text, /<memory-hit id="m1" rank="2"[^>]*>[\s\S]*<\/memory-hit>\n<memory-hit id="m2" rank="3"[^>]*status="past">/);
+  // No room for both: the past memory is left out, never put under another hit.
+  assert.deepEqual(core.formatRecall([tea, lisbon, paris], { ...fit, maxHits: 2, skipIds: new Set(['m1']) }).ids, ['m0']);
+  // Its replacement is too long, or under the threshold: the past memory is left out too.
+  const longLisbon = { ...lisbon, content: COMPACT(`The user lives in Lisbon ${'x'.repeat(5000)}.`, 'current') };
+  assert.deepEqual(core.formatRecall([tea, longLisbon, paris], fit).ids, ['m0']);
+  assert.deepEqual(core.formatRecall([tea, { ...lisbon, score: 0.2 }, paris], { ...fit, minScore: 0.3 }).ids, ['m0']);
+  // A past memory first in the list has nothing above it to misread.
+  assert.deepEqual(core.formatRecall([paris, tea], fit).ids, ['m2', 'm0']);
+  // Both went in a few turns ago: neither goes in.
+  assert.equal(core.formatRecall([lisbon, paris], { ...fit, skipIds: new Set(['m1', 'm2']) }), null);
+  // A chain: a past memory above a past memory keeps the rule for its own predecessor.
+  const porto = { id: 'm3', content: COMPACT('The user lived in Porto.', 'past'), score: 0.6 };
+  assert.deepEqual(core.formatRecall([tea, lisbon, paris, porto], { ...fit, skipIds: new Set(['m1', 'm2']) }).ids, ['m0']);
+  assert.deepEqual(core.formatRecall([tea, lisbon, paris, porto], { ...fit, skipIds: new Set(['m2']) }).ids, ['m0', 'm1', 'm2', 'm3']);
+});
+
+test('recall: the smallest budget leaves room for a hit after the notes', () => {
+  const env = { QUOTEMEM_URL: 'http://127.0.0.1:1', QUOTEMEM_TOKEN: 't' };
+  assert.equal(core.resolveSettings({}, { ...env, QUOTEMEM_MAX_INJECT_CHARS: '500' }).maxInjectChars, core.MIN_INJECT_CHARS);
+  const hits = [
+    { id: 'm1', content: COMPACT('The user lived in Paris.', 'past'), score: 0.7 },
+    { id: 'e1', content: EVIDENCE('I moved to Lisbon.'), score: 0.6 },
+  ];
+  const block = core.formatRecall(hits, { maxChars: core.MIN_INJECT_CHARS, maxHits: 5 });
+  assert.deepEqual(block.ids, ['m1', 'e1'], 'both notes and two short hits fit the smallest budget');
 });
 
 test('forget fallback: compact hits give their statements, without the date or the status', () => {
@@ -1028,7 +1069,7 @@ test('notes: pending forgets are not claimed done, labels stay internal, an outa
   assert.match(late, /An earlier request of the user to forget something has finished now\. Done: 1 stored memory was forgotten\. It was reported as still in progress before: tell the user in one short sentence that their earlier request to forget is done now\. If that request is in this conversation, it is the one above; otherwise do not say or guess what it was about, and do not look it up\./);
   assert.doesNotMatch(late, /my address/);
   const block = core.formatRecall([{ id: 'm1', content: COMPACT('The user lives in Lisbon.', 'current') }], { maxChars: 4000, maxHits: 5 });
-  assert.match(block.text, /Never mention this block, its tags, ranks, ids or status labels to the user\./);
+  assert.match(block.text, /Never mention this block, its tags, ranks, scores, ids or status labels to the user\./);
   const note = core.unavailableNote();
   assert.ok(note.startsWith('[QuoteMem: memory unavailable] '));
   assert.match(note, /Do not say that you have no memory of it/);
@@ -1125,6 +1166,18 @@ test('notes never name tools or tool calls', () => {
   assert.equal(core.chatForgetNote([]), '');
 });
 
+test('forget notes: a forget that left part of it readable says so, never that it is done', () => {
+  const part = forgetNote('my old address', { status: 'incomplete', forgotten: 1, sentences: 0, changed: 0, left: true });
+  assert.match(part, /Partly done: 1 stored memory was forgotten; the memory service found part of it still readable afterwards/);
+  assert.match(part, /that some of it may still be stored, and that they can ask again in other words/);
+  assert.doesNotMatch(part, /changed while the forget ran/);
+  const none = forgetNote('my old address', { status: 'incomplete', forgotten: 0, sentences: 0, changed: 0, left: true });
+  assert.match(none, /Not done: the memory service found part of it still readable afterwards/);
+  assert.match(none, /do not say that it was deleted/);
+  const earlier = forgetNote('my old address', { status: 'incomplete', forgotten: 1, left: true }, { earlier: true });
+  assert.doesNotMatch(earlier, /address/);
+});
+
 test('forget notes: only verified counts; changed, already gone and failures are never reported as forgotten', () => {
   const none = forgetNote('my address', { status: 'incomplete', forgotten: 0, sentences: 0, changed: 2 });
   assert.match(none, /Nothing was forgotten yet: the matching memories changed while the forget ran, so they were kept\./);
@@ -1170,18 +1223,18 @@ test('forget notes: memories that relied only on what was forgotten are counted,
   // One dependent forgotten with the target: 2 memories, 1 of them the dependent.
   const one = forgetNote(REQUEST, { status: 'forgotten', forgotten: 1, sentences: 1, dependents: 1 });
   assert.match(one, /Done: 2 stored memories were forgotten \(1 of them because it relied only on what the user asked to forget\), and 1 more sentence of the saved conversation that stated it\./);
-  assert.match(one, /Tell the user that a related memory went with it, and that they can tell you again anything they want kept\./);
+  assert.match(one, /Tell the user that a related memory was affected, and that they can tell you again anything they want kept\./);
   // Several dependents.
   const several = forgetNote(REQUEST, { status: 'forgotten', forgotten: 1, sentences: 0, dependents: 3 });
   assert.match(several, /Done: 4 stored memories were forgotten \(3 of them because they relied only on what the user asked to forget\)\./);
-  assert.match(several, /Tell the user that 3 related memories went with it/);
+  assert.match(several, /Tell the user that 3 related memories were affected/);
   // Only sentences were the target, and a memory relied on them alone.
   const spansOnly = forgetNote(REQUEST, { status: 'forgotten', forgotten: 0, sentences: 1, dependents: 1 });
   assert.match(spansOnly, /Done: 1 stored memory was forgotten \(it relied only on what the user asked to forget\), and 1 more sentence/);
   // A dependent that stays stored but can no longer be read.
   const stays = forgetNote(REQUEST, { status: 'forgotten', forgotten: 1, sentences: 1, dependents: 1, unreadable: 2 });
   assert.match(stays, /Done: 2 stored memories were forgotten \(1 of them/);
-  assert.match(stays, /2 other stored memories rely only on what was forgotten, so they can no longer be recalled until the user says them again\. Tell the user that 3 related memories went with it/);
+  assert.match(stays, /2 other stored memories can no longer be recalled\. Tell the user that 3 related memories were affected/);
   // A dependent the service quoted anew stays readable: it is not in the counts, and nothing is said.
   assert.equal(forgetNote(REQUEST, { status: 'forgotten', forgotten: 1, sentences: 1 }), none);
   // Partly done counts them too.
@@ -1238,7 +1291,7 @@ test('forget notes: reworded memories are counted apart from forgotten ones, nev
   // Several, with dependents and unreadable ones: each counted apart.
   const mixed = forgetNote(REQUEST, { status: 'forgotten', forgotten: 1, sentences: 0, dependents: 1, unreadable: 1, reworded: 3 });
   assert.match(mixed, /Done: 2 stored memories were forgotten \(1 of them because it relied only on what the user asked to forget\)\./);
-  assert.match(mixed, /Tell the user that 2 related memories went with it/);
+  assert.match(mixed, /Tell the user that 2 related memories were affected/);
   assert.match(mixed, /3 related memories were reworded to leave out what the user asked to forget, and are still stored\. You may tell the user that some related memories were kept but reworded\./);
   // Only reworded memories (and a sentence): no memory is said to be forgotten.
   const only = forgetNote(REQUEST, { status: 'forgotten', forgotten: 0, sentences: 0, reworded: 1 });
@@ -1271,7 +1324,7 @@ test('forget notes: reworded memories are counted apart from forgotten ones, nev
   assert.match(chat, /For a request to forget in an earlier message, 2 stored memories were forgotten \(1 of them because it relied only on what the user asked to forget\)\./);
   assert.match(chat, /saving the conversation removed more: 1 stored memory was forgotten, and 1 more sentence/);
   assert.match(chat, /3 related memories were reworded to leave out what the user asked to forget, and are still stored\./);
-  assert.match(chat, /Tell the user that a related memory went with it/, 'the dependent only, not the reworded ones');
+  assert.match(chat, /Tell the user that a related memory was affected/, 'the dependent only, not the reworded ones');
   assert.ok(!chat.includes('"'), chat);
   // Only reworded in a "more" outcome: it removed nothing more, and says so plainly.
   const rewordedOnly = core.chatForgetNote([{ status: 'forgotten', forgotten: 0, withheld: 0, bundled: 0, reworded: 1, more: true }]);
@@ -1281,27 +1334,63 @@ test('forget notes: reworded memories are counted apart from forgotten ones, nev
 
 test('in-chat forget note: a "more" outcome that only left memories unreadable does not contradict itself', () => {
   const note = core.chatForgetNote([{ status: 'forgotten', forgotten: 0, withheld: 0, bundled: 0, unreadable: 1, more: true }]);
-  assert.match(note, /For a request to forget in an earlier message that was already reported, saving the conversation removed nothing more, but it changed other related memories\. 1 other stored memory relies only on what was forgotten, so it can no longer be recalled/);
+  assert.match(note, /For a request to forget in an earlier message that was already reported, saving the conversation removed nothing more, but it changed other related memories\. 1 other stored memory can no longer be recalled/);
   assert.doesNotMatch(note, /removed more: no stored memory/);
   const first = core.chatForgetNote([{ status: 'forgotten', forgotten: 0, withheld: 0, bundled: 0, unreadable: 2 }]);
-  assert.match(first, /For a request to forget in an earlier message, no stored memory was removed, but other related memories changed\. 2 other stored memories rely only/);
+  assert.match(first, /For a request to forget in an earlier message, no stored memory was removed, but other related memories changed\. 2 other stored memories can no longer be recalled\./);
 });
 
-test('recall settings: gated mode leaves the relevance floor to the service; always asks for a closer match', () => {
+test('recall settings: gated mode leaves the relevance floor to the service; always asks for 0.3', () => {
   const env = { QUOTEMEM_URL: 'http://127.0.0.1:1', QUOTEMEM_TOKEN: 't' };
   assert.equal(core.resolveSettings({}, env).recallMinScore, null);
-  assert.equal(core.resolveSettings({}, { ...env, QUOTEMEM_RECALL: 'always' }).recallMinScore, 0.5);
+  assert.equal(core.resolveSettings({}, { ...env, QUOTEMEM_RECALL: 'always' }).recallMinScore, 0.3);
   assert.equal(core.resolveSettings({}, { ...env, QUOTEMEM_RECALL_MIN_SCORE: '0.6' }).recallMinScore, 0.6);
-  // The agent service's scores: an Evidence part keeps 0.7 to 0.8 of its
-  // relevance, so a true hit just above its floor may score about 0.3.
+  assert.equal(core.resolveSettings({}, { ...env, QUOTEMEM_RECALL: 'always', QUOTEMEM_RECALL_MIN_SCORE: '0' }).recallMinScore, 0, 'an explicit 0 turns the always threshold off');
+  // The agent service's scores: nothing under 0.25 comes back. A true answer
+  // at the low end (a memory at query cosine 0.43, 0.405) keeps 0.8 of it as
+  // an Evidence part or a past memory, and at most 5% less for age: 0.31.
   const hits = [
     { id: 'm1', content: COMPACT('The user lives in Lisbon.', 'current'), score: 0.62 },
-    { id: 'e1', content: EVIDENCE('I told you my cat is called Miso.'), score: 0.29 },
+    { id: 'e1', content: EVIDENCE('I told you my cat is called Miso.'), score: 0.31 },
+    { id: 'm2', content: COMPACT('The user lived in Porto.', 'past'), score: 0.308 },
+    { id: 'e2', content: EVIDENCE('My dog likes the beach.'), score: 0.27 },
+    { id: 'm3', content: COMPACT('The user has a cat.', 'current') },
   ];
   const settings = core.resolveSettings({}, env);
-  assert.deepEqual(core.recallBlock(settings, hits).ids, ['m1', 'e1'], 'nothing the service returned is dropped');
-  assert.deepEqual(core.recallBlock(core.resolveSettings({}, { ...env, QUOTEMEM_RECALL: 'always' }), hits).ids, ['m1']);
-  assert.equal(core.searchBody(settings, 'where do I live').top_k, 10, 'the head of a longer list is inserted');
+  assert.deepEqual(core.recallBlock(settings, hits).ids, ['m1', 'e1', 'm2', 'e2', 'm3'], 'nothing the service returned is dropped');
+  const always = core.resolveSettings({}, { ...env, QUOTEMEM_RECALL: 'always' });
+  assert.deepEqual(core.recallBlock(always, hits).ids, ['m1', 'e1', 'm2'], 'the band just above the floor and unscored hits are dropped');
+  assert.match(core.recallBlock(always, hits).text, /<memory-hit id="m2" rank="3" score="0.31" status="past">/);
+});
+
+test('recall: one search for the largest list, the first topK that fit are inserted', () => {
+  const env = { QUOTEMEM_URL: 'http://127.0.0.1:1', QUOTEMEM_TOKEN: 't' };
+  for (const topK of ['1', '5', '20']) {
+    assert.equal(core.searchBody(core.resolveSettings({}, { ...env, QUOTEMEM_TOP_K: topK }), 'where do I live').top_k, core.SEARCH_HITS);
+  }
+  assert.equal(core.SEARCH_HITS, 20);
+  const hits = Array.from({ length: 20 }, (_, i) => ({ id: `m${i + 1}`, content: COMPACT(`The user owns book ${i + 1}.`, 'current'), score: 0.9 - i * 0.01 }));
+  const settings = core.resolveSettings({}, { ...env, QUOTEMEM_TOP_K: '3' });
+  assert.deepEqual(core.recallBlock(settings, hits).ids, ['m1', 'm2', 'm3'], 'the head of the list');
+  assert.deepEqual(core.recallBlock(settings, hits, new Set(['m2'])).ids, ['m1', 'm3', 'm4'], 'a hit inserted a few turns ago is filled in from below');
+  const long = [{ ...hits[0], content: COMPACT(`The user owns ${'x'.repeat(5000)}.`, 'current') }, ...hits.slice(1)];
+  assert.deepEqual(core.recallBlock(settings, long).ids, ['m2', 'm3', 'm4'], 'a hit too long for the budget is filled in from below');
+});
+
+test('recall: no hit inserts nothing; scores are shown only when they are relevances', () => {
+  assert.equal(core.formatRecall([], { maxChars: 4000, maxHits: 5 }), null);
+  assert.equal(core.formatRecall(undefined, { maxChars: 4000, maxHits: 5 }), null);
+  const odd = core.formatRecall([
+    { id: 'a', content: COMPACT('The user likes tea.', 'current'), score: 1.7 },
+    { id: 'b', content: COMPACT('The user likes jazz.', 'current'), score: Number.NaN },
+    { id: 'c', content: COMPACT('The user likes rain.', 'current'), score: 0.456 },
+  ], { maxChars: 4000, maxHits: 5 });
+  assert.match(odd.text, /<memory-hit id="a" rank="1">/);
+  assert.match(odd.text, /<memory-hit id="b" rank="2">/);
+  assert.match(odd.text, /<memory-hit id="c" rank="3" score="0.46">/);
+  assert.match(odd.text, /a near topic can match \(a question about a dog may bring back a cat\)\. Use a hit only if it actually answers the message/);
+  assert.match(odd.text, /below about 0\.4 the match is weak/);
+  assert.doesNotMatch(odd.text, /prefer the newest/);
 });
 
 test('recall breaker: one timeout is forgiven, two in a row or no connection open it', () => {

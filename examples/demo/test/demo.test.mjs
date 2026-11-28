@@ -18,11 +18,17 @@ const realTimeout = globalThis.setTimeout;
 globalThis.setTimeout = (fn, ms, ...rest) => realTimeout(fn, Math.ceil((ms ?? 0) / 600), ...rest);
 `)}`;
 
+// On Windows the child also gets SystemRoot, ComSpec and PATHEXT, as every
+// program started there does.
+const WINDOWS_ENV = process.platform === 'win32'
+  ? Object.fromEntries(['SystemRoot', 'ComSpec', 'PATHEXT'].filter((k) => process.env[k]).map((k) => [k, process.env[k]]))
+  : {};
+
 function runDemo(url) {
   return new Promise((resolve) => {
     const args = [`--import=${FAST_CLOCK}`, DEMO, 'demo-test'];
     const child = spawn(process.execPath, args, {
-      env: { PATH: process.env.PATH, QUOTEMEM_URL: url },
+      env: { ...WINDOWS_ENV, PATH: process.env.PATH, QUOTEMEM_URL: url },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     let err = '';

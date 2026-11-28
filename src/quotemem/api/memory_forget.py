@@ -371,21 +371,26 @@ class ForgetStatementOutcomeV1(StrictModel):
     plan, or another forget or erase, removed it). ``changed``: its head moved after the
     plan was prepared, so it was not forgotten. The forget of a plan's sentences alone
     names no memory: its ``withheld_spans`` counts them, and
-    ``forgotten_earlier`` says a forget already withheld them all.
+    ``forgotten_earlier`` says a forget already withheld them all. A last ``left_readable``,
+    which names no memory, says the confirmation's own check found something it forgot still
+    readable: a sentence the plan listed, the sentence of a memory it removed or hid, a memory
+    the plan listed as going, a memory or saved sentence that names a forgotten value as no
+    longer the case, or the value a rewording left out with the words naming it as replaced.
     """
 
     model_config = ConfigDict(frozen=True)
     memory_id: ULID | None
     withheld_spans: Annotated[NonNegativeInt | None,
                               Field(exclude_if=lambda value: value is None)] = None
-    outcome: Literal["verified", "forgotten_earlier", "changed"]
+    outcome: Literal["verified", "forgotten_earlier", "changed", "left_readable"]
     controller_run_id: ULID | None = None
     receipt_ref: ArtifactId | None = None
     receipt: ForgetReceiptV3 | None = None
 
 
 class MemoryForgetStatementResponseV1(StrictModel):
-    """Every target's outcome; ``verified`` only when no target is left current."""
+    """Every target's outcome; ``verified`` only when no target is left current and the
+    confirmation's own check finds nothing it forgot left readable."""
 
     model_config = ConfigDict(frozen=True)
     schema_version: Literal[1] = 1

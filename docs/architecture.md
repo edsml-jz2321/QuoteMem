@@ -20,8 +20,8 @@ in [Run the memory service](service.md) and the settings in
   one".
 - **Review**: the step that compares a new statement with the memories near it
   and returns a verdict.
-- **Tombstone**: the record a forget leaves so that the fact is not learned
-  again.
+- **Tombstone**: the record of a forgotten fact that a forget leaves; every
+  later Add is checked against it ([Checks before review](#checks-before-review)).
 - **Dated after the forget**: said of a message that the service receives
   after the forget and whose own `timestamp` is later than the forget. The
   plugins send each prompt with the time it was said, and each turn they read
@@ -32,9 +32,10 @@ in [Run the memory service](service.md) and the settings in
 - **Add mode**: how a store reads the messages of an Add. It is fixed when the
   store is created. `quotemem serve` creates a new store in the `agent` mode
   unless `--add-mode` names another, and the plugins start it that way. In
-  this mode a `user` message is the user's own words, and the user can bring a
-  forgotten fact back by stating it again in a message dated after the
-  forget. The `lean-local` and `full` modes are for benchmarks.
+  this mode a `user` message is the user's own words, and the user's own
+  statement of a forgotten fact in a message dated after the forget, when it
+  shows no name a forget took, is not refused by its tombstone: review judges
+  it as a new fact. The `lean-local` and `full` modes are for benchmarks.
   [The last section](#what-the-add-mode-and-the-review-change) compares them.
 
 One store serves every `user_id`. Each row belongs to one user's part of the
@@ -48,10 +49,11 @@ store, and each route reads and writes only the part of the user it names.
 2. A model reads the new messages, writes short statements and copies the
    words each one rests on. The program, not the model, finds those words in
    the message and records their byte range ([Extraction](#extraction)).
-3. A statement that states the same thing as a tombstone is refused, unless
-   it is the user's own words in a message dated after the forget; that one
-   goes on to review. One that a stored memory already states with the same
-   quote changes nothing ([Checks before review](#checks-before-review)).
+3. A statement that states the same thing as a tombstone is refused, unless,
+   in the `agent` mode, it is the user's own words in a message dated after
+   the forget and shows no name a forget took; that one goes on to review.
+   One that a stored memory already states with the same quote changes
+   nothing ([Checks before review](#checks-before-review)).
 4. Each other statement is compared with its neighbours: nearby memories,
    nearby tombstones, the messages it quotes, and earlier versions when it
    revises or corrects one. Fixed rules pick them, with no clock and no
@@ -228,8 +230,9 @@ SQLite write-ahead log. Vectors are stored inside `memory.db`, packed as
 64-bit floats. QuoteMem ranks search results itself, in the service process.
 Every row QuoteMem writes goes through its own writer.
 
-**Start-up.** The service binds its port first, then checks the settings and
-the store binding, and checks every table against its declared schema. It
+**Start-up.** The service checks its settings and the store binding first;
+a missing or malformed setting stops it with exit code 1. It then binds its
+port and checks every table against its declared schema. It
 audits HeavenBase's catalog, unless the records of a clean stop show that
 nothing changed since. It then finishes any Add, forget or deletion a stop
 interrupted, and builds the tombstone index and the read copy. Until the
@@ -301,9 +304,11 @@ A fact that states the same thing as a tombstone is refused: the same entity
 and the same statement, ignoring case, width, spacing and closing
 punctuation. It is refused with `denied_by_forget`, and its new quote is
 withheld. In the `agent` mode there is one exception: when the fact rests on
-the user's own words in a message dated after the forget, it goes on to
-review. A fact that is close to a tombstone, but not the same, also goes on to
-review, which decides whether it restates the forgotten fact.
+the user's own words in a message dated after the forget and shows no name a
+forget took, it goes on to review. A fact that shows such a name is settled
+first by the name rule (**Names** under [Forgetting](#forgetting)). A fact
+that is close to a tombstone, but not the same, also goes on to review, which
+decides whether it restates the forgotten fact.
 
 A fact that a current memory already states, citing the same words, changes
 nothing (`restatement_satisfied`). Duplicates within one Add are folded into
@@ -469,9 +474,24 @@ A forget has two steps.
 **Prepare** (`POST /memory/forget/prepare`) finds what to forget. It changes
 no memory and no message. For a forget by statement, it searches the user's
 memories, takes the nearest ones by meaning too, and asks the model which of
-them state the fact. It also finds the user's sentences that state it. It
-returns the memories that go, the other memories the forget changes
-(`affected`: reworded, unreadable or forgotten), and the notice
+them state the fact. It also finds the user's sentences that state it. Then
+it reads each memory and sentence it would leave that names a forgotten value
+as not, or no longer, the case. For each target not marked `bundled` (a
+target that also states an unrelated fact, which goes whole), one that names
+a name, number, code or e-mail address the target states as its own in a
+contrast beside another (", not ...", "rather than ...") goes by rule. So
+does one in which a clause whose subject is the user names such a value
+after words saying it ended ("I no longer ...", "The user no longer ...",
+"moved from", "used to") or before "anymore". In a clause whose subject is
+someone or something else, such words take by rule a forgotten number, code
+or e-mail address that follows them or comes before "anymore". The model is
+asked about other contrasts.
+One that the rule or the model takes goes too: a memory is
+reworded without the words naming the old value (", not 14 Oak Street", "no
+longer attends Qiming Kindergarten and"), or forgotten with it, and a quote
+or sentence that names the old value is withheld, the part naming it or the
+whole. It returns the memories that go, the other memories the forget
+changes (`affected`: reworded, unreadable or forgotten), and the notice
 `forget_keeps_unreadable_tombstone_v1`.
 
 **Confirm** (`POST /memory/forget/confirm`) takes the prepare's
@@ -488,11 +508,30 @@ returns the memories that go, the other memories the forget changes
   again before it is written, and the memory is deleted when a check fails.
   A reworded memory keeps its id, and no read shows the detail: history
   shows its earlier versions redacted;
-- checks that nothing readable is left, and writes a receipt.
+- checks that the forgotten memories and sentences are no longer readable,
+  and writes a receipt;
+- for a forget by statement, checks what it left, and answers `incomplete`,
+  with a last `left_readable` outcome that names no memory, when one of these
+  checks finds something: a sentence the prepare listed is still wholly
+  readable; a memory it removed or hid, or a past memory it left, leaves its
+  own sentence wholly readable with a value it shares with a memory it took,
+  or with an older memory it removed or hid that shares one: a name, place,
+  number or code one of them states as its own value, or, for a past memory,
+  the place both give as where someone lives; a memory
+  the prepare listed as going is still read with such a value; a current
+  memory, a readable part of its quotes, or a readable saved sentence other
+  than a forget request still names a name, value or number of a target it
+  forgot that is not marked `bundled`, or of an older memory it removed or
+  hid that shares a value with what it took, as not, or no longer, the case,
+  as the prepare's rule above reads it;
+  or the value a rewording left out
+  is still shown by a current memory, or by a readable part of a message the
+  plan withholds from or the reworded memory quotes.
 
 Each forgotten target's outcome in the confirm answer carries a receipt. Its
 `counts` include `tombstones_written` and `evidence_spans_withheld`. Its
-`readable_residual_count` is 0. Its `internal_retention` says what is kept:
+`readable_residual_count` is 0: a receipt is written only when that target's
+own scan found nothing readable. Its `internal_retention` says what is kept:
 `purpose` `block_relearning`, `readable` `false`, `content`
 `statement_text_vector_anchors`. It is kept until the user is deleted or
 every source message of the fact is erased; `quotemem delete-user` does both.
@@ -504,18 +543,36 @@ review, and in a last check when the writer commits. When a new statement is
 close to a tombstone, the review model is shown the forgotten statement, so
 that it can tell a restatement. `quotemem export` writes the forgotten
 statements sealed, and no read route returns them. As a second check, Search
-drops any hit that names a forgotten name, holds two of its topic words, or
-is a memory close in meaning to the forgotten statement. Search keeps its
-list of those names and words only as keyed digests, in the `control` table.
+uses what a forget recorded (the forgotten names, its topic words and the
+forgotten statement's vector) to drop hits it reads as about the forgotten
+fact. It does not count a name that two or more remaining memories still
+state, a name in a hit the forget that took it read and kept, or, in the
+`agent` mode, what the user's own later statement gives again. Search keeps
+its list of those names and words only as keyed digests, in the `control`
+table.
 
-**Names.** After "forget my cat's name", a later "I took Bob to the vet" is
-stored without the name, and the name's bytes in the new quote are withheld.
+**Names.** In the `agent` Add mode, after a forget that took a name, an Add
+reads each new fact for that name before review. A fact that shows it, about
+the one who bore it, is
+cut around it or refused. A cut fact quotes the message without the name,
+and its statement names the bearer by its tie or says "someone": after
+"forget my cat's name", "I took Bob to the vet" can become "The user took
+the user's cat to the vet". The name's bytes that a cut or a refusal leaves
+out are withheld in the new message before review, whatever review then
+decides. Review judges what is left: it may keep it, refuse it or leave it
+pending. The user's own later words that give the name are not cut, and
+review judges them. When the checks of a forget by statement find a name it
+took still readable, its confirm answers `incomplete` (above).
+[Forgetting](forgetting.md) gives the rules.
 
-**The one way back.** While the tombstone is kept, the fact comes back in the
-`agent` Add mode when the user states it again, in their own words, in a
-message [dated after the forget](#words-used-here). The review still checks
-that statement. [Forgetting](forgetting.md) gives the exact rule. The old
-messages stay withheld.
+**Told again.** While the tombstone is kept, in the `agent` Add mode, the
+user's own statement of the fact in a message
+[dated after the forget](#words-used-here) is not refused by that tombstone,
+and Search does not drop it for the words it states again. Review judges it
+as a new fact, and a statement that shows a name a forget took is still cut
+or refused unless the user's own words give the name (**Names** above).
+[Forgetting](forgetting.md) gives the exact rule. The old messages stay
+withheld.
 
 **Inside a chat.** A plugin turns "forget ..." into the two steps. A forget
 request inside an Add's messages is also carried out with that Add, and the
@@ -578,8 +635,9 @@ The store zeroes deleted space (SQLite `secure_delete`).
 - Extra calls are the calls of an Add besides extraction and review: the
   benchmark modes add a supplement call and a session summary.
 - In the `agent` mode, a forgotten fact that the user states again in a
-  message dated after the forget is learned again. The benchmark modes deny
-  it.
+  message dated after the forget, and that shows no name a forget took, is
+  not refused by its tombstone; review judges it as a new fact. The benchmark
+  modes make no such exception.
 - `quotemem serve` creates a new store in the `agent` mode unless
   `--add-mode` names another. The `lean-local` and `full` modes are the
   benchmark modes of `quotemem bench serve` (see [Benchmarks](benchmarks.md)).

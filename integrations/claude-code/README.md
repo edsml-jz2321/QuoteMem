@@ -167,19 +167,26 @@ it in `core/`.
   tool calls or tool output, reasoning, the recall block or forget note, slash
   commands (`/…`), `!` shell escapes, acknowledgements such as "ok", and
   prompts that Claude Code submits itself (background task reports and other
-  messages wrapped in one element, such as `<task-notification>`). Secrets
-  are redacted before anything is written or sent.
+  messages wrapped in one element, such as `<task-notification>`). Secrets in
+  the formats the core lists are redacted before anything is written or sent.
 - **Subagents.** Hooks that fire inside a subagent (their input has an
   `agent_id`) are ignored unless `QUOTEMEM_INCLUDE_SUBAGENTS=1`.
 - **Interrupted turns.** When you interrupt a turn, `Stop` does not run; the
   next prompt keeps your words without a reply.
 - **Recall gate.** A local keyword test in English and Chinese. Plain
   statements such as "I prefer Rust" or "remember that I prefer tabs" do not
-  search unless the message also asks something. `QUOTEMEM_RECALL=always` searches on every message with a
-  stricter score threshold; `off` disables recall.
-- **Recall size.** At most `QUOTEMEM_MAX_INJECT_CHARS` (4,000 by default)
-  and never more than 9,000 characters, below Claude Code's 10,000-character
-  limit for hook context.
+  search unless the message also asks something. `QUOTEMEM_RECALL=always`
+  searches on every message and inserts only hits with a relevance of 0.3
+  or more (`QUOTEMEM_RECALL_MIN_SCORE`); `off` disables recall.
+- **Recall hits.** The service returns only hits with a relevance (0 to 1)
+  of 0.25 or more. A near topic can still match (a question about your dog
+  may find your cat). Each hit shows its score and, for a memory that no
+  longer holds or may have changed, its status. The block tells Claude to
+  use a hit only if it answers the question and never to state a past or
+  possibly outdated memory as current.
+- **Recall size.** At most `QUOTEMEM_MAX_INJECT_CHARS` (4,000 by default; a
+  value below 2,500 is raised to 2,500) and never more than 9,000 characters,
+  below Claude Code's 10,000-character limit for hook context.
 - **Forget.** The note names no tool or id. When nothing stored matches, the
   note says so; it never reports a failure that did not happen. If the
   forget takes longer than `QUOTEMEM_FORGET_TIMEOUT_MS` (1.8 s by default,
@@ -201,6 +208,7 @@ starts Claude Code. The most useful ones:
 | `QUOTEMEM_RECALL` | `gated` | `gated`, `always` or `off` |
 | `QUOTEMEM_RECALL_TIMEOUT_MS` | `3000` | Recall deadline (at most 10,000 here) |
 | `QUOTEMEM_TOP_K`, `QUOTEMEM_MAX_INJECT_CHARS` | `5`, `4000` | Recall size |
+| `QUOTEMEM_RECALL_MIN_SCORE` | none; `0.3` with `always` | Hits below this relevance (0 to 1) stay out |
 | `QUOTEMEM_FORGET` | `auto` | `auto` (silent forget) or `off` |
 | `QUOTEMEM_IDLE_FLUSH_MS` | `300000` | A session idle this long has its pending turns saved |
 | `QUOTEMEM_INCLUDE_SUBAGENTS` | off | Also capture and recall in subagents |

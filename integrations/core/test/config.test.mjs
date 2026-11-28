@@ -21,7 +21,8 @@ const hooksEnv = await import(pathToFileURL(path.join(INTEGRATIONS, 'hooks', 'en
 const opencodeEnv = await import(pathToFileURL(path.join(INTEGRATIONS, 'opencode', 'env.js')).href);
 
 // A temp HOME: a token of a service on this computer is never read from the real one.
-const ADDR = { QUOTEMEM_URL: 'http://127.0.0.1:9', HOME: tempDir('qm-config-home-') };
+const CONFIG_HOME = tempDir('qm-config-home-');
+const ADDR = { QUOTEMEM_URL: 'http://127.0.0.1:9', HOME: CONFIG_HOME, USERPROFILE: CONFIG_HOME };
 
 test('token: QUOTEMEM_TOKEN first, then QUOTEMEM_HTTP_AUTH_SECRET; nothing else', () => {
   const both = resolveSettings({}, { ...ADDR, QUOTEMEM_TOKEN: 'from-token', QUOTEMEM_HTTP_AUTH_SECRET: 'from-secret' });
@@ -32,7 +33,8 @@ test('token: QUOTEMEM_TOKEN first, then QUOTEMEM_HTTP_AUTH_SECRET; nothing else'
   assert.equal(secret.token, 'from-secret');
   const emptyToken = resolveSettings({}, { ...ADDR, QUOTEMEM_TOKEN: '', QUOTEMEM_HTTP_AUTH_SECRET: 'from-secret' });
   assert.equal(emptyToken.token, 'from-secret', 'an empty QUOTEMEM_TOKEN counts as unset');
-  const none = resolveSettings({}, { ...ADDR, HOME: tempDir('qm-core-nohome-') });
+  const noHome = tempDir('qm-core-nohome-');
+  const none = resolveSettings({}, { ...ADDR, HOME: noHome, USERPROFILE: noHome });
   assert.equal(none.token, '');
   assert.match(none.problem, /^no token and no memory service set up; run `npx quotemem setup` once/);
   assert.doesNotMatch(none.problem, /set QUOTEMEM_TOKEN\b|export/, 'never asks for the token in the environment');
@@ -182,4 +184,15 @@ test('homeDir: the one home every part uses, as Python\'s Path.home() finds it',
   // The service's paths and the plugins' files agree.
   const auto = await import(pathToFileURL(path.join(CORE, 'autostart.mjs')).href);
   assert.equal(auto.homeOf({ HOME: '/c/msys/home/q', HOMEDRIVE: 'D:', HOMEPATH: '\\Users\\q' }, 'win32'), 'D:\\Users\\q');
+});
+
+test('a URL that names this computer by a host name gets a warning to use 127.0.0.1', () => {
+  const warn = (url) => resolveSettings({}, { QUOTEMEM_URL: url, QUOTEMEM_TOKEN: 'x'.repeat(43), HOME: '/nonexistent', USERPROFILE: '/nonexistent' }).warnings.join('\n');
+  for (const url of [`http://${os.hostname()}:8765`, 'http://localhost.localdomain:8765', 'http://ip6-localhost:8765']) {
+    assert.match(warn(url), /names this computer by the host name [^;]*; use http:\/\/127\.0\.0\.1:8765 instead, so the plugins check/, url);
+  }
+  for (const url of ['http://localhost:8765', 'http://127.0.0.1:8765', 'http://localhost.:8765', 'http://app.localhost:8765']) {
+    assert.doesNotMatch(warn(url), /names this computer|unencrypted/, url);
+  }
+  assert.match(warn('http://memory.example:8765'), /unencrypted/);
 });

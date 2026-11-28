@@ -293,6 +293,7 @@ def member_from_proposal(
         sensitivity_classes=tuple(proposal.sensitivity_classes),
         sensitivity_basis=tuple(proposal.sensitivity_basis), origin=proposal.origin,
         trust_tier=proposal.trust_tier, concerns=frozenset(proposal.concerns), duplicate_of=None,
+        referents=(),  # a stored proposal keeps no referents
     )
     return member_from_fact(
         fact, view, position_key=key, round=round, vector=statement.vector,

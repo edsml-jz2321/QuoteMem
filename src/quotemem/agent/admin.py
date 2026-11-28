@@ -547,8 +547,9 @@ class AgentStore:
         A rebuild's safety pass (``quotemem.agent.rebuild``): ``sources`` are the (session id,
         request id) of the user's Adds the old store took at or before the forget, and only
         a current memory drawn from their Evidence alone is forgotten
-        (``StatementForget.forget_earlier``), so whatever the rebuild's chat model decided,
-        nothing said before a forget stays current, and a later restatement is untouched.
+        (``StatementForget.forget_earlier``): such a memory is forgotten again without a vote
+        when its words or the forget shadow match it, else when the judge finds it states the
+        fact; a later restatement is untouched.
         ``enforces`` is the old store's admission time of that forget: the forget shadow
         keeps the stamps the replay gave it.
 

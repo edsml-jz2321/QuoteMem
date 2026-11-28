@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Collection, Mapping, Sequence
+from dataclasses import dataclass
 from typing import Final
 
 from quotemem.core.statement import canonical_statement, own_token, token_contained, token_seq
@@ -142,7 +143,8 @@ _REMOVABLE: Final = frozenset({"from", "at", "in", "near", "with", "for", "and",
                                "an", "left", "quit", "named", "called"})
 """The words a value's phrase takes with it ("from Shanghai", "left Northwind and", "named
 Clover")."""
-_CONTRASTING: Final = frozenset({"not", "rather", "than", "instead", "of"})
+_CONTRASTING: Final = frozenset({"not", "rather", "than", "instead", "of", "no", "longer",
+                                 "anymore", "any", "more"})
 """The words a contrast tail takes with the value it names (`_CONTRAST`): only then."""
 _KINDS: Final = (
     ("幼儿园", "kindergarten"), ("小学", "primary school"), ("初中", "middle school"),
@@ -298,6 +300,310 @@ def forgotten_values(statement: str, sources: Sequence[str]) -> list[str]:
                               if any(token_contained(run, source) for source in sources)))
 
 
+_NOT_TAIL: Final = re.compile(
+    r"(?:,\s+(?:not|no\s+longer)|,?\s+(?:instead\s+of|rather\s+than))\s+(?:(?:the|a|an)\s+)?"
+    r"(?P<value>[^\s,;，；][^,;，；]{0,63}?)(?:\s+(?:any\s?more|any\s+longer))?"
+    r"\s*[.!?。]?\s*(?=[,;，；]|$)", re.IGNORECASE)
+"""A tail that names what is not, or no longer, the case, up to the next comma or the end:
+"..., not 14 Oak Street.", "..., not Dr. Okafor.", "..., no longer 4471.", "..., not 3K728
+anymore." (the value without "anymore"), "... rather than Arkwright Media."."""
+_CODE: Final = re.compile(
+    r"[0-9A-Za-z]*[0-9][0-9A-Za-z]*(?:[ -][0-9A-Za-z]*[0-9][0-9A-Za-z]*)*")
+"""A number or a code: runs of Latin letters and digits, each with a digit, joined by single
+spaces or hyphens ("3K728", "07700 900 123", "555-0142")."""
+
+
+def _code_key(code: str) -> str:
+    return re.sub(r"[ -]", "", code).casefold()
+
+
+_PLATE_PROVINCES: Final = "京津沪渝冀豫云辽黑湘皖鲁新苏浙赣鄂桂甘晋蒙陕吉闽贵粤青藏川宁琼"
+"""The characters a Chinese licence plate starts with, one per province ("浙" of "浙A3K728")."""
+_PROVINCE: Final = re.compile(rf"[{_PLATE_PROVINCES}][\s·•]?$")
+"""A plate's province character right before its letter ("浙" of "浙A3K728", "浙 A3K728")."""
+_DATE: Final = re.compile(
+    r"(?<!\d)(?:(?P<year>\d{4})\s*[-/.年]\s*(?P<month>\d{1,2})\s*[-/.月]\s*(?P<day>\d{1,2})日?"
+    r"|(?P<first>\d{1,2})\s*[-/.]\s*(?P<second>\d{1,2})(?:\s*[-/.]\s*\d{2,4})?)(?!\d)")
+"""A date ("2019-01-05", "05/01/2019", "01-05", "2019年1月5日"): its numbers are a date's."""
+_LETTERS: Final = re.compile(r"(?<![0-9A-Za-z])[A-Z]{1,3} $")
+"""One to three capital letters and a space right before a number ("BA " of "BA 2490"): part
+of its code, as "BA2490" writes it."""
+_CODE_CONTRAST: Final = re.compile(
+    r"(?:,\s*(?:not|no\s+longer)|\b(?:instead\s+of|rather\s+than))\s[^,;.，；。!?！？]*"
+    r"|(?:不|没|非|以前|原来|之前|曾经|代替|取代|替代)[^,;，；、。！？!?\n]*", re.IGNORECASE)
+"""A part of a text that names what is not, or no longer, the case (", not 6284", "不是6284
+那个了", "以前那个尾号6284的号码"): where a code may be given by its last characters."""
+
+
+@dataclass(frozen=True)
+class _Code:
+    """One number or code of a text (`_CODE`), read without its spaces and hyphens."""
+
+    key: str
+    """With the capital letters before it when its own characters are fewer than four ("ba249"
+    of "BA 249", `_LETTERS`)."""
+    groups: tuple[str, ...]
+    core: str | None
+    """A plate's part after its province and letter ("3k728" of "浙A3K728")."""
+    dated: bool
+    calendar: bool
+    """Whether its date could be one, a month and a day in range (`_calendar`: "12-07"; never
+    "40-47-84")."""
+    lettered: str | None
+    """Its key with the capital letters before it ("ba2490" of "BA 2490", `_LETTERS`)."""
+    start: int
+    """Where it starts in its text: its capital letters left out, but where its key holds
+    them."""
+    end: int
+
+
+def _calendar(match: re.Match[str]) -> bool:
+    """Whether a date (`_DATE`) could be one: a month of 1 to 12 and a day of 1 to 31, in
+    either order when no year leads ("12-07", "2019-01-05"; never "40-47-84")."""
+    if match["year"] is not None:
+        return 1 <= int(match["month"]) <= 12 and 1 <= int(match["day"]) <= 31
+    first, second = int(match["first"]), int(match["second"])
+    return any(1 <= month <= 12 and 1 <= day <= 31
+               for month, day in ((first, second), (second, first)))
+
+
+def _dated(text: str, start: int, end: int) -> tuple[bool, bool]:
+    """Whether ``text[start:end]`` lies in a date (`_DATE`), and whether that date could be
+    one (`_calendar`)."""
+    dates = [match for match in _DATE.finditer(text)
+             if match.start() <= start and end <= match.end()]
+    return bool(dates), any(_calendar(match) for match in dates)
+
+
+def _plate_at(text: str, start: int) -> bool:
+    """Whether a code starting at ``start`` follows a plate's province character."""
+    return _PROVINCE.search(text[:start]) is not None
+
+
+def _letters(text: str, start: int) -> int | None:
+    """Where the capital letters that open the number at ``start`` begin (`_LETTERS`: "BA"
+    of "BA 2490"); None when it opens with none."""
+    if not text[start:start + 1].isdigit():
+        return None
+    found = _LETTERS.search(text, max(0, start - 5), start)
+    return None if found is None else found.start()
+
+
+def _codes(text: str) -> list[_Code]:
+    """The numbers and codes of a text of four characters or more (`_CODE`), with the capital
+    letters a number opens with (`_LETTERS`: "BA 249")."""
+    found: list[_Code] = []
+    for match in _CODE.finditer(text):
+        key = _code_key(match.group())
+        plate = (match.group()[:1].isalpha() and len(key) - 1 in (5, 6)
+                 and _plate_at(text, match.start()))
+        letters = _letters(text, match.start())
+        lettered = None if letters is None else _code_key(text[letters:match.start()]) + key
+        start = match.start()
+        if len(key) < 4:
+            # A short number is a code only with its letters ("BA 249"), as "BA249" is.
+            if letters is None or lettered is None or len(lettered) < 4:
+                continue
+            key, lettered, start = lettered, None, letters
+        dated, calendar = _dated(text, match.start(), match.end())
+        found.append(_Code(
+            key, tuple(group.casefold() for group in re.split(r"[ -]", text[start:match.end()])
+                       if group),
+            key[1:] if plate else None, dated, calendar, lettered, start, match.end()))
+    return found
+
+
+def _one_number(one: str, other: str) -> bool:
+    """Whether two numbers of seven digits or more are one number, the longer written with a
+    country code or the shorter with a trunk "0": the shorter ends the longer, or does
+    without its "0" ("447700900123" of "+44 7700 900123" and "07700900123", "8613800001234"
+    and "13800001234"). A number of the same length that shares only its last digits with
+    it is another."""
+    if not (one.isdigit() and other.isdigit()) or len(one) == len(other):
+        return False
+    shorter, longer = sorted((one, other), key=len)
+    return len(shorter) >= 7 and (longer.endswith(shorter) or (
+        shorter.startswith("0") and len(shorter) >= 8 and longer.endswith(shorter[1:])))
+
+
+def _code_matches(value: str, text: str, *, ending: bool = False,
+                  contrast: bool = False) -> list[tuple[_Code, int, int]]:
+    """Each number or code of ``text`` that is one of ``value``'s (`code_forms`), with that one
+    of the value and where ``text`` shows it."""
+    wanted = _codes(value)
+    if not wanted:
+        return []
+    given = _codes(text)
+    tails = [] if contrast else [match.span() for match in _CODE_CONTRAST.finditer(text)]
+    shown = {key for code in given for key in (code.key, code.lettered) if key is not None}
+    found: list[tuple[_Code, int, int]] = []
+    for code_of_text in given:
+        key, groups, dated = code_of_text.key, code_of_text.groups, code_of_text.dated
+        for code in wanted:
+            # Its capital letters before it are part of it: "BA 2490" is "BA2490", and "LH
+            # 2490" is another code.
+            lettered = (code_of_text.lettered is not None
+                        and code_of_text.lettered in (code.key, code.lettered)) or (
+                key == code.lettered)
+            other_letters = (code_of_text.lettered is not None and code.lettered is not None
+                             and code_of_text.lettered != code.lettered)
+            if (key == code.key and not other_letters) or lettered:
+                # A date's numbers are a date's alone, but a number of six digits or more whose
+                # date could be none is the same written either way ("40-47-84" of "404784").
+                same = dated == code.dated or (
+                    key.isdigit() and len(key) >= 6
+                    and not (code_of_text.calendar or code.calendar))
+            elif dated or code.dated:
+                same = False  # A date's numbers are no other code's, nor another's a date's.
+            elif _one_number(key, code.key):
+                same = True
+            elif code.key.endswith(key):
+                # A shorter one is its ending only as two or more of its last groups, as a
+                # plate's core, or where a contrast names it so and does not show it whole: one
+                # last group alone is a number of its own ("0471" of "020 7946 0471").
+                same = key == code.core or any(
+                    key == "".join(code.groups[index:])
+                    for index in range(1, len(code.groups) - 1)
+                ) or ((contrast or any(
+                    low <= code_of_text.start and code_of_text.end <= high
+                    for low, high in tails)) and code.key not in shown
+                    and code.lettered not in shown)
+            elif key.endswith(code.key):
+                # A longer one is it only as a plate whose core it is, or as a number whose
+                # last groups are its groups; a tail may name a value by its last characters.
+                same = ending or (
+                    key[1:] == code.key and key[:1].isalpha() and len(code.key) in (5, 6)
+                    and _plate_at(text, code_of_text.start)) or (
+                    len(code.groups) > 1 and groups[-len(code.groups):] == code.groups)
+            else:
+                same = False
+            if same:
+                found.append((code, code_of_text.start, code_of_text.end))
+                break
+    return found
+
+
+def code_forms(value: str, text: str, *, ending: bool = False,
+               contrast: bool = False) -> list[str]:
+    """The numbers and codes ``text`` shows that are one of ``value``'s, each as ``text``
+    writes it. A number or code (`_CODE`, read without its spaces and hyphens, with the
+    capital letters before it: "BA 2490" is "BA2490") of four characters or more is one when
+    it is the same ("07700900123" of "07700 900 123"); when it is shorter, as two or more of
+    the value's last groups ("900 123" of "07700 900 123"), as a plate's part after its
+    province and letter ("3K728" of "浙A3K728"), or as its last characters where a contrast
+    names it so ("1234" of "以前那个尾号1234的号码" for "13800001234") and shows no copy of it
+    whole; when it is longer, as a plate whose part after its letter it is ("浙A3K728" for
+    "3K728") or a number whose last groups are its groups ("07700 900 123" for "900 123"). Two
+    numbers of seven digits or more and of different lengths are one when the longer ends with
+    the shorter, or with the shorter of eight digits or more without its trunk "0"
+    ("07700 900123" of "+44 7700 900123"). Any other code is another: "10471", "B0471" or "020
+    7946 0471" for "0471", "0471" for "020 7946 0471", "70215" for "770215", "LH 2490" for "BA
+    2490". A date's numbers are a date's alone: "2019-01-05" is no form of "0105", nor "12-07"
+    of "1207"; a number of six digits or more whose date could be none is the same written
+    either way ("40-47-84" of "404784"). With ``ending`` (a tail naming a value by its last
+    characters, `contrasted_values`), any longer code ending with one of the value's is one
+    too ("13800001234" for "1234"); with ``contrast`` (``text`` is a contrast), any shorter
+    one."""
+    return list(dict.fromkeys(text[start:end] for _, start, end in _code_matches(
+        value, text, ending=ending, contrast=contrast)))
+
+
+def code_spans(value: str, text: str, *, contrast: bool = False) -> list[tuple[int, int]]:
+    """Where ``text`` shows one of ``value``'s numbers or codes (`code_forms`): the character
+    range of each."""
+    return [(start, end) for _, start, end in _code_matches(value, text, contrast=contrast)]
+
+
+_OPENING_LETTERS: Final = re.compile(r"[A-Z]{1,3} (?=[0-9])")
+"""The capital letters a code opens with and their space ("BA " of "BA 249", `_LETTERS`)."""
+
+
+def is_code(value: str) -> bool:
+    """Whether a value is one number or code (`_CODE`) of four characters or more, a shorter
+    number with the capital letters before it ("BA 249", `_LETTERS`), or a plate
+    ("浙A3K728"), which a text shows only as a whole number or code or one of its forms
+    (`code_forms`): "0471" is no part of "020 7946 0471"."""
+    text = value.strip()
+    if text[:1] in _PLATE_PROVINCES:
+        text = text[1:].lstrip(" ·•")
+    letters = _OPENING_LETTERS.match(text)
+    if letters is not None:
+        number = text[letters.end():]
+        return (_CODE.fullmatch(number) is not None and len(_code_key(number)) < 4
+                and len(_code_key(text)) >= 4)
+    return _CODE.fullmatch(text) is not None and len(_code_key(text)) >= 4
+
+
+def codes_of(text: str) -> list[str]:
+    """The codes of a text that mix letters and digits, four characters or more without their
+    spaces and hyphens (`_CODE`): "B7Q2K9" of "粤B7Q2K9", "A7731"."""
+    return list(dict.fromkeys(
+        code for code in _CODE.findall(text) if len(_code_key(code)) >= 4
+        and any(char.isalpha() for char in code)))
+
+
+def contrasted_values(statement: str, sources: Sequence[str]) -> list[str]:
+    """The values a statement's contrast tails (`_NOT_TAIL`) name, whole, that are forgotten
+    too: a ``sources`` text shows the tail's value, or a code of it by its core
+    (`code_forms`: "3K728" beside a forgotten "浙A3K728"), or the value shows a name or value
+    of the statement a source shows (`forgotten_values`). "14 Oak Street" of "The user lives
+    at 27 Pine Lane now, not 14 Oak Street." beside a forgotten "The user used to live at 14
+    Oak Street.": a rewording takes the tail with its value, number and all, and the statement
+    keeps what it says of its own ("The user lives at 27 Pine Lane now.")."""
+    shared = forgotten_values(statement, sources)
+    return list(dict.fromkeys(
+        value for match in _NOT_TAIL.finditer(statement)
+        if (value := match["value"].strip())
+        and (any(token_contained(value, source) or code_forms(value, source, ending=True)
+                 for source in sources)
+             or any(token_contained(run, value) for run in shared))))
+
+
+def replaced_values(statement: str, sources: Sequence[str], *,
+                    departures: bool = True) -> list[str]:
+    """The forgotten values ``statement`` names as replaced, which a rewording drops with the
+    phrase naming them: those its contrast tails name (`contrasted_values`), and each name or
+    value a source shows (`forgotten_values`) that it names as no longer the case before what
+    holds now ("Qiming Kindergarten" of "The user's son no longer attends Qiming Kindergarten
+    and has transferred to Lanwan Kindergarten.") or, with ``departures``, as the place left
+    for another ("Shanghai" of "The user moved from Shanghai to Hangzhou last month.")."""
+    found = list(contrasted_values(statement, sources))
+    for value in forgotten_values(statement, sources):
+        escaped = _escaped(value)
+        if re.search(_ENDED_AND.format(value=escaped), statement, re.IGNORECASE) or (
+                departures and re.search(_FROM_TO.format(value=escaped), statement,
+                                         re.IGNORECASE)):
+            found.append(value)
+    return list(dict.fromkeys(found))
+
+
+def kind_word(text: str) -> bool:
+    """Whether ``text`` is only the word a place's or an organisation's name ends with ("幼儿园"
+    of "启明幼儿园" and of "蓝湾幼儿园", `_KINDS`): two names of one kind share it, and it
+    names neither."""
+    return any(text == suffix for suffix, _ in _KINDS)
+
+
+def named_part(value: str) -> str:
+    """A place's or an organisation's name without the word that ends it ("Qiming" of "Qiming
+    Kindergarten", "启明" of "启明幼儿园", `_KINDS`): what names it. The value itself when no
+    such word ends it, or when what is left names nothing ("The Shop", "A Cafe")."""
+    text = value.strip()
+    for suffix, _ in _KINDS:
+        if text.endswith(suffix) and len(text) > len(suffix):
+            rest = text[:-len(suffix)].strip()
+            return text if len(rest) < 2 or rest.casefold() in _STARTS | _LIGHT else rest
+    return text
+
+
+def name_kinds(text: str) -> list[str]:
+    """The words the names of places or organisations ``text`` shows end with ("Kindergarten"
+    of "Lanwan Kindergarten", "幼儿园" of "蓝湾幼儿园", `_KINDS`)."""
+    return list(dict.fromkeys(
+        next(suffix for suffix, _ in _KINDS if run.endswith(suffix) and len(run) > len(suffix))
+        for run in (run.strip() for run in _runs(text)) if kind_of(run) is not None))
+
+
 _HAN_LIGHT: Final = re.compile(
     r"上个月|下个月|这个月|上周|下周|今天|昨天|明天|去年|今年|明年|现在|以前|之前|后来|然后"
     r"|我们|你们|他们|她们|它们|[我你他她它的了在是和与从到把被就也都很这那]")
@@ -375,6 +681,10 @@ def keeps_predicate(statement: str, reworded: str, tie: str | None = None,
     contrast = _CONTRASTING if any(
         re.search(_CONTRAST.format(value=_escaped(run)), statement, re.IGNORECASE)
         for run in gone) else frozenset[str]()
+    # A clause naming a removed value as no longer the case leaves whole, its verb with it.
+    contrast |= {token for run in gone for match in re.finditer(
+        _ENDED_AND.format(value=_escaped(run)), statement, re.IGNORECASE)
+        for token in token_seq(match.group())}
     # The one left out of a counted plural stands as "another" ("two colleagues, 小王 and
     # another").
     counted = {"another"} if any(_COUNTED.search(reworded[:match.start()]) for match in
@@ -425,6 +735,12 @@ def _kin_word(word: str) -> bool:
     word = word.casefold().removesuffix("'s").removesuffix("’s")
     return (word in _KIN or word == "children" or word in _HAN_KIN
             or (word.endswith("s") and word[:-1] in _KIN))
+
+
+def kin_word(word: str) -> bool:
+    """Whether a word names a tie to someone or a kind of animal ("儿子", "friend"): never a
+    name (`_kin_word`)."""
+    return _kin_word(word)
 
 
 _HAD: Final = frozenset({
@@ -672,11 +988,31 @@ def _number_free(tokens: Collection[str]) -> set[str]:
                           else token) for token in tokens}
 
 
-_CONTRAST: Final = (r",?\s+(?:not|rather than|instead of)\s+(?:(?:the|a|an)\s+)?{value}"
+_NO_VERB: Final = "|".join(sorted({
+    "his", "hers", "its", "this", "theirs", "ours", "yours", "us", "others", "these", "those",
+    "children", *(f"{word}s" for word in _KIN)}, key=len, reverse=True))
+"""Words ending in "s" that are no verb: a determiner, a pronoun, a plural tie ("parents")."""
+_ENDED_AND: Final = (r"\bno\s+longer\s+(?:[\w'’-]+\s+){{0,3}}?(?:the\s+)?{value}"
+                     r"(?:\s+any\s?more|\s+any\s+longer)?,?\s+and\s+(?=(?-i:(?:now|also|"
+                     rf"instead|currently)\s+)?(?!(?-i:{_NO_VERB})\b)"
+                     r"(?-i:has|have|had|is|are|was|were|[a-z]+(?:ed|s))\b)")
+"""A clause naming a value as no longer the case before the one saying what holds now, with
+its "and" ("no longer attends Qiming Kindergarten and " of "The user's son no longer attends
+Qiming Kindergarten and has transferred to Lanwan Kindergarten."): it leaves whole. The "and"
+must open a clause, its verb right after it ("and has transferred", "and now lives"), never
+join two names or a name and what follows ("with Marco and his parents")."""
+_SUBJECT_GAP: Final = re.compile(
+    rf"The user(?:['’]s [a-z-]+)?\s+(?:{_NO_VERB}|her|their|our|your|my|that|them|him|it|the|"
+    r"a|an)\b")
+"""A subject followed by no verb but a determiner, a pronoun or a plural tie ("The user his
+parents."): what a rewording that cut the wrong words leaves."""
+_CONTRAST: Final = (r"(?:,?\s+(?:not|rather than|instead of)|,\s+no longer)\s+"
+                    r"(?:(?:the|a|an)\s+)?{value}(?:\s+(?:any\s?more|any\s+longer))?"
                     r"(?=[\s.,;]|$)")
-"""A contrast tail naming the forgotten value as what is not the case ("lives in Hangzhou, not
-Shanghai", "is a blue 卡罗拉, not a 思域"): it leaves whole, and the statement says what it
-says besides."""
+"""A contrast tail naming the forgotten value as what is not, or no longer, the case ("lives in
+Hangzhou, not Shanghai", "is a blue 卡罗拉, not a 思域", "is 8836 now, no longer 4471", "is
+浙A9M105, not 3K728 anymore"): it leaves whole, and the statement says what it says
+besides."""
 
 
 def _without_value(text: str, value: str, *, keep_kind: bool = False,
@@ -693,6 +1029,10 @@ def _without_value(text: str, value: str, *, keep_kind: bool = False,
     second grade at a primary school"."""
     escaped = _escaped(value)
     text = re.sub(_CONTRAST.format(value=escaped), "", text, flags=re.IGNORECASE)
+    # A clause naming it as no longer the case leaves before the one saying what holds now:
+    # "The user's son has transferred to Lanwan Kindergarten." of "... no longer attends
+    # Qiming Kindergarten and has transferred to Lanwan Kindergarten.".
+    text = re.sub(_ENDED_AND.format(value=escaped), "", text, flags=re.IGNORECASE)
     # A noun the value names leaves its name only: "works at a company named 青柠科技" says
     # "works at a company".
     text = re.sub(_NAMED_NOUN.format(value=escaped), r"\1", text, flags=re.IGNORECASE)
@@ -786,7 +1126,7 @@ def reworded_statement(statement: str, *, names: Mapping[str, str],
         result = canonical_statement(text)
     except ValueError:
         return None
-    if result == statement or _DANGLING.search(result) or any(
+    if result == statement or _DANGLING.search(result) or _SUBJECT_GAP.match(result) or any(
             shows(result, value) for value in (*names, *values)):
         return None
     if len([token for token in token_seq(result) if token not in _LIGHT]) < 2 and not (

@@ -36,7 +36,7 @@ const TOOLS = ['claude-code', 'dsh', 'codex', 'opencode', 'cursor', 'gemini', 'c
 
 const problems = [];
 const ok = (value, message) => { if (!value) problems.push(message); };
-const rel = (file) => path.relative(root, file);
+const rel = (file) => path.relative(root, file).split(path.sep).join('/');
 const readJson = (file) => {
   try {
     return JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -136,8 +136,22 @@ try {
 ok(legacy === '', `QUOTEMEM_DSH_* is renamed QUOTEMEM_AUTO; still in: ${legacy.split('\n').join(', ')}`);
 
 // ----------------------------------------------------------------- npm pack
+const WINDOWS = process.platform === 'win32';
+// npm itself, run by this Node. On Windows `npm` is npm.cmd, which Node runs
+// only through a shell; npm's own script is run directly instead: the one
+// `npm run` names, else the one installed beside node.
+function npmCommand() {
+  const beside = path.join(path.dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js');
+  const script = [process.env.npm_execpath, beside]
+    .find((file) => file && /npm-cli\.c?js$/.test(file) && fs.existsSync(file));
+  return script ? [process.execPath, [script]] : ['npm', []];
+}
+function npm(args, options) {
+  const [command, prefix] = npmCommand();
+  return execFileSync(command, [...prefix, ...args], options);
+}
 function packList() {
-  const out = execFileSync('npm', ['pack', '--dry-run', '--json', '--ignore-scripts'], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+  const out = npm(['pack', '--dry-run', '--json', '--ignore-scripts'], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
   return JSON.parse(out)[0];
 }
 
@@ -179,9 +193,16 @@ if (process.argv.includes('--pack') || process.argv.includes('--install')) {
 }
 
 // ---------------------------------------------- install the tarball and run it
+// An installed bin is run as a user's shell runs it: on Windows through the
+// .cmd file npm writes next to it (cmd.exe; the arguments here are plain words).
 function run(cmd, args, options) {
+  const shim = `${cmd}.cmd`;
+  const [file, argv, extra] = WINDOWS && fs.existsSync(shim)
+    ? [process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', `""${shim}" ${args.join(' ')}"`],
+      { windowsVerbatimArguments: true }]
+    : [cmd, args, {}];
   try {
-    const stdout = execFileSync(cmd, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 60_000, ...options });
+    const stdout = execFileSync(file, argv, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 60_000, ...extra, ...options });
     return { code: 0, stdout };
   } catch (error) {
     return { code: error.status ?? 1, stdout: String(error.stdout ?? ''), stderr: String(error.stderr ?? '') };
@@ -192,17 +213,24 @@ let installed = null;
 if (process.argv.includes('--install') && problems.length === 0) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'qm-pack-'));
   try {
-    execFileSync('npm', ['pack', '--ignore-scripts', '--pack-destination', tmp], { cwd: root, stdio: ['ignore', 'ignore', 'ignore'] });
+    npm(['pack', '--ignore-scripts', '--pack-destination', tmp], { cwd: root, stdio: ['ignore', 'ignore', 'ignore'] });
     const tarball = fs.readdirSync(tmp).find((name) => name.endsWith('.tgz'));
     const prefix = path.join(tmp, 'app');
     const home = path.join(tmp, 'home');
     fs.mkdirSync(prefix);
     fs.mkdirSync(home);
     fs.writeFileSync(path.join(prefix, 'package.json'), '{"name":"qm-install-check","private":true}\n');
-    execFileSync('npm', ['install', '--no-audit', '--no-fund', '--ignore-scripts', '--offline', path.join(tmp, tarball)], { cwd: prefix, stdio: ['ignore', 'ignore', 'pipe'] });
+    npm(['install', '--no-audit', '--no-fund', '--ignore-scripts', '--offline', path.join(tmp, tarball)], { cwd: prefix, stdio: ['ignore', 'ignore', 'pipe'] });
     const bin = (name) => path.join(prefix, 'node_modules', '.bin', name);
     const canary = 'qm-pack-check-canary-token';
-    const env = { PATH: process.env.PATH, HOME: home, CODEX_HOME: path.join(home, '.codex'), QUOTEMEM_TOKEN: canary };
+    const env = {
+      PATH: process.env.PATH, HOME: home, USERPROFILE: home, CODEX_HOME: path.join(home, '.codex'),
+      QUOTEMEM_TOKEN: canary,
+    };
+    // Windows programs need these to start (cmd.exe, Node's own startup).
+    for (const name of ['SystemRoot', 'ComSpec', 'PATHEXT']) {
+      if (WINDOWS && process.env[name]) env[name] = process.env[name];
+    }
     const opts = { cwd: path.join(home), env };
     const checks = [];
     const expect = (label, result, pattern) => {
@@ -223,8 +251,11 @@ if (process.argv.includes('--install') && problems.length === 0) {
       const result = run(bin('quotemem'), ['install', tool], opts);
       expect(`quotemem install ${tool}`, result, /\S/);
       ok(!(result.stdout + (result.stderr ?? '')).includes(canary), `quotemem install ${tool} printed the token`);
-      ok(!result.stdout.includes(root), `quotemem install ${tool} points at the source tree, not the installed package`);
-      if (/[\\/]integrations[\\/]/.test(result.stdout)) ok(result.stdout.includes(installedDir), `quotemem install ${tool} does not point at the installed package`);
+      // A path may be printed as it is or inside JSON (with each backslash doubled on Windows).
+      const named = (dir) => result.stdout.includes(dir)
+        || result.stdout.includes(JSON.stringify(dir).slice(1, -1));
+      ok(!named(root), `quotemem install ${tool} points at the source tree, not the installed package`);
+      if (/[\\/]integrations[\\/]/.test(result.stdout)) ok(named(installedDir), `quotemem install ${tool} does not point at the installed package`);
     }
     ok(fs.readdirSync(home).length === 0, `a dry run wrote into HOME: ${fs.readdirSync(home).join(', ')}`);
     // The package entry points resolve as an installed dependency.

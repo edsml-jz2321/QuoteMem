@@ -5,7 +5,9 @@ the source's precision, not an invented state expiry. Unsupported or ambiguous
 expressions remain unanchored; neither ingestion time nor the system clock is an
 input to this module. An expression in another language gets the window its
 English equivalent gets when it is one of the closed phrases or forms of
-`temporal_lexicon`; a year of 2400 or more is never read as Gregorian.
+`temporal_lexicon`; a year of 2400 or more is never read as Gregorian. A day
+with a time of day ("next Tuesday at 3 pm") gets that day's window: a source
+time carries no zone, so the hour is not anchored.
 """
 
 from __future__ import annotations
@@ -49,6 +51,7 @@ from quotemem.ingestion.temporal_lexicon import (
     YEAR_UNITS,
     buddhist_era,
     fold_time,
+    time_of_day_days,
 )
 
 DAY_MS = 86_400_000
@@ -344,6 +347,45 @@ def _introduced_absolute(text: str) -> tuple[int, int | None, TimeGranularity] |
     return window
 
 
+_Window = tuple[int, int | None, TimeGranularity]
+
+
+def _readings(
+    text: str, source_observed_at: int | None,
+) -> tuple[_Window | None, _Window | None]:
+    """The absolute and the relative window of an expression, each None when unread."""
+    try:
+        absolute = _introduced_absolute(text.strip())
+    except (ValueError, OverflowError):
+        absolute = None
+    try:
+        relative = None if source_observed_at is None else _relative(text, source_observed_at)
+    except (ValueError, OverflowError):
+        relative = None
+    return absolute, relative
+
+
+def _day_readings(
+    text: str, source_observed_at: int | None,
+) -> tuple[_Window | None, _Window | None]:
+    """The readings of a day with a time of day (`time_of_day_days`), at DAY precision.
+
+    Only a day that one whole calendar day holds keeps its window: "next week at 3
+    pm" and "since Monday at 3 pm" stay unread. Readings that split the expression
+    into different days leave it unread too.
+    """
+    found: set[tuple[_Window | None, _Window | None]] = set()
+    for day in time_of_day_days(fold_time(text)):
+        absolute, relative = (
+            None if window is None or window[1] is None or window[2] != "DAY"
+            or window[1] - window[0] != DAY_MS else window
+            for window in _readings(day, source_observed_at)
+        )
+        if absolute is not None or relative is not None:
+            found.add((absolute, relative))
+    return found.pop() if len(found) == 1 else (None, None)
+
+
 def resolve_time(
     expression: TimeExpressionV1, *, source_observed_at: int | None, pipeline_version: str,
 ) -> TemporalResolution:
@@ -362,6 +404,7 @@ def resolve_time(
             boundary preserves the raw expression and has no invented end; a
             leading ``on`` or ``in`` names the same window as the bare date. Relative
             expressions read week, month and year counts as calendar units (`_relative`).
+            A day with a time of day names the day's window (`_day_readings`).
 
     Returns:
         A source-time window and anchoring provenance. Unsupported calendar ranges,
@@ -381,16 +424,9 @@ def resolve_time(
         return TemporalResolution(
             None, None, "unanchored", AnchorV1(kind="not_applicable"), "not_applicable"
         )
-    try:
-        absolute = _introduced_absolute(expression.text.strip())
-    except (ValueError, OverflowError):
-        absolute = None
-    try:
-        relative = None if source_observed_at is None else _relative(
-            expression.text, source_observed_at,
-        )
-    except (ValueError, OverflowError):
-        relative = None
+    absolute, relative = _readings(expression.text, source_observed_at)
+    if absolute is None and relative is None:
+        absolute, relative = _day_readings(expression.text, source_observed_at)
     # The model's kind picks the reading tried first. An expression only the other
     # reading anchors keeps that reading's window and provenance: sources in
     # other languages often label "this September" ("Ce septembre") absolute.

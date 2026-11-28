@@ -36,9 +36,8 @@ leaves the process:
   core: the same call goes again without thinking, under the core's own bound and the
   core's time left, exactly as ``off`` sends it (``reasoning_cutoffs``,
   ``reasoning_timeouts``); so does a reasoning resend after a ``thinking`` refusal.
-  Thinking therefore never truncates a reply that ``off`` would have answered, and no
-  member, fact or vote is lost to it; a call the core asked to go without thinking
-  (``thinking: disabled``) goes without it;
+  So a reasoning reply that its bound cuts off, or that its wait ends, is never used; a
+  call the core asked to go without thinking (``thinking: disabled``) goes without it;
 - embeddings: ``dimensions`` is omitted when configured.
 
 A successful reply is checked against the configured model (the configured name, or

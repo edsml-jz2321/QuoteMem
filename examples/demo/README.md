@@ -29,14 +29,16 @@ memories are not touched.
 7. Chat 4 names the cat again in three messages: "My cat is called Bob."
    without a date, as in an old chat imported later; the question "Is my cat
    called Bob?"; and the assistant's answer. None of them is the user telling
-   it again after the forget, so the tombstone keeps the name out. It prints
-   the counts, the reason codes and whether "Bob" is in the memories or the
-   search.
+   it again after the forget, so the tombstone's check applies to each. It
+   prints the counts, the reason codes and whether "Bob" is in the memories
+   or the search.
 
 With `--relearn` it adds step 8: in chat 5 the user says, dated now, "For the
 record, my cat is called Bob.", with the current time as its `timestamp`. In
-the default `agent` Add mode that is the one way a forgotten fact comes back:
-the name is stored again, quoting chat 5 only.
+the default `agent` Add mode these are the user's own words giving the name
+after the forget, so the tombstone does not refuse them and review judges
+them as a new fact. The demo prints each current memory that names Bob, its
+quotes, and whether it quotes chat 1.
 
 It calls the HTTP routes `GET /health`, `GET /agent/status`, `/memory/add`,
 `/memory/list`, `/memory/history`, `/memory/provenance`, `/memory/search`,

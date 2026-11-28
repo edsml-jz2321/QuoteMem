@@ -69,7 +69,21 @@ Such a workspace also prepares completely (`StatementForget._prepare_complete`):
   value, ``_unsettled``) and in chat. What a word rule withholds alone is only the words
   naming the value (``naming_parts``'s ``strict``) and the assistant's clauses stating it
   (``forget_admission.echoes``), never a sentence whole because one clause matched; a
-  confirmation takes nothing its prepare did not name (``ForgetIntentV1.listed``).
+  confirmation takes nothing its prepare did not name (``ForgetIntentV1.listed``);
+- a memory, or a judged sentence no memory quotes whole, that the plan leaves and that names
+  a value of a forgotten target or withheld sentence as what is not the case
+  (a contrast, `_contrast_parts`) is read by the forget judge against that target's statement
+  or that sentence (`_residuals`): one that still states or presupposes it ("The user lives
+  at 27 Pine Lane now, not 14 Oak Street." beside a forgotten "The user used to live at 14
+  Oak Street.") is a target too, reworded without the value when it can be and taken whole
+  as a bundle, with all its quotes, when not; a memory whose quote alone holds the contrast
+  loses only that contrast (`_contrast_spans`); such a sentence is withheld but for what the
+  memories the plan leaves quote of it that shows no forgotten value (`_held_parts`);
+- a request for an old value takes no memory that says its value holds now, unless it names
+  a value as what is not the case; the clauses of the sentences such current values quote,
+  outside their quotes, that the judge takes as stating the request are withheld
+  (`_old_clauses`), and such a sentence the judge took whole goes by those clauses alone
+  (`_by_old_clauses`).
 
 A target that bundles the statement's fact with a clause the judge finds unrelated is
 forgotten whole, but its tombstone is the user's words of the fact and their vector, not the
@@ -84,7 +98,8 @@ tombstones at most), so a restatement in another language, or one the extraction
 nowhere (a question, an acknowledgement), is judged too; what states another fact is never
 taken (`forget_match.exclusion`).
 
-What the user states again, in their own words, after a forget is learned again
+What the user states again, in their own words, after a forget, showing no name a forget
+took (the Add's name rule settles one that does), is judged as a new fact
 (``core/relearn.py``): a dated user sentence received and dated after the
 tombstone's forget, that is no forget request, names no forgetting or memory and is no
 question, and whose own words restate that tombstone, is never taken by the relearn check
@@ -143,7 +158,7 @@ import json
 import re
 import time
 import unicodedata
-from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence, Set
+from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, Sequence, Set
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from contextlib import AbstractContextManager, ExitStack, contextmanager
 from dataclasses import dataclass, replace
@@ -258,12 +273,19 @@ from quotemem.core.forget_reword import (
     asked_kinds,
     asked_sources,
     asked_values,
+    code_forms,
+    code_spans,
+    contrasted_values,
     detail_values,
     existence_of,
     forgotten_values,
     han_forms,
+    is_code,
     kind_of,
+    kind_word,
     left_out,
+    named_part,
+    replaced_values,
     reworded_statement,
     shows,
     tie_descriptions,
@@ -282,6 +304,7 @@ from quotemem.core.inference import (
     InferenceBindingV1,
     ReasoningEffort,
 )
+from quotemem.core.judge_structure import distinctive_words
 from quotemem.core.privacy import (
     english,
     fact_terms,
@@ -301,7 +324,6 @@ from quotemem.core.recall_agent import (
     forget_shadowed,
     replacement_ranges,
     request_sentences,
-    sentences,
     shadow_terms,
     surviving_names,
 )
@@ -361,7 +383,7 @@ from quotemem.store.forget_run import (
     naming_only,
     workspace_embedding,
 )
-from quotemem.store.indexed import EvidenceRows, MemoryTableRows, TombstoneRows
+from quotemem.store.indexed import EvidenceRows, MemoryTableRows, RevisionRows, TombstoneRows
 from quotemem.store.memory_commit import readability
 from quotemem.store.writer import RowWrite, Writer
 
@@ -1138,6 +1160,34 @@ def _old_car(statement: str, sentence: str) -> bool:
     return _OLD_KIND_WORDS["car"].search(_OLD_JUDGED.get(kind, kind)) is not None
 
 
+def _unheld_pieces(part: Mapping[str, object]) -> list[str]:
+    """The readable pieces of an Evidence part's text: what lies between its withheld ranges."""
+    raw = cast(str, part["text"]).encode("utf-8")
+    base = cast(int, part["byte_start"])
+    cuts = sorted((max(0, cast(int, span["byte_start"]) - base),
+                   min(len(raw), cast(int, span["byte_end"]) - base))
+                  for span in cast(list[dict[str, object]], part["withheld_spans"]))
+    pieces: list[str] = []
+    at = 0
+    for low, high in [*cuts, (len(raw), len(raw))]:
+        if at < low:
+            pieces.append(raw[at:low].decode("utf-8", "ignore"))
+        at = max(at, high)
+    return [piece for piece in pieces if piece.strip()]
+
+
+def _code_located(values: Sequence[str], texts: Sequence[str]) -> list[str]:
+    """``values`` with each code no text shows whole given as the codes the texts show of it
+    by its core (`code_forms`): "3K728" of "车换了，车牌现在是浙A9M105，不是3K728了。" for
+    "浙A3K728". Every other value is kept as it is."""
+    found: list[str] = []
+    for value in values:
+        forms = [] if any(shows(text, value) for text in texts if text) else [
+            form for text in texts if text for form in code_forms(value, text)]
+        found += forms or [value]
+    return list(dict.fromkeys(found))
+
+
 def _unshown(texts: Sequence[str], values: Sequence[str]) -> bool:
     """Whether no quote text shows any of ``values`` in any script (fail closed): the quotes
     and the values are all written in Latin letters and none of the quotes shows a value. A
@@ -1215,6 +1265,9 @@ def _value_words(text: str) -> set[str]:
 
 _VALUE_STOP: Final = frozenset({"现在", "目前", "如今", "住在", "我现", "在住", "搬到", "我们",
                                 "新的", "我的", "的新", "已经"})
+_NOW: Final = re.compile(r"\b(?:now|currently|these days|nowadays)\b|现在|目前|如今",
+                         re.IGNORECASE)
+"""A memory or quote saying its value holds now: no old value of the user's (`_old_values`)."""
 
 
 _LIVES_NOW = re.compile(r"\b(?:lives|live|is living|are living|resides|reside)\b",
@@ -1227,6 +1280,390 @@ def _overlaps(span: QuoteSpanV1, quotes: Sequence[QuoteSpanV1]) -> bool:
     """Whether ``span`` shares bytes with one of ``quotes``."""
     return any(span.evidence_id == quote.evidence_id and span.byte_start < quote.byte_end
                and quote.byte_start < span.byte_end for quote in quotes)
+
+
+_NUMBER: Final = re.compile(r"\d{2,}")
+_HAN_CONTRAST: Final = re.compile(
+    r"(?:不|没|非|以前|原来|之前|曾经|代替|取代|替代)[^,;，；、。！？!?\n]*")
+"""A Chinese clause's part from a word that says what is not, or no longer, the case: the
+"not 14 Oak Street" of "I live at 27 Pine Lane now, not 14 Oak Street" said in Chinese, or a
+"no longer at" a company. A word that names the new value ("switched to", "renamed") is
+none."""
+
+
+_EN_CONTRAST: Final = re.compile(
+    r"(?:,\s*not|,\s*no\s+longer|,?\s+rather\s+than|,?\s+instead\s+of)\s+(?P<value>[^,;]+)"
+    r"|^\s*(?:instead\s+of|rather\s+than)\s+(?P<lead>[^,;]+?)\s*,", re.IGNORECASE)
+"""An English contrast naming what is not the case beside what is: "14 Oak Street." of "...,
+not 14 Oak Street.", "playing badminton" of "Instead of playing badminton, ...". A change told
+by its verb ("left Xuhui", "no longer plays") is the move and change rules' own
+(``names_replaced``), which read whose fact it is and its predicate."""
+
+
+_EN_ENDED: Final = re.compile(
+    r"\bno\s+longer\b[^,;]*"
+    r"|(?:^|[,;])\s*(?P<gone>[^,;]*?\bany\s?more)\b"
+    r"|\b(?:stopped|quit)\s+[^,;]*"
+    r"|\b(?:moved|switched|changed|transferred)\s+(?:away\s+)?(?P<left>from\s+[^,;]+?)"
+    r"(?=\s+(?:to|into)\b|[,;]|$)"
+    r"|\b(?:used\s+to|previously|formerly)\b[^,;]*"
+    r"|\b(?:previous|former)\s+\w+[^,;]*", re.IGNORECASE)
+"""An English part that names a value as no longer the case with no contrast beside it: "no
+longer freelances for Ostrander", "I don't live at 3 Quarry Lane anymore", "stopped using
+an old address", "from Thistle Road" of "moved from Thistle Road to Saffron Avenue", "the
+previous one was 07700 900 552". Read by rule alone (`_named_values`)."""
+
+_HAN_ENDED: Final = re.compile(
+    r"\u4ece[^,;\uff0c\uff1b\u3001\u3002\uff01\uff1f!?\n]*?(?=\u642c|\u6362|\u8f6c|\u6539)"
+    r"|(?:\u79bb\u5f00|\u505c\u7528|\u6362\u6389)[^,;\uff0c\uff1b\u3001\u3002\uff01\uff1f!?\n]*")
+"""A Chinese part that names a value as no longer the case: the place moved away from, ahead
+of the verb of moving or changing, or what is left or no longer used."""
+
+_EN_USER: Final = re.compile(
+    r"\W*(?:[\w'\u2019-]+\s+){0,3}?(?:i|we|the\s+user)\b(?!['\u2019]s)", re.IGNORECASE)
+_HAN_USER: Final = re.compile(
+    "[^\uff0c,\uff1b;\u3002\uff01\uff1f!?]{0,4}?(?:\u6211\u4eec|\u6211|\u7528\u6237)"
+    "(?![\u7684\u59b9\u59d0\u54e5\u5f1f\u7238\u5988\u7237\u5976\u513f\u5973\u540c\u670b"
+    "\u8868\u5802\u5bb6\u732b\u72d7\u8001\u5ba4])")
+"""A clause whose subject is the user: "I", "we" or "the user" within its first words ("Last
+month I moved"), never "the user's"; in Chinese, the user's own word, never one of a
+relative, a friend or a pet ("my sister")."""
+_CLAUSE_START: Final = re.compile(r"[.!?;,\uff0c\uff1b\u3002\uff01\uff1f\n]")
+
+_GLOSSED: Final = re.compile(r"[\uff08(][^\uff08\uff09()]{1,60}[\uff09)]")
+"""A gloss in parentheses after a word ("older male cousin" glossed in Chinese): no name."""
+
+_EMAIL: Final = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
+
+
+def _users(text: str, at: int) -> bool:
+    """Whether the clause of ``text`` holding position ``at`` has the user as its subject
+    (`_EN_USER`, `_HAN_USER`)."""
+    start = max((match.end() for match in _CLAUSE_START.finditer(text, 0, at)), default=0)
+    clause = text[start:]
+    return bool(_EN_USER.match(clause) or _HAN_USER.match(clause))
+
+
+def _ended_ranges(text: str) -> list[tuple[int, int, bool]]:
+    """The ranges of a text's parts that name a value as no longer the case (`_EN_ENDED`,
+    `_HAN_ENDED`), each with whether the user is its clause's subject (`_users`): "Tom
+    stopped playing at the Xuhui club" tells nothing of the user."""
+    ranges = [match.span("gone") if match["gone"] is not None
+              else match.span("left") if match["left"] is not None else match.span()
+              for match in _EN_ENDED.finditer(text)]
+    ranges += [match.span() for match in _HAN_ENDED.finditer(text)]
+    return [(low, high, _users(text, low)) for low, high in ranges]
+
+
+def _contrast_parts(text: str) -> list[str]:
+    """The parts of a text that name a value as not, or no longer, the case beside the one
+    that is: an English contrast's (`_EN_CONTRAST`) and a Chinese clause's from its contrast
+    word on (`_HAN_CONTRAST`)."""
+    return [*(match["value"] or match["lead"] for match in _EN_CONTRAST.finditer(text)),
+            *(match.group() for match in _HAN_CONTRAST.finditer(text))]
+
+
+def _named_values(parts: Sequence[str], fact: str, *, numbers: bool = False,
+                  contrast: bool = False) -> set[str]:
+    """The names, values and numbers of a forgotten fact's statement that ``parts`` show: its
+    own capitalized runs and runs of two or more Han characters outside a gloss in parentheses
+    (`_own_values`), a name without its title (`_fact_values`: "Lee" of "Dr. Lee", never "Dr"),
+    its numbers and codes as a part shows them (a number of three digits
+    whole; one of four characters or more, or a code mixing letters and digits, whole or by
+    one of its forms, `code_forms`: "粤B7Q2K9", "900 123" of "07700 900 123") and its e-mail
+    addresses; with ``numbers``, only those numbers, codes and addresses. A number is no part
+    of a longer one ("0471" of "020 7946 0471") nor of a date. With ``contrast`` (the parts
+    are contrasts, or parts naming a value as ended), a code may be given by its last
+    characters ("not 7731" for "A7731")."""
+    plain = _GLOSSED.sub(" ", fact)
+    short = {key for code in _CODE_RUN.findall(plain)
+             if len(key := re.sub(r"[ -]", "", code).casefold()) == 3 and key.isdigit()}
+    mails = [mail.casefold().rstrip(".") for mail in _EMAIL.findall(plain)]
+    found: set[str] = set()
+    for part in parts:
+        if not numbers:
+            found.update(_own_values(plain, _fact_values(plain, part)))
+        found.update(part[start:end] for start, end in code_spans(plain, part,
+                                                                  contrast=contrast))
+        found.update(code for code in _CODE_RUN.findall(part)
+                     if re.sub(r"[ -]", "", code).casefold() in short)
+        found.update(mail for mail in mails if mail in part.casefold())
+    return found
+
+
+_CODE_RUN: Final = re.compile(
+    r"[0-9A-Za-z]*[0-9][0-9A-Za-z]*(?:[ -][0-9A-Za-z]*[0-9][0-9A-Za-z]*)*")
+"""A whole number or code of a text, its groups joined by single spaces or hyphens, as
+`code_forms` reads one ("07700 900 123")."""
+
+
+def _value_shown(value: str, text: str, words: Set[str] | None = None) -> bool:
+    """Whether ``text`` shows ``value`` as `_shows` reads it, a number or code only whole or
+    by one of its forms (`code_spans`): "0471" is no part of "020 7946 0471"."""
+    if is_code(value):
+        return bool(code_spans(value, text))
+    return _shows(value, text, words)
+
+
+_NOT_VALUES: Final = frozenset({"i", "the user", "user"})
+_WHEN: Final = frozenset({
+    "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday", "january",
+    "february", "march", "april", "may", "june", "july", "august", "september", "october",
+    "november", "december"})
+"""Days and months: when a fact holds, never the value a forget is about."""
+
+
+def _own_values(fact: str, values: Iterable[str]) -> set[str]:
+    """The ``values`` of a forgotten fact's statement that are its own, not where or when it
+    holds: no place it gives as one something is in ("a club in Xuhui", "lives in Shanghai":
+    another fact may share it), no day or month, and not the user."""
+    return {value for value in values
+            if value.casefold() not in _NOT_VALUES
+            and value.casefold().removesuffix("s") not in _WHEN
+            and not re.search(rf"\bin\s+(?:the\s+)?{_PLACE_TITLE}{re.escape(value)}", fact,
+                              re.IGNORECASE)}
+
+
+_TITLE: Final = re.compile(r"(?:Dr|Mr|Mrs|Ms|Mx|Prof|St|Mt|Jr|Sr)\.?")
+"""A title a name is told with ("Dr" of "Dr. Lee", "St" of "St. Ives Lane"): no name itself,
+and one many names share."""
+_PLACE_TITLE: Final = r"(?:(?:St|Mt|Ft)\.?\s+)?"
+"""The title a place's name may open with ("St. " of "St. Ives Lane")."""
+
+
+def _untitled(run: str) -> str | None:
+    """A capitalized run without the title it opens with ("Lee" of "Dr Lee"); None for a title
+    alone ("Dr" of "Dr. Lee", `_TITLE`)."""
+    if _TITLE.fullmatch(run):
+        return None
+    head, _, rest = run.partition(" ")
+    return rest if rest and _TITLE.fullmatch(head) else run
+
+
+def _fact_values(fact: str, part: str) -> list[str]:
+    """The names and values of a fact's statement (`forgotten_values`) that ``part`` shows,
+    each without the title it is told with (`_untitled`): "Lee" of "The user's dentist is Dr.
+    Lee.", never "Dr"."""
+    return [run for found in forgotten_values(fact, [fact])
+            if (run := _untitled(found)) and token_contained(run, part)]
+
+
+_DWELLS: Final = (
+    r"\b(?:(?:live[sd]?|living|reside[sd]?|residing|stay(?:s|ed|ing)?|grew\s+up|born|based|"
+    r"located|move[sd]?|moving)(?:\s+back)?\s+(?:in|at|on|to|into|from|near)"
+    rf"|(?:is|are|was|were|comes?|came)\s+from)\s+(?:the\s+)?{_PLACE_TITLE}{{value}}")
+"""A place given as where someone lives, stays or comes from ("lives in Brackenmoor", "used to
+live in Brackenmoor", "moved to Ostrava", "lives at St. Ives Lane")."""
+
+
+def _dwelling_places(statement: str) -> set[str]:
+    """The places a statement gives as where someone lives, stays or comes from (`_DWELLS`):
+    "Brackenmoor" of "The user lives in Brackenmoor." and of "The user used to live in
+    Brackenmoor.", "Ives Lane" of "The user's sister lives at St. Ives Lane."."""
+    return {value for found in forgotten_values(statement, [statement])
+            if (value := _untitled(found))
+            and re.search(_DWELLS.format(value=re.escape(value)), statement, re.IGNORECASE)}
+
+
+def _located_places(statement: str) -> set[str]:
+    """The places a statement gives after "in", "at" or "from" ("Corebody Gym" of "The user
+    trains in Corebody Gym on Mondays.", "Xuhui" of "... at a club in Xuhui."), each without
+    its title; no day or month."""
+    return {value for found in forgotten_values(statement, [statement])
+            if (value := _untitled(found)) and value.casefold() not in _NOT_VALUES
+            and value.casefold().removesuffix("s") not in _WHEN and re.search(
+                rf"\b(?:in|at|from)\s+(?:the\s+)?{_PLACE_TITLE}{re.escape(value)}", statement,
+                re.IGNORECASE)}
+
+
+def _shares_taken(statement: str, took: Sequence[str]) -> bool:
+    """Whether an older memory's statement and what a plan took (``took``: the statements it
+    forgot and the sentences it withheld) share a name, value, number or code: one of theirs
+    the statement shows (`_named_values`), or one of the statement's own or a place it gives
+    as where someone lives (`_dwelling_places`) that they show (`_value_shown`). "The user's
+    locker code is 4471." beside a withheld "My locker code is 4471." and "The user lives in
+    莲塘." beside a withheld "我在莲塘住。" share one; "The user lives in Haidian District,
+    Beijing." beside a forgotten "The user moved to Xihu District, Hangzhou last month." shares
+    none, and so does "The user's GP is Dr. Moran." beside a forgotten "The user's dentist is
+    Dr. Lee.": a title is no name."""
+    own = _named_values([statement], statement) | _dwelling_places(statement)
+    return any(_named_values([statement], text)
+               or any(_value_shown(value, text) for value in own) for text in took)
+
+
+_ASK_VERB: Final = re.compile(
+    r"\s*(?:please\s+)?(?:forget|delete|erase|remove)(?:\s+about)?\s+"
+    r"|\s*请?(?:忘掉|忘记|删掉|删除)", re.IGNORECASE)
+"""The words a request opens with that ask to forget what follows."""
+def _names_forgotten(text: str, fact: str) -> bool:
+    """Whether a text names a name, value or number of a forgotten fact's statement as not,
+    or no longer, the case (`_named_values`): in a contrast (`_contrast_parts`) or in a part
+    of the user's own that says it ended (`_ended_ranges`); in a part of another's, only a
+    number or an e-mail address counts. Such a text tells the fact whatever the judge says
+    ("A person is named Odalys, not Odette." beside a forgotten "Odette is the user's
+    partner."); a word it only shares ("tram", "live") is the judge's to read, and so is a
+    title ("not Dr. Moran" beside a forgotten "Dr. Lee")."""
+    ended = _ended_ranges(text)
+    return bool(_named_values([*_contrast_parts(text), *(
+        text[low:high] for low, high, users in ended if users)], fact, contrast=True)
+                or _named_values([text[low:high] for low, high, users in ended if not users],
+                                 fact, numbers=True, contrast=True))
+
+
+_LATIN_LETTER: Final = re.compile(r"[A-Za-z]")
+
+
+def _contrast_spans(quote: QuoteSpanV1, text: str, sources: Sequence[str], *,
+                    fact: str | None = None) -> list[QuoteSpanV1]:
+    """The contrasts of a quote (``text`` of ``quote``), marker and all, that show a name,
+    value or number of a forgotten memory (``sources``): ", not 14 Oak Street" of "I live at
+    27 Pine Lane now, not 14 Oak Street", and its Chinese contrast word and value said in
+    Chinese. With ``fact``, those and the parts that say a value ended (`_ended_ranges`) that
+    name a name, value or number of that fact's statement as `_names_forgotten` reads them.
+    None when the quote's bytes are not its text."""
+    if len(text.encode("utf-8")) != quote.byte_end - quote.byte_start:
+        return []
+    ranges = [(*match.span(), True) for match in (
+        *_EN_CONTRAST.finditer(text), *_HAN_CONTRAST.finditer(text))]
+    if fact is not None:
+        ranges += _ended_ranges(text)
+    found: list[QuoteSpanV1] = []
+    for low, high, users in ranges:
+        part = text[low:high].rstrip(" ,;\uff0c\uff1b")
+        if part.strip() and (_values_of([part], sources) if fact is None
+                             else _named_values([part], fact, numbers=not users,
+                                                contrast=True)):
+            first = quote.byte_start + len(text[:low].encode("utf-8"))
+            found.append(quote.model_copy(update={
+                "byte_start": first, "byte_end": first + len(part.encode("utf-8"))}))
+    return found
+
+
+
+def _with_contrasts(row: _Candidate, parts: Sequence[QuoteSpanV1], texts: Sequence[str],
+                    sources: Sequence[str]) -> list[QuoteSpanV1]:
+    """``parts`` and, when ``row``'s statement names a value of ``sources`` as replaced
+    (`replaced_values`), the contrasts of its quotes (``texts``, `_contrast_spans`): a memory
+    reworded without its contrast tail, or without the clause saying a value no longer holds,
+    loses the contrast its quotes tell too, in whatever words they tell it ("not the fernmail
+    one", "不是3K728了", "不再上启明幼儿园了"), so no quote names the old value as replaced."""
+    others = [source for source in sources if source != row.statement]
+    if not replaced_values(row.statement, others):
+        return list(parts)
+    return list({_key(span): span for span in (*parts, *(
+        part for quote, text in zip(row.quotes, texts, strict=True) if text
+        for part in _contrast_spans(quote, text, others)))}.values())
+
+
+def _tails_only(values: Sequence[str], contrasted: Sequence[str]) -> bool:
+    """Whether a rewording leaving out ``values`` leaves out only contrast tails and clauses
+    saying a value no longer holds: each value is one they name (``contrasted``,
+    `replaced_values` without departures), or a part of one ("Varnholm" of "in Varnholm").
+    Such a rewording states the value that holds now and nothing else of what is
+    forgotten."""
+    return bool(contrasted) and all(
+        any(token_contained(value, tail) for tail in contrasted) for value in values)
+
+
+def _older_statements(affected: Sequence[ForgetStatementAffectedV1],
+                      current: Set[str]) -> list[str]:
+    """The statements of the past memories a plan forgets (``affected`` as ``forgotten``, none
+    of ``current``): the older values a later memory replaced."""
+    return [entry.statement for entry in affected if entry.effect == "forgotten"
+            and entry.memory_id not in current and entry.statement]
+
+
+def _wordings_of(wordings: Mapping[str, ForgetRewordV1],
+                 kept: Collection[str]) -> dict[str, ForgetRewordV1]:
+    """The ``wordings`` of the memories ``kept`` names, in their order."""
+    return {memory_id: wording for memory_id, wording in wordings.items() if memory_id in kept}
+
+def _shared_values(texts: Sequence[str], sources: Sequence[str]) -> int:
+    """How many names, values and numbers of a forgotten memory (``sources``: its statement
+    and quotes) the ``texts`` show where they name a value as replaced, ended or denied
+    (`_contrast_parts`, `_values_of`). A memory or sentence that tells the forgotten fact by
+    what it says is not, or no longer, the case shows one at least
+    (`StatementForget._residuals`); one that only shares the fact's subject shows none."""
+    return len(_values_of([part for text in texts for part in _contrast_parts(text)], sources))
+
+
+def _values_of(parts: Sequence[str], sources: Sequence[str], *, words: bool = True,
+               kinds: bool = True) -> set[str]:
+    """The names, values and numbers of a forgotten memory (``sources``) the ``parts`` show: a
+    capitalized Latin run or a Han run a source shows (`forgotten_values`), a word of the
+    source's own (``distinctive_words``, unless not ``words``: "live" of "I used to live at 14
+    Elm Street" is no value outside a contrast), a run of Han characters shared with a source
+    (`han_forms`) that is a whole run there or three characters long (unless not ``kinds``,
+    one that is only the word a place's name ends with: "幼儿园" of "转到了蓝湾幼儿园" beside a
+    forgotten "启明幼儿园", `kind_word`), and a number of two or more digits a source
+    shows."""
+    numbers = {number for source in sources for number in _NUMBER.findall(source)}
+    own: set[str] = {word for source in sources for word in distinctive_words(source)} \
+        if words else set()
+    runs = {run for source in sources for run in _HAN_RUN.findall(source)}
+    found: set[str] = set()
+    for part in parts:
+        found.update(forgotten_values(part, sources))
+        found.update(distinctive_words(part) & own)
+        found.update(form for form in han_forms(part, sources)
+                     if (len(form) >= 3 or form in runs) and form not in _VALUE_STOP
+                     and (kinds or not kind_word(form)))
+        found.update(number for number in _NUMBER.findall(part) if number in numbers)
+    return found
+
+
+_WORDS: Final = re.compile(r"\w(?:.*\w)?", re.DOTALL)
+"""A piece of text from its first word character to its last."""
+
+
+def _held_parts(span: QuoteSpanV1, text: str, keeps: Sequence[QuoteSpanV1],
+                ) -> list[QuoteSpanV1]:
+    """A sentence (``text`` of ``span``) withheld but for the ``keeps`` quotes lying in it:
+    the pieces between them, each cut to its first and last word ("I train at" and "these
+    days, not Ironworks" of "I train at Peak Fitness these days, not Ironworks." beside a
+    memory quoting "Peak Fitness"). The sentence whole when it keeps nothing or its bytes
+    are not its text."""
+    raw = text.encode("utf-8")
+    cuts = sorted((max(quote.byte_start, span.byte_start), min(quote.byte_end, span.byte_end))
+                  for quote in keeps if quote.evidence_id == span.evidence_id
+                  and quote.byte_start < span.byte_end and span.byte_start < quote.byte_end)
+    if not cuts or len(raw) != span.byte_end - span.byte_start:
+        return [span]
+    parts: list[QuoteSpanV1] = []
+    at = span.byte_start
+    for low, high in [*cuts, (span.byte_end, span.byte_end)]:
+        if at < low:
+            try:
+                piece = raw[at - span.byte_start:low - span.byte_start].decode("utf-8")
+            except UnicodeDecodeError:
+                return [span]
+            if (words := _WORDS.search(piece)) is not None:
+                first = at + len(piece[:words.start()].encode("utf-8"))
+                parts.append(span.model_copy(update={
+                    "byte_start": first,
+                    "byte_end": first + len(words.group().encode("utf-8"))}))
+        at = max(at, high)
+    return parts
+
+
+def _by_old_clauses(spans: Sequence[QuoteSpanV1], judged: Sequence[_Judged],
+                    quotes: Sequence[QuoteSpanV1], clauses: Sequence[QuoteSpanV1],
+                    ) -> tuple[list[QuoteSpanV1], list[_Judged]]:
+    """A plan's ``spans`` and ``judged`` sentences without the sentences it took whole that a
+    kept memory quotes part of (``quotes``) and that hold one of the old value's own
+    ``clauses`` (`_old_clauses`): they go by those clauses instead ("I used to live at 14 Elm
+    Street" of "I used to live at 14 Elm Street, now I live at 27 Birch Lane.", whose new
+    address a memory quotes)."""
+    own = {_key(clause) for clause in clauses}
+    whole = {_key(entry.span) for entry in judged
+             if entry.target and entry.role is not None and _overlaps(entry.span, quotes)
+             and _key(entry.span) not in own
+             and any(clause.evidence_id == entry.span.evidence_id
+                     and entry.span.byte_start <= clause.byte_start
+                     and clause.byte_end <= entry.span.byte_end for clause in clauses)}
+    return ([span for span in spans if _key(span) not in whole],
+            [replace(entry, target=False) if _key(entry.span) in whole else entry
+             for entry in judged])
 
 
 def _in_context(asked: str, words: str) -> str:
@@ -1252,7 +1689,7 @@ def _given_up(text: str, low: int, high: int, gone: Sequence[str], stated: Seque
     quote lies in another clause of the sentence too, one with no such verb. Any other sentence
     gives none."""
     found: list[tuple[int, int]] = []
-    for start, end in sentences(text):
+    for start, end in request_sentences(text):
         if high <= start or end <= low or is_request(text[start:end], complete=True):
             continue
         cuts = [(cut.start(), cut.end()) for cut in _CHANGE_CUT.finditer(text, start, end)]
@@ -1360,7 +1797,6 @@ def _merged_sentences(
     picked = sorted(found for found in spans if found not in taken)
     return ([*requests, *(spans[found] for found in picked)][:MAX_RESTATING_SPANS],
             list(judged.values()))
-
 
 
 type _Asked = tuple[str, str, str]
@@ -1618,7 +2054,7 @@ class StatementForget:
             excluded = {i: why for i in chosen
                         if (why := exclusion(statement, candidates[i].statement)) is not None}
         picked = {i: candidates[i] for i in chosen if i not in excluded}
-        targets = {row.memory_id: row for row in picked.values()}
+        targets: dict[str, _Candidate] = {row.memory_id: row for row in picked.values()}
         changed = None if after is None else {
             row.memory_id for row in self._memories(scope, after=after)}
         records = self._request_records(scope, [statement])
@@ -1632,10 +2068,16 @@ class StatementForget:
             targets.setdefault(row.memory_id, row)
         # A request for an old value takes the values a later one replaced, and one for a
         # person as a whole every memory of that one person (`_old_values`, `_whole_people`).
-        old_rows, old_calls = self._old_values(
+        old_rows, old_calls, holding = self._old_values(
             scope, [(statement, candidates, words if tells_new(words) else request.statement)],
             sender)
-        calls += old_calls
+        # An old value no memory states, told beside the new one in the sentence the one pick
+        # quotes, goes by its own clauses (`_old_clauses`).
+        old_spans, old_judged, used = self._old_clauses(scope, holding, statement, sender)
+        calls += old_calls + used
+        # A value that holds now, taken for the old one its contrast names, tells the old value
+        # only in that contrast (`_old_tails`).
+        old_tails = self._old_tails(old_rows)
         ruled_rows = [row for row in (*old_rows, *self._whole_people(scope, [statement]),
                                       *self._detail_rows(scope, detail))
                       if changed is None or row.memory_id in changed]
@@ -1671,6 +2113,14 @@ class StatementForget:
             targets.setdefault(row.memory_id, row)
         spans, judged = _merged_sentences(first, later, [span for row in targets.values()
                                                          for span in row.quotes])
+        spans = list({_key(span): span for span in (*spans, *old_spans)}.values())[
+            :MAX_RESTATING_SPANS]
+        judged = [*judged, *old_judged]
+        if old_spans:
+            # A sentence a current value quotes goes by its old value's own clauses, not whole:
+            # withheld whole, the current value would hang on the keepers to stay readable.
+            spans, judged = _by_old_clauses(
+                spans, judged, [span for row in holding for span in row.quotes], old_spans)
         if lived_value(statement) is not None:
             # Where the user lived withholds no sentence a current home's memory quotes, so
             # that memory stays readable (fail closed).
@@ -1753,18 +2203,35 @@ class StatementForget:
             del targets[memory_id]
         # Where the user lived takes no current home, and no request takes the new value it
         # told (`_kept_homes`, `_states_new`).
-        for memory_id in {*self._kept_homes(scope, targets, [statement],
-                                            [words, request.statement]),
-                          *self._current_values(scope, [statement], targets,
-                                                {row.memory_id for row in old_rows})}:
+        kept_homes = self._kept_homes(scope, targets, [statement], [words, request.statement])
+        for memory_id in {*kept_homes, *self._current_values(
+                scope, [statement], targets, {row.memory_id for row in old_rows})}:
             del targets[memory_id]
         # A request for the name of a place or organisation of someone's ("the name of my
         # daughter's school") asks that one's names alone: the name rules take no name of
         # its owner ("Ruby"), whatever the targets give besides (`_kind_names`).
         if asks and not nick and not given_names:
             given_names = self._kind_names(scope, [statement], list(targets))
+        # What a target forgets must not stay readable beside it: a memory the plan leaves
+        # that the forget judge finds still states or presupposes a target's statement ("The
+        # user lives at 27 Pine Lane now, not 14 Oak Street." beside a forgotten "The user used
+        # to live at 14 Oak Street.") is a target too, reworded below without the value when it
+        # can be and taken whole when not, as a bundle tombstoned by the user's words; such a
+        # sentence no memory quotes is withheld (`_residuals`). A kept home stays (fail
+        # closed), unless it names the forgotten value as what is not the case.
+        residual_ids: set[str] = set()
+        residual_texts: list[str] = []
+        residual_held: set[tuple[str, int, int]] = set()
+        if replacing and (targets or spans) and detail is None:
+            residual_ids, spans, used, residual_texts, residual_held = self._plan_residuals(
+                scope, targets, spans, judged, sender, kept=kept_homes,
+                bundles={candidates[index].memory_id for index in bundled})
+            calls += used
+            bundled |= {index for index, row in enumerate(candidates)
+                        if row.memory_id in residual_ids}
         # A bundle goes for the user's words, not for its own value (``ForgetOwner.chains``).
-        bundle_ids = {*(candidates[index].memory_id for index in bundled), *named_past}
+        bundle_ids = {*(candidates[index].memory_id for index in bundled), *named_past,
+                      *residual_ids}
         # An old value's own clause of the sentence telling the change goes with it.
         spans = list({_key(span): span for span in (*spans, *self._given_up_clauses(
             scope, [statement], targets, spans))}.values())[:MAX_RESTATING_SPANS]
@@ -1778,7 +2245,10 @@ class StatementForget:
         # takes and the memories the judge found to name or state it.
         context = [*targets, *(row.memory_id for index, row in enumerate(candidates)
                                if pick is not None and pick.roles[index] in _TELLING)]
-        sources = [statement, *(row.statement for row in self._rows(scope, context))]
+        # A memory taken for still telling a forgotten fact is reworded against that fact,
+        # which may be a sentence the judge took and no target states (`_plan_residuals`).
+        sources: list[str] = [statement, *(row.statement for row in self._rows(scope, context)),
+                              *old_tails, *(text for text in residual_texts if residual_ids)]
         # Only a request to forget a name lets a tie stand for it (`_reword_plans`): "forget
         # my wife's name", "forget Marcus's name", never "forget that Sofia is my wife".
         tie_names = asks
@@ -1789,8 +2259,11 @@ class StatementForget:
             # A target that tells the forgotten detail beside a fact of its own ("The user plays
             # badminton at 星河体育馆 on weekends." for "which sports hall I play at") is reworded
             # without it; only the detail's words are withheld, as sentences of the request.
+            # A memory taken for still telling a target's fact gives no name of its own.
             target_names = self._forgotten_names(
-                scope, given_names, self._names(scope, list(targets), ties=asks, aliases=nick)
+                scope, given_names, self._names(scope, [
+                    memory_id for memory_id in targets if memory_id not in residual_ids],
+                    ties=asks, aliases=nick)
                 if own_names else frozenset(), uncertain=uncertain, within=within)
             # A target showing the asked colour or breed of the thing is reworded without it,
             # its other facts and the thing's name kept (`_detail_plans`).
@@ -1818,10 +2291,14 @@ class StatementForget:
                             *parts, *self._detail_token_spans(scope, detail, forms)]
                     continue
                 plan, removed = plans[row.memory_id]
+                texts = self._quote_texts(row.quotes)
                 parts = self._value_spans(row.quotes, self._han_located(
-                    row.quotes, removed, [statement, *self._quote_texts([
+                    row.quotes, _code_located(removed, texts), [statement, *self._quote_texts([
                         span for other in targets.values() if other.memory_id != row.memory_id
                         for span in other.quotes])]))
+                # A memory reworded without its contrast tail loses the contrast its quotes
+                # tell too (`_with_contrasts`).
+                parts = _with_contrasts(row, parts, texts, sources)
                 # Every group of its support must lose a byte, or its present wording, which
                 # shows the detail, would stay readable should its rewording fail. A target whose
                 # quotes show none of it ("My boss works from the Berlin office." of "The user's
@@ -1857,6 +2334,9 @@ class StatementForget:
         # place tells another fact), nor a name a naming verb gives.
         # A request asking a detail ("forget where I work") asks a target's own value too,
         # where the target holds at it ("a designer at Bluefin Labs").
+        # A request for an old value asks no name of its kind ("PIN" of "my old locker PIN"):
+        # the value that holds now keeps it.
+        kind = old_value(statement)
         asked_spans = [] if asks or not replacing else self._value_token_spans(scope, [
             run for row in targets.values() if english(row.statement)
             for run in dict.fromkeys([
@@ -1865,12 +2345,16 @@ class StatementForget:
                 *detail_values(row.statement, statement)])
             if run != row.statement and not re.search(
                 rf"\b(?:in|to|from|near|around|named|called)\s+(?:the\s+)?{re.escape(run)}",
-                row.statement, re.IGNORECASE)])
+                row.statement, re.IGNORECASE)
+            and not (kind is not None and token_contained(run, kind))])
         # The values asked of a target naming another too: the forget shadow and the rewording
         # keep the other (`_asked_shadow`, ``ForgetOwner._kept_names``).
         asked_names = self._asked_shadow(statement, [row.statement for row in targets.values()])
         base_targets, base_spans = dict(targets), list(spans)
         base_bundled, base_bundle_ids = set(bundled), set(bundle_ids)
+        # The sentences the judge took, and those the contrast rule holds for still telling a
+        # forgotten fact (`_residuals`): what a reworded memory keeps of its quote stays of each.
+        taken_sentences = {_key(entry.span) for entry in judged if entry.target} | residual_held
         rounds_left: int = MAX_REWORDINGS + 2
         planned_more = False
         left: list[str] = []
@@ -1908,6 +2392,19 @@ class StatementForget:
             spans = list({_key(span): span for span in (*spans, *(
                 span for memory_id in wordings if memory_id not in bundle_parts
                 for span in form_parts.get(memory_id, ())))}.values())[:MAX_RESTATING_SPANS]
+            # A sentence the judge took, or the contrast rule held, that a memory reworded
+            # without its contrast tail quotes is withheld but for what the memory keeps of its
+            # quote, so the new wording rests on it ("I joined Pellucid Robotics" of "I joined
+            # Pellucid Robotics instead of Harrowgate Labs."; "my sister lives in Ostrava" of
+            # "Sorry, my sister lives in Ostrava, not in Varnholm."): the tail's value, and the
+            # contrast its quote tells, are withheld all the same. Such a memory states the
+            # value that holds now, never the forgotten one.
+            spans = self._sparing(scope, spans, wordings, sources, [bundle_parts, form_parts],
+                                  taken_sentences)
+            # A memory taken whole for still telling a forgotten fact goes with all its quotes,
+            # as sentences of the plan: a target's forget taking it as a replacer withholds
+            # only the parts it reads as naming the value (`_residuals`).
+            spans = self._whole_quotes(scope, spans, residual_ids & set(targets))
             # A past memory the plan leaves unreadable is taken whole when a later memory that
             # replaced it still names its value, so its forget takes that memory too
             # (``promoted``).
@@ -1952,10 +2449,13 @@ class StatementForget:
                 span.evidence_id == other.evidence_id and other.byte_start <= span.byte_start
                 and span.byte_end <= other.byte_end for other in spans)])
             # A promoted target was read by the plan too, so the confirmation checks its head.
+            # So is a memory taken for still telling a forgotten fact that no candidate listed
+            # (`_plan_residuals`): a plan of memories names the candidates it read.
+            unlisted = [memory_id for memory_id in dict.fromkeys([*promoted, *sorted(residual_ids)])
+                        if memory_id in targets and memory_id not in listed_ids]
             read = tuple(ForgetStatementCandidateRefV1(memory_id=row.memory_id,
                                                        revision_id=row.revision_id)
-                         for row in [*candidates, *(targets[memory_id] for memory_id in promoted
-                                                    if memory_id not in listed_ids)])
+                         for row in [*candidates, *(targets[memory_id] for memory_id in unlisted)])
             # A bundled target's forget tombstones the user's words.
             planned_ids = {target.memory_id for target in planned}
             bundles = [candidates[index].memory_id for index in sorted(bundled)
@@ -1963,6 +2463,9 @@ class StatementForget:
             # A past memory naming the asked value bundles it with its own new value: it is
             # tombstoned by the user's words, so its new value may be told again.
             bundles += [memory_id for memory_id in named_past
+                        if memory_id in planned_ids and memory_id not in bundles]
+            # So does a memory taken whole for still telling a target's fact (`_residuals`).
+            bundles += [memory_id for memory_id in sorted(residual_ids)
                         if memory_id in planned_ids and memory_id not in bundles]
             names = self._forgotten_names(
                 scope, given_names, self._names(
@@ -1977,8 +2480,8 @@ class StatementForget:
                       and any(_key(part) not in held_keys for part in parts)]
             if unheld:
                 # Each pass drops one wording at least, so the loop ends.
-                wordings = {memory_id: wording for memory_id, wording in wordings.items()
-                            if memory_id not in unheld}
+                wordings = _wordings_of(wordings, [
+                    memory_id for memory_id in wordings if memory_id not in unheld])
                 continue
             affected, taken, admitted, plan_withheld = self._affected(
                 scope, [target.memory_id for target in planned], spans, seed, promoted,
@@ -2009,9 +2512,13 @@ class StatementForget:
                             for value in stated) and forgotten_values(row.statement, asked)]
                 # The targets the plan promoted tell the forgotten values too ("The user
                 # lives in Shanghai." behind "The user moved from Shanghai to Hangzhou last
-                # month.").
+                # month."), and so does a past memory it takes ("The user's son attends Qiming
+                # Kindergarten." behind "The user's son no longer attends Qiming Kindergarten
+                # and has transferred to Lanwan Kindergarten.").
                 context = list(dict.fromkeys([*targets, *context]))
-                sources = [statement, *(row.statement for row in self._rows(scope, context))]
+                sources = [statement, *(row.statement for row in self._rows(scope, context)),
+                           *old_tails, *(text for text in residual_texts if residual_ids),
+                           *_older_statements(affected, current)]
                 rest = [*(entry.memory_id for entry in affected
                           if entry.memory_id in current and entry.memory_id not in wordings),
                         *left]
@@ -2056,8 +2563,7 @@ class StatementForget:
                     continue
                 break
             rounds_left -= 1
-            wordings = {memory_id: wording for memory_id, wording in wordings.items()
-                        if memory_id in admitted_ids and rounds_left > 0}
+            wordings = _wordings_of(wordings, admitted_ids if rounds_left > 0 else ())
         if not targets and not spans:
             rows = [ForgetStatementCandidateV1(
                 memory_id=row.memory_id, revision_id=row.revision_id, statement=row.statement,
@@ -2152,7 +2658,10 @@ class StatementForget:
             *((snapshot.statement, snapshot.keywords, snapshot.embedding,
                snapshot.embedding_space) for snapshot in self._heads(scope, [
                 row.memory_id for row in affected if row.effect == "forgotten"
-                and row.memory_id not in chained | planned_ids]).values())]
+                and row.memory_id not in chained | planned_ids]).values()),
+            # A forget of sentences alone tombstones its seed, whose names it stamps too.
+            *(((seed.statement, (), seed.embedding, seed.embedding_space),)
+              if not planned and seed is not None else ())]
         hidden = self._foreseen_hidden(
             scope, [*planned_ids, *(row.memory_id for row in affected
                                     if row.effect == "forgotten")],
@@ -2181,6 +2690,19 @@ class StatementForget:
                                   if row.effect != "reworded")})
         affected += [ForgetStatementAffectedV1(memory_id=row.memory_id, effect="unreadable",
                                                statement=row.statement) for row in shadowed]
+        # A past memory the list shows for the later memories that replaced it leaves the list
+        # when the plan takes every one of them: it is listed too (`_witnesses`, read from
+        # what the going memories replaced).
+        going = {*planned_ids, *(row.memory_id for row in affected if row.effect != "reworded")}
+        unwitnessed = sorted(
+            memory_id for memory_id, successors in self._witnesses(scope, later=going).items()
+            if successors <= going
+            and memory_id not in going | {row.memory_id for row in affected})
+        unwitnessed_heads = self._heads(scope, unwitnessed)
+        affected += [ForgetStatementAffectedV1(
+            memory_id=memory_id, effect="unreadable",
+            statement=unwitnessed_heads[memory_id].statement
+            if memory_id in unwitnessed_heads else None) for memory_id in unwitnessed]
         self._remember_kept(
             scope, binding, expires_at, read_ids, judged,
             listed={*planned_ids, *(row.memory_id for row in affected)},
@@ -2266,6 +2788,222 @@ class StatementForget:
             calls += used
             found |= {row.memory_id for row, yes in zip(rows, answers, strict=True) if yes}
         return found, calls
+
+    def _sparing(self, scope: ScopeV1, spans: Sequence[QuoteSpanV1],
+                 wordings: Mapping[str, ForgetRewordV1], sources: Sequence[str],
+                 withheld: Sequence[Mapping[str, Sequence[QuoteSpanV1]]],
+                 taken: Set[tuple[str, int, int]]) -> list[QuoteSpanV1]:
+        """``spans`` with each sentence the judge took or the contrast rule held (``taken``,
+        keyed) that meets what a memory reworded without what names a value as replaced (one
+        of ``wordings`` whose statement names a value of ``sources`` so, `replaced_values`)
+        keeps of its quotes (their bytes outside its parts ``withheld``, cut to words,
+        `_held_parts`) withheld but for that: "instead of Harrowgate Labs" of "I joined
+        Pellucid Robotics instead of Harrowgate Labs." for a memory reworded "The user joined
+        Pellucid Robotics." whose quote is the whole sentence. Only a quote that loses bytes to
+        its parts (it shows what the rewording leaves out) keeps anything; nothing changes when
+        none does."""
+        keeps = [piece for row in self._rows(scope, list(wordings))
+                 if replaced_values(row.statement, [
+                     source for source in sources if source != row.statement])
+                 for quote, text in zip(row.quotes, self._quote_texts(row.quotes), strict=True)
+                 if text and (pieces := _held_parts(quote, text, [
+                     part for parts in withheld for part in parts.get(row.memory_id, ())]))
+                 != [quote]
+                 for piece in pieces]
+        if not keeps:
+            return list(spans)
+        found: list[QuoteSpanV1] = []
+        for span, text in zip(spans, self._quote_texts(spans), strict=True):
+            found += (_held_parts(span, text, keeps) if text and _key(span) in taken
+                      and _overlaps(span, keeps) else [span])
+        return list({_key(span): span for span in found}.values())
+
+    def _whole_quotes(self, scope: ScopeV1, spans: Sequence[QuoteSpanV1],
+                      memory_ids: Set[str]) -> list[QuoteSpanV1]:
+        """``spans`` with every quote of the ``memory_ids``' heads, up to
+        ``MAX_RESTATING_SPANS``."""
+        return list({_key(span): span for span in (*spans, *(
+            span for row in self._rows(scope, sorted(memory_ids)) for span in row.quotes))
+        }.values())[:MAX_RESTATING_SPANS]
+
+    def _forgotten_facts(
+        self, targets: Iterable[_Candidate], judged: Sequence[_Judged],
+    ) -> list[tuple[str, list[str]]]:
+        """The facts a complete plan forgets of its own, each a statement with the texts
+        that show it: a target's statement with its quotes, and a sentence the judge took as
+        stating the request's fact or part of it (no request taken without a vote)."""
+        return [*((row.statement, [row.statement, *(
+            text for text in self._quote_texts(row.quotes) if text)]) for row in targets),
+                *((entry.text, [entry.text]) for entry in judged
+                  if entry.target and entry.role is not None)]
+
+    def _plan_residuals(
+        self, scope: ScopeV1, targets: dict[str, _Candidate], spans: Sequence[QuoteSpanV1],
+        judged: Sequence[_Judged], sender: Send, *, kept: Set[str], bundles: Set[str],
+    ) -> tuple[set[str], list[QuoteSpanV1], int, list[str], set[tuple[str, int, int]]]:
+        """A complete prepare's `_residuals` of its targets but the ``bundles``, of the
+        sentences the judge took as stating the request and of the other ``spans`` the plan
+        withholds ("We used to live on Hollis Street." named as left, `_naming_sentences`):
+        each memory that still tells one is added to ``targets``, and each such sentence no
+        memory quotes to the plan's ``spans``. A kept home (``kept``, `_kept_homes`) stays
+        unless it names a forgotten value as what is not the case. Returns the memories added,
+        the spans, the judge's calls, the texts of the facts it read (what a memory added
+        is reworded against: "My locker code is 4471." for "The user's locker code is 8836
+        now, not 4471.") and the keys of the sentence parts it holds (`_sparing` keeps of
+        them what a memory reworded without its contrast tail keeps of its quote).
+
+        Raises:
+            QuoteMemError: ``provider_unavailable`` when the judge cannot answer.
+        """
+        read = {_key(entry.span) for entry in judged if entry.target or entry.role is None}
+        withheld = [span for span in spans if _key(span) not in read]
+        mine = [row for row in targets.values() if row.memory_id not in bundles]
+        ruled = {row.statement for row in mine}
+        own = [*self._forgotten_facts(mine, judged),
+               *((text, [text]) for text in self._quote_texts(withheld) if text)]
+        found = self._residuals(
+            scope, own, judged=judged, sender=sender, taken=set(targets), skip={*targets, *(
+                row.memory_id for row in self._rows(scope, sorted(kept))
+                if not contrasted_values(row.statement, [fact for fact, _ in own])
+                and not any(_names_forgotten(row.statement, fact) for fact in ruled))},
+            ruled=ruled)
+        if found is None:
+            raise QuoteMemError("provider_unavailable",
+                                "The forget judge could not settle what still tells the fact")
+        rows, held, calls, sentences = found
+        for row in rows:
+            targets.setdefault(row.memory_id, row)
+        # What a memory taken here is reworded against: the facts it was read against, but a
+        # sentence one of them quotes, which tells its own new value too ("I joined Pellucid
+        # Robotics instead of Harrowgate Labs." the judge took for "forget Harrowgate").
+        quoted = [span for row in rows for span in row.quotes]
+        told = [*((row.statement, *self._quote_texts(row.quotes)) for row in mine),
+                *((entry.text,) for entry in judged if entry.target and entry.role is not None
+                  and not _overlaps(entry.span, quoted)),
+                *((text,) for span, text in zip(withheld, self._quote_texts(withheld),
+                                                strict=True)
+                  if text and not _overlaps(span, quoted))]
+        return ({row.memory_id for row in rows},
+                list({_key(span): span for span in (*spans, *held)}.values())[
+                    :MAX_RESTATING_SPANS], calls,
+                list(dict.fromkeys(text for texts in told for text in texts if text)), sentences)
+
+    def _residuals(
+        self, scope: ScopeV1, forgotten: Sequence[tuple[str, Sequence[str]]], *,
+        skip: Set[str], taken: Set[str], judged: Sequence[_Judged], sender: Send,
+        ruled: Collection[str] = (),
+    ) -> tuple[list[_Candidate], list[QuoteSpanV1], int, set[tuple[str, int, int]]] | None:
+        """What a complete plan leaves that still tells a fact it forgets, and the calls.
+
+        ``forgotten`` are the facts the plan forgets of its own (`_forgotten_facts`; a bundle
+        forgets the user's words instead), each a statement with the texts showing it. A
+        current memory outside ``skip`` whose statement names a name, value or number of one
+        of them as what is not the case (`_shared_values`), and a
+        sentence the plan judged and left (``judged``) that does and that no current memory
+        quotes whole, are read by the forget judge against that fact's statement (``tells``): one
+        that states or presupposes it still tells the forgotten value, though no pick read it
+        as stating the user's words ("The user lives at 27 Pine Lane now, not 14 Oak Street."
+        beside a forgotten "The user used to live at 14 Oak Street."). The
+        ``MAX_FORGET_CANDIDATES`` memories and sentences showing the most are read; a contested
+        answer tells it (fail closed). A sentence that tells one is withheld but for what a
+        memory the plan leaves (outside ``taken`` and the memories found) quotes of it, when
+        the judge found the memory tells it not, or when the quote shows no name, value or
+        number of the fact (`_values_of`) and names none as not, or no longer, the case
+        (`_held_parts`: "Peak Fitness" stays of "I train at Peak Fitness these days, not
+        Ironworks." for the memory naming the new gym). A memory whose statement names none but
+        whose quote does is read by that quote, and only the quote's contrast goes when it tells
+        the fact (`_contrast_spans`): the memory stays, saying the new value.
+
+        Returns:
+            The memories that tell a forgotten fact, the parts of the sentences that tell one
+            to withhold, the judge's calls and the keys of the parts withheld of the sentences
+            it found tell one (no quote's contrast); None when the judge cannot answer.
+        """
+        current = self._memories(scope)
+        quoted = [span for row in current for span in row.quotes]
+        # A memory is read by what it says; its quote only loses its own contrast below.
+        rows = [row for row in current if row.memory_id not in skip]
+        texts = {row.memory_id: [row.statement] for row in rows}
+        shown = {row.memory_id: [(quote, text) for quote, text in zip(
+            row.quotes, self._quote_texts(row.quotes), strict=True) if text] for row in rows}
+        found: dict[str, _Candidate] = {}
+        cleared: dict[str, set[int]] = {}
+        held: dict[tuple[str, int, int], tuple[_Judged, int]] = {}
+        cut: dict[tuple[str, int, int], QuoteSpanV1] = {}
+        calls = 0
+        for fact, (statement, sources) in enumerate(forgotten):
+            # By rule, whatever the judge would say: a memory whose statement names a name,
+            # value or number of the fact as not, or no longer, the case tells it ("A person
+            # is named Odalys, not Odette." beside a forgotten "Odette is the user's
+            # partner."); such a part of a quote goes alone, and a sentence no current memory
+            # quotes whole that has one is withheld as one the judge took.
+            if statement in ruled:
+                for row in rows:
+                    if row.memory_id not in found and _names_forgotten(row.statement, statement):
+                        found[row.memory_id] = row
+                for quote, text in [
+                        *(pair for row in rows if row.memory_id not in found
+                          for pair in shown[row.memory_id]),
+                        *((entry.span, entry.text) for entry in judged
+                          if not entry.target and entry.excluded is None)]:
+                    cut.update((_key(span), span) for span in _contrast_spans(
+                        quote, text, sources, fact=statement))
+            memories = sorted(
+                ((score, index, row) for index, row in enumerate(rows)
+                 if row.memory_id not in found
+                 and (score := _shared_values(texts[row.memory_id], sources))),
+                key=lambda entry: (-entry[0], entry[1]))[:MAX_FORGET_CANDIDATES]
+            # A memory saying only the new value may quote the contrast ("The user lives at 27
+            # Pine Lane now." quoting "I live at 27 Pine Lane now, not 14 Oak Street"): its
+            # quote is read, and only the contrast goes from it.
+            parts = [(row, quote, text) for row in rows
+                     if row.memory_id not in found and not _shared_values([row.statement], sources)
+                     for quote, text in shown[row.memory_id]
+                     if _key(quote) not in cut and _contrast_spans(quote, text, sources)
+                     ][:MAX_FORGET_CANDIDATES]
+            sentences = sorted(
+                ((score, index, entry) for index, entry in enumerate(judged)
+                 if not entry.target and entry.excluded is None and _key(entry.span) not in held
+                 and not any(quote.evidence_id == entry.span.evidence_id
+                             and quote.byte_start <= entry.span.byte_start
+                             and entry.span.byte_end <= quote.byte_end for quote in quoted)
+                 and (score := _shared_values([entry.text], sources))),
+                key=lambda entry: (-entry[0], entry[1]))[:MAX_FORGET_CANDIDATES]
+            if not memories and not parts and not sentences:
+                continue
+            told = tells(statement, [*(row.statement for _, _, row in memories),
+                                     *(text for _, _, text in parts),
+                                     *(entry.text for _, _, entry in sentences)],
+                         sender, rounds=_rounds)
+            if told is None:
+                return None
+            answers, used = told
+            calls += used
+            for (_, _, row), answer in zip(memories, answers[:len(memories)], strict=True):
+                if answer is not False:
+                    found[row.memory_id] = row
+                else:
+                    cleared.setdefault(row.memory_id, set()).add(fact)
+            quoted_answers = answers[len(memories):len(memories) + len(parts)]
+            for (row, quote, text), answer in zip(parts, quoted_answers, strict=True):
+                if answer is not False:
+                    cut.update((_key(span), span) for span in _contrast_spans(quote, text, sources))
+                else:
+                    cleared.setdefault(row.memory_id, set()).add(fact)
+            for (_, _, entry), answer in zip(sentences, answers[len(memories) + len(parts):],
+                                             strict=True):
+                if answer is not False:
+                    held[_key(entry.span)] = (entry, fact)
+        left = [(row.memory_id, quote, text) for row in current
+                if row.memory_id not in taken and row.memory_id not in found
+                for quote, text in zip(row.quotes, self._quote_texts(row.quotes), strict=True)]
+        sentence_parts = [part for entry, fact in held.values() for part in _held_parts(
+            entry.span, entry.text, [quote for memory_id, quote, text in left if text and (
+                fact in cleared.get(memory_id, ()) or not (
+                    _values_of([text], forgotten[fact][1], words=False, kinds=False)
+                    or _shared_values([text], forgotten[fact][1])))])]
+        return list(found.values()), [*cut.values(), *sentence_parts], calls, {
+            _key(part) for part in sentence_parts}
 
     def _ruled(self, scope: ScopeV1, targets: Mapping[str, _Candidate],
                spans: Sequence[QuoteSpanV1], bundled: Set[str],
@@ -2474,10 +3212,16 @@ class StatementForget:
         the user works at (`workplace_values`). Each new statement must
         be one the forget judge finds does not state or presuppose ``statement``, the user's
         request (``tells``); without an answer none is (fail closed: each is taken as
-        before). Whether the plan's forgets let it be written is the store's to tell
+        before). A memory that loses only its contrast tails, or a clause saying a value no
+        longer holds, is not asked (`_tails_only`).
+        Whether the plan's forgets let it be written is the store's to tell
         (``ForgetOwner.admit_rewordings``)."""
         heads = self._heads(scope, [*memory_ids, *context])
         current = {row.statement.casefold() for row in self._memories(scope)}
+        # A contrast tail is read against every forgotten text whole: it names what is not the
+        # case, so leaving it out keeps what the memory says of its own ("2958" of "My gym
+        # locker PIN is 2958." for "The user's gym locker PIN is 6614, not 2958.").
+        whole_sources = list(sources)
         # Only the value the request asks is forgotten of a target naming two: the other is
         # the one the user kept ("杭州" of "moved from 杭州 to 上海" for "忘掉我在上海住过").
         sources = asked_sources(statement, [source for source in sources
@@ -2489,7 +3233,12 @@ class StatementForget:
         tied = self._entity_ties([heads[memory_id] for memory_id in (*context, *memory_ids)
                                   if memory_id in heads]) if ties else {}
         forgotten = {(entity, name_norm(name)) for entity, name in names}
+        # A request for an old value names its kind ("PIN" of "my old locker PIN"): a name of
+        # the kind is no forgotten value of a memory stating the value that holds now.
+        kind = old_value(statement)
         plans: dict[str, tuple[ForgetRewordPlanV1, tuple[str, ...]]] = {}
+        # The memories that lose only contrast tails (`_tails_only`).
+        tails_only: set[str] = set()
         for memory_id in dict.fromkeys(memory_ids):
             snapshot = heads.get(memory_id)
             if (snapshot is None or snapshot.erased or snapshot.sensitivity_classes
@@ -2509,6 +3258,8 @@ class StatementForget:
             if any(shows(text, name) and name not in own for _, name in names):
                 continue
             given = {name: tied[entity] for name, entity in own.items() if entity in tied}
+            contrasted = contrasted_values(text, [source for source in whole_sources
+                                                  if source != text])
             # A request for the name of a place or organisation asks the one of that kind
             # a target shows, annotated or not ("忘掉我女儿学校的名字"): its kind stays.
             kinded = asked_values(text, statement) if ties and memory_id in exists_ids else []
@@ -2518,7 +3269,11 @@ class StatementForget:
                 *(name for name, entity in own.items() if entity not in tied),
                 *(value for value in forgotten_values(
                     text, [source for source in sources if source != text])
-                  if name_norm(value) not in {name_norm(name) for _, name in names}),
+                  if name_norm(value) not in {name_norm(name) for _, name in names}
+                  and not (kind is not None and token_contained(value, kind))),
+                # A ", not" tail naming what is forgotten goes whole, its number with it ("14
+                # Oak Street" of "... now, not 14 Oak Street."): the statement keeps its own.
+                *contrasted,
                 *kinded,
                 # A request for which place it is asks the one of that kind a statement shows
                 # ("忘掉我在哪个体育馆打球").
@@ -2570,14 +3325,26 @@ class StatementForget:
             if found is not None and found[0].casefold() != text.casefold() and (
                     found[0].casefold() in current):
                 found = None
+            if found is not None and not given and _tails_only(values, replaced_values(
+                    text, [source for source in whole_sources if source != text],
+                    departures=False)):
+                tails_only.add(memory_id)
             if found is not None:
                 plans[memory_id] = (ForgetRewordPlanV1(
                     memory_id=memory_id, base_digest=snapshot.statement_digest,
                     statement=found[0], tie=found[1]), tuple(dict.fromkeys([
                         *left_out(text, found[0]), *(value for value in (*given, *values)
                                                      if not shows(found[0], value))])))
+        # A memory that loses only contrast tails, or a clause saying a value no longer holds,
+        # states the value that holds now ("The user's locker code is 8836 now." of "..., not
+        # 4471."; "The user's son has transferred to Lanwan Kindergarten." of "... no longer
+        # attends Qiming Kindergarten and has transferred to ..."): the judge is not asked
+        # whether it still tells the request, which it may read off the change "now" or
+        # "transferred" says; the store still checks that it shows nothing forgotten
+        # (``ForgetOwner.admit_rewordings``).
         asked = {memory_id: plan for memory_id, plan in plans.items()
-                 if plan[0].statement != heads[memory_id].statement}
+                 if plan[0].statement != heads[memory_id].statement
+                 and memory_id not in tails_only}
         if not asked:
             return plans, 0
         told = tells(statement, [plan.statement for plan, _ in asked.values()], sender,
@@ -2735,10 +3502,12 @@ class StatementForget:
 
     @staticmethod
     def _value_spans_text(text: str, value: str) -> list[tuple[int, int]]:
-        """The UTF-8 byte ranges of ``text`` where it shows ``value`` (`value_pattern`)."""
-        return [(len(text[:match.start()].encode("utf-8")),
-                 len(text[:match.end()].encode("utf-8")))
-                for match in value_pattern(value).finditer(text)]
+        """The UTF-8 byte ranges of ``text`` where it shows ``value`` (`value_pattern`), a
+        number or code only whole (`code_spans`: no last group of a phone number)."""
+        ranges = code_spans(value, text) if is_code(value) else [
+            match.span() for match in value_pattern(value).finditer(text)]
+        return [(len(text[:start].encode("utf-8")), len(text[:end].encode("utf-8")))
+                for start, end in ranges]
 
     def _han_located(self, quotes: Sequence[QuoteSpanV1], values: Sequence[str],
                      forgotten: Sequence[str]) -> list[str]:
@@ -2776,7 +3545,7 @@ class StatementForget:
                 return []
             for value in values:
                 ranges = self._value_spans_text(text, value)
-                if shows(text, value) and not ranges:
+                if not ranges and not is_code(value) and shows(text, value):
                     return []
                 located |= {value} if ranges else set()
                 found += [span.model_copy(update={"byte_start": span.byte_start + start,
@@ -2976,7 +3745,7 @@ class StatementForget:
                         scope.scope_kind, scope.scope_id):
                     continue
                 text, base = cast(str, part["text"]), cast(int, part["byte_start"])
-                for start, end in sentences(text):
+                for start, end in request_sentences(text):
                     first = base + len(text[:start].encode("utf-8"))
                     last = base + len(text[:end].encode("utf-8"))
                     if any(span.evidence_id == evidence_id and span.byte_start < last
@@ -3076,20 +3845,29 @@ class StatementForget:
         a current memory of where someone lives (`_LIVES_NOW`) no later one replaced or ended,
         so "forget that I lived in Shanghai as a kid" never takes "The user lives in
         Shanghai." (fail closed: it stays, and nothing is reported removed); for any request,
-        a memory stating the new value its words told (`_states_new`)."""
+        a memory stating the new value its words told (`_states_new`). A home another current
+        memory names as left ("moved from Thistle Road to Saffron Avenue", `_names_forgotten`)
+        is no current one."""
         if not targets:
             return set()
         lived = any(lived_value(statement) is not None for statement in statements)
-        past = ({row.memory_id for row in self._replaced(scope, self._memories(scope))}
-                if lived else set[str]())
+        past = set[str]()
+        if lived:
+            rows = self._memories(scope)
+            past = {row.memory_id for row in self._replaced(scope, rows)} | {
+                memory_id for memory_id, row in targets.items()
+                if any(other.memory_id != memory_id
+                       and _names_forgotten(other.statement, row.statement) for other in rows)}
         return {memory_id for memory_id, row in targets.items()
                 if (lived and memory_id not in past and _LIVES_NOW.search(row.statement))
                 or any(_states_new(row.statement, said) for said in words)}
 
     def _old_values(self, scope: ScopeV1, asked: Sequence[tuple[str, Sequence[_Candidate], str]],
-                    sender: Send) -> tuple[list[_Candidate], int]:
+                    sender: Send) -> tuple[list[_Candidate], int, list[_Candidate]]:
         """The memories a request for an old value of the user's asks to forget ("my old
-        address", "我以前那辆车", `forget_requests.old_value`), and the judge calls spent.
+        address", "我以前那辆车", `forget_requests.old_value`), the judge calls spent and the
+        current memories of the kind that say their value holds now (`_old_clauses` reads the
+        sentences they quote for the old value).
 
         ``asked`` holds each request's words it asks to forget (`forget_requests.asked_part`),
         its candidates (Search and vectors, as its pick reads them) and the words it was said
@@ -3102,13 +3880,16 @@ class StatementForget:
         own whose statements name the kind (`_OLD_KINDS`, `_USERS_OWN`: "The user lives at 14 Elm
         Street." when the judge took only "The user lives at 27 Birch Lane."), else all it took
         when the request's sentence said the new value ("..., I live at 27 Birch Lane now."),
-        else the one memory it takes, the only value the user called old. Several current values
-        and no replaced one leave the request to the judge's own pick (nothing is taken here);
-        a found past value makes `_current_values` keep the current ones the judge took."""
+        else the one memory it takes, the only value the user called old, unless it says its
+        value holds now and names no value as what is not the case: then the values it replaced
+        are the old ones (`_predecessors`). Several current values and
+        no replaced one leave the request to the judge's own pick (nothing is taken here); a
+        found past value makes `_current_values` keep the current ones the judge took."""
         found: dict[str, _Candidate] = {}
+        holding: list[_Candidate] = []
         calls = 0
         if not any(old_value(statement) or lived_value(statement) for statement, *_ in asked):
-            return [], 0
+            return [], 0, []
         rows = self._memories(scope)
         past = self._replaced(scope, rows)
         replaced = {row.memory_id for row in past}
@@ -3174,10 +3955,116 @@ class StatementForget:
                            and not any(self._told_new(span) for span in row.quotes)]
                 if told_new and len(current) == 1:
                     old = current
-            for row in old or (chosen if told_new or len(chosen) == 1 else []):
+            # The one memory the judge took is the old value only when neither it nor its
+            # quotes say it holds now ("The user now lives at 27 Birch Lane." quoting "now I live
+            # at 27 Birch Lane" of "I used to live at 14 Elm Street, now I live at 27 Birch
+            # Lane.", whose old address no memory states), or when it names a value as what is
+            # not, or no longer, the case: it then tells the old value too ("The user lives at
+            # 27 Pine Lane now, not 14 Oak Street.").
+            alone = [row for row in chosen if _contrast_parts(row.statement) or not self._now(row)]
+            if not old and not told_new and len(chosen) == 1 and not alone:
+                # The one value it took holds now: the old one is the value it replaced ("The
+                # user uses a Huawei phone." before "The user now uses an Apple phone.").
+                old = self._predecessors(scope, chosen[0], past)
+            for row in old or (chosen if told_new else alone if len(chosen) == 1 else []):
                 if not _states_new(row.statement, sentence):
                     found.setdefault(row.memory_id, row)
-        return list(found.values()), calls
+                    if not old and _contrast_parts(row.statement):
+                        # Taken for the old value its contrast names, it may be reworded
+                        # without the contrast and stay: the values it replaced, which state
+                        # the old value, go too ("The user's license plate number is 浙A3K728."
+                        # behind "The user's license plate number is now 浙A9M105, not 3K728
+                        # anymore.").
+                        for older in self._predecessors(scope, row, past):
+                            found.setdefault(older.memory_id, older)
+            # A current value of the kind that holds now may be told beside the old one, in the
+            # sentence it quotes ("I used to live at 14 Elm Street, now I live at 27 Birch
+            # Lane."): `_old_clauses` reads that sentence's other clauses.
+            pattern = _OLD_KIND_WORDS.get(_OLD_JUDGED.get(kind, kind))
+            holding.extend(row for row in rows if pattern is not None
+                           and row.memory_id not in replaced and row.memory_id not in found
+                           and pattern.search(row.statement) and self._now(row))
+        return list(found.values()), calls, list({row.memory_id: row for row in holding}.values())
+
+    def _old_tails(self, rows: Sequence[_Candidate]) -> list[str]:
+        """The contrasts of the old values an old-value request took (`_old_values`) that say
+        their value holds now: ", not 14 Oak Street" of "The user lives at 27 Pine Lane now,
+        not 14 Oak Street." for "forget my old address". Such a memory tells the old value only
+        in its contrast, which is what its rewording leaves out (`_reword_plans`,
+        `contrasted_values`): the current value stays."""
+        return [part for row in rows if self._now(row) for part in _contrast_parts(row.statement)]
+
+    def _predecessors(self, scope: ScopeV1, row: _Candidate,
+                      past: Sequence[_Candidate]) -> list[_Candidate]:
+        """The ``past`` values ``row`` replaced: those an ``update`` or ``correct`` link of one
+        of its revisions supersedes (`_replaced`)."""
+        writer = self._writer
+        found: list[_Candidate] = []
+        with writer.write_scope():
+            txn = TxnRows(writer, scope.scope_kind, scope.scope_id, 0, self._clock(), "")
+            for old in past:
+                for link in txn.links_to("supersedes", old.memory_id):
+                    source = txn.get("revision", link["source_revision_id"])
+                    if link["relation"] in ("update", "correct") and source is not None \
+                            and source["memory_id"] == row.memory_id:
+                        found.append(old)
+                        break
+        return found
+
+    def _now(self, row: _Candidate) -> bool:
+        """Whether a memory or one of its quotes says its value holds now (`_NOW`)."""
+        return _NOW.search(row.statement) is not None or any(
+            _NOW.search(text) for text in self._quote_texts(row.quotes))
+
+    def _old_clauses(self, scope: ScopeV1, holding: Sequence[_Candidate], asked: str,
+                     sender: Send) -> tuple[list[QuoteSpanV1], list[_Judged], int]:
+        """For a request for an old value, the clauses of the user's sentences the current
+        values of its kind that hold now quote (`_old_values`' ``holding``), outside their
+        quotes, that the judge takes as stating the request: "I used to live at 14 Elm Street"
+        of "I used to live at 14 Elm Street, now I live at 27 Birch Lane.", whose old address
+        no memory states. The forget withholds them and the memory stays. Returns the clauses'
+        spans, every clause judged and the judge's calls."""
+        pieces: dict[tuple[str, int, int], tuple[QuoteSpanV1, str]] = {}
+        writer = self._writer
+        for row in holding:
+            for quote in row.quotes:
+                with writer.write_scope():
+                    part = writer.get_row("evidence", quote.evidence_id)
+                if part is None or part["role"] != "user" or (
+                        part["scope_kind"], part["scope_id"]) != (scope.scope_kind,
+                                                                  scope.scope_id):
+                    continue
+                text = part["text"]
+                raw = text.encode("utf-8")
+                low, high = (len(raw[:at - part["byte_start"]].decode("utf-8", "ignore"))
+                             for at in (quote.byte_start, quote.byte_end))
+                for start, end in request_sentences(text):
+                    if high <= start or end <= low or is_request(text[start:end], complete=True):
+                        continue
+                    cuts = [(cut.start(), cut.end())
+                            for cut in _CHANGE_CUT.finditer(text, start, end)]
+                    for at, stop in zip([start, *(stop for _, stop in cuts)],
+                                        [*(at for at, _ in cuts), end], strict=True):
+                        clause = text[at:stop].strip()
+                        if not clause or (at < high and low < stop):
+                            continue
+                        first = at + len(text[at:stop]) - len(text[at:stop].lstrip())
+                        span = QuoteSpanV1(
+                            evidence_id=quote.evidence_id,
+                            byte_start=part["byte_start"] + len(text[:first].encode("utf-8")),
+                            byte_end=part["byte_start"] + len(
+                                text[:first + len(clause)].encode("utf-8")))
+                        pieces.setdefault(_key(span), (span, clause))
+        if not pieces:
+            return [], [], 0
+        listed = list(pieces.values())[:MAX_FORGET_CANDIDATES]
+        pick = pick_targets(asked, [text for _, text in listed], sender, rounds=_rounds,
+                            minimal=False)
+        chosen = {*pick.targets, *(index for index, role in enumerate(pick.roles)
+                                   if role in _PARTS)}
+        judged = [_Judged(span, text, pick.roles[index], index in chosen)
+                  for index, (span, text) in enumerate(listed)]
+        return [entry.span for entry in judged if entry.target], judged, pick.calls
 
     def _replaced(self, scope: ScopeV1, rows: Sequence[_Candidate]) -> list[_Candidate]:
         """The user's past values: the readable memories a newer one superseded (the list's
@@ -3618,10 +4505,11 @@ class StatementForget:
         from the list and the interactive Search (`recall_agent.forget_shadowed`, read as
         `_shadowed` reads a memory): the shadow of the ``forgotten`` statements and keywords,
         a statement naming an ``asked`` value beside another giving only the asked names as
-        ``ForgetOwner._shadow`` does, of the names the rewordings leave out (``left``) and of
-        the ``seed``. As Search reads it, a name `NAME_KEEP_MEMORIES` memories the plan leaves
-        (all but ``gone``) still hold hides none (`recall_agent.surviving_names`). A forget
-        reports them, so none goes from view silently."""
+        ``ForgetOwner._shadow`` does, of the names the rewordings leave out (``left``, a
+        place's by what names it, `named_part`) and of the ``seed``. As Search reads it, a
+        name `NAME_KEEP_MEMORIES` memories the plan leaves (all but ``gone``) still hold hides
+        none (`recall_agent.surviving_names`). A forget reports them, so none goes from view
+        silently."""
         terms = ForgetShadowTerms()
         writer = self._writer
         for statement, keywords in forgotten:
@@ -3633,7 +4521,7 @@ class StatementForget:
                     found = ForgetShadowTerms(frozenset(own), found.topics)
             terms = terms | found
         for form in left:
-            terms = terms | shadow_terms(f"the name {form}")
+            terms = terms | shadow_terms(f"the name {named_part(form)}")
         if seed is not None:
             terms = terms | shadow_terms(seed)
         shadow = ForgetShadow.of(terms)
@@ -3679,7 +4567,8 @@ class StatementForget:
         reworded to "The user works at a company.", as the target's forget whole would have
         withheld it. A Latin value
         matches as whole words in any case; a Han one of two characters or more, never inside
-        a longer Han word (`_whole`)."""
+        a longer Han word (`_whole`); a number or code whole or by one of its forms
+        (`code_forms`), never as a piece of a longer one ("020 7946 0471" for "0471")."""
         rows = self._memories(scope)
         # A person's or an animal's name goes by the name rules, from its own entity's
         # sentences alone (`_name_token_spans`): another may bear it ("志强" the colleague).
@@ -3708,19 +4597,27 @@ class StatementForget:
         found: list[QuoteSpanV1] = []
         for part in parts:
             for sentence, text in self._readable(part):
+                ranges: list[tuple[int, int]] = []
                 for value in wanted:
+                    # A number, code or plate goes whole, or as one of its forms ("浙A3K728"
+                    # for "3K728", "900 123" of "07700 900 123", `code_forms`), never as a
+                    # piece of a longer one: a phone number ending with a forgotten code, a
+                    # date, a parking spot "B4471" tell other facts.
+                    if is_code(value):
+                        ranges += code_spans(value, text)
+                        continue
                     # A capitalized Latin value matches as written: "Apple", not "apple pie".
                     pattern = re.compile(
                         rf"(?<![0-9A-Za-z_-]){re.escape(value)}(?![0-9A-Za-z_-])"
                     ) if value[:1].isupper() else value_pattern(value)
-                    for match in pattern.finditer(text):
-                        if _han(value) and not _whole(value, text, match.start(), match.end(),
-                                                      vocabulary):
-                            continue
-                        first = sentence.byte_start + len(text[:match.start()].encode("utf-8"))
-                        found.append(sentence.model_copy(update={
-                            "byte_start": first,
-                            "byte_end": first + len(match.group().encode("utf-8"))}))
+                    ranges += [match.span() for match in pattern.finditer(text) if not (
+                        _han(value) and not _whole(value, text, match.start(), match.end(),
+                                                   vocabulary))]
+                for start, end in dict.fromkeys(ranges):
+                    first = sentence.byte_start + len(text[:start].encode("utf-8"))
+                    found.append(sentence.model_copy(update={
+                        "byte_start": first, "byte_end": first + len(
+                            text[start:end].encode("utf-8"))}))
         return found
 
     def _name_token_spans(
@@ -4519,6 +5416,51 @@ class StatementForget:
                            frozenset(digest for row in rows for digest in row.asked),
                            any(row.name_asked for row in rows))
 
+    def _witnesses(self, scope: ScopeV1, past: Collection[str] = (), *,
+                   later: Collection[str] = ()) -> dict[str, frozenset[str]]:
+        """Each past memory of ``past``, or one a memory of ``later`` replaced, that the memory
+        list shows for a later memory's ``update`` link to it (`Readability.p_replaced`), with
+        the later memories that witness its end so: a readable head, not retracted. Once none
+        of them is readable, the list no longer shows the past memory ("The user lives in
+        Brackenmoor." behind "The user lives in Lyndale Cross now.", whose one sentence a
+        forget withholds). Only those memories and their links are read, never every memory
+        of the scope."""
+        writer = self._writer
+        found: dict[str, frozenset[str]] = {}
+        with writer.write_scope():
+            txn = TxnRows(writer, scope.scope_kind, scope.scope_id, 0, self._clock(), "")
+            read = readability(txn)
+
+            def readable(memory_id: str) -> bool:
+                entry = txn.get("item", memory_id)
+                head = None if entry is None else txn.get("revision",
+                                                          entry["current_revision_id"])
+                return (entry is not None and head is not None
+                        and (entry["scope_kind"], entry["scope_id"]) == (
+                            scope.scope_kind, scope.scope_id)
+                        and entry["lifecycle_state"] != "retracted"
+                        and head["reason_code"] != "retraction"
+                        and read.p_ver(MemorySnapshotV2.model_validate(head["snapshot"])))
+
+            # What the later memories replaced: the targets of their revisions' update links.
+            replaced = {link["target_key"] for memory_id in later
+                        for revision in txn.pages(RevisionRows(memory_id=memory_id))
+                        for link in txn.links_of(revision["object_id"])
+                        if link["link_type"] == "supersedes" and link["relation"] == "update"}
+            for memory_id in sorted({*past, *replaced}):
+                entry = txn.get("item", memory_id)
+                if entry is None or entry["lifecycle_state"] != "superseded" or not readable(
+                        memory_id):
+                    continue
+                successors = frozenset(
+                    source["memory_id"] for link in txn.links_to("supersedes", memory_id)
+                    if link["relation"] == "update"
+                    and (source := txn.get("revision", link["source_revision_id"])) is not None
+                    and source["memory_id"] != memory_id and readable(source["memory_id"]))
+                if successors:
+                    found[memory_id] = successors
+        return found
+
     def _past(self, scope: ScopeV1, memory_ids: Set[str]) -> set[str]:
         """The memories of ``memory_ids`` that are not current."""
         writer = self._writer
@@ -4813,6 +5755,23 @@ class StatementForget:
         out = {*gone, *lost}
         return self._hidden(scope, {row.memory_id for row in self._memories(
             scope, past=True)} - out, ours, kept, planned, out, prior=prior)
+
+    def _quote_pieces(self, quotes: Sequence[QuoteSpanV1]) -> list[str]:
+        """The readable pieces of the quotes: each one's text between the withheld ranges of
+        its active part (`_unheld_pieces`)."""
+        pieces: list[str] = []
+        writer = self._writer
+        with writer.write_scope():
+            for span in quotes:
+                row = writer.get_row("evidence", span.evidence_id)
+                if row is None or row["state"] != "active":
+                    continue
+                raw = row["text"].encode("utf-8")
+                text = raw[span.byte_start - row["byte_start"]:span.byte_end - row["byte_start"]]
+                pieces += _unheld_pieces({"text": text.decode("utf-8", "replace"),
+                                          "byte_start": span.byte_start,
+                                          "withheld_spans": row["withheld_spans"]})
+        return pieces
 
     def _quote_texts(self, quotes: Sequence[QuoteSpanV1]) -> list[str]:
         """Each quote's text, empty where its part is gone."""
@@ -5278,6 +6237,7 @@ class StatementForget:
         uncertain = False
         within: Within = {}
         old_rows: list[_Candidate] = []
+        old_spans: list[QuoteSpanV1] = []
         ruled_ids: set[str] = {row.memory_id for row in relearned}
         if complete and active:
             # A request to forget a person's or an animal's name takes every memory giving it,
@@ -5289,11 +6249,15 @@ class StatementForget:
                 scope, [statement for position, statement in enumerate(statements)
                         if position not in ran and position not in covered])
             # An old value, a person as a whole: by rule too, as the prepare takes them.
-            old_rows, old_calls = self._old_values(
+            old_rows, old_calls, holding = self._old_values(
                 scope, [(statement, picks[position][1], said[position])
                         for position, statement in enumerate(statements)
                         if position not in ran], sender)
-            calls += old_calls
+            asking_old = next((statement for statement in active
+                               if old_value(statement) is not None), None)
+            old_spans, _, used = (self._old_clauses(scope, holding, asking_old, sender)
+                                  if asking_old is not None else ([], [], 0))
+            calls += old_calls + used
             for row in (*named_rows, *old_rows, *self._whole_people(scope, active)):
                 targets.setdefault(row.memory_id, row)
                 requested.add(row.memory_id)
@@ -5324,11 +6288,13 @@ class StatementForget:
                             and exclusion(statement, row.statement) is None and names_replaced(
                                 row.statement, statement, unsure=False):
                         nominated.setdefault(row.memory_id, (index, i, row))
-        restating_spans: list[QuoteSpanV1] = []
+        # An old value no memory states goes by its own clauses, as the prepare takes them.
+        restating_spans: list[QuoteSpanV1] = list(old_spans)
         # Which requests took each sentence, and what the picks read and left.
         takers: dict[tuple[str, int, int], set[int]] = {}
         read: set[str] = set()
         left: list[_Judged] = []
+        taken_judged: list[_Judged] = []
         record_ids: set[str] = set()
         more_ids: set[str] = set()
         if complete and statements:
@@ -5381,6 +6347,7 @@ class StatementForget:
                         takers.setdefault((entry.span.evidence_id, entry.span.byte_start,
                                            entry.span.byte_end), set()).update(
                             group[index] for index in entry.asked)
+                        taken_judged.append(entry)
                     else:
                         left.append(entry)
                 for row in more:
@@ -5524,6 +6491,7 @@ class StatementForget:
                                                     aliases=nick, every=asks and not nick),
                     uncertain=uncertain, within=within),
                 self._sessions(scope, targets.values(), session_id), within))}.values())
+        picked = set(targets)
         if complete and active:
             # Where the user lived takes no current home, and no request takes the new value
             # it told (`_kept_homes`, `_states_new`).
@@ -5545,6 +6513,30 @@ class StatementForget:
             sentences = self._request_said(scope, request_id, statements)
             targets = {memory_id: row for memory_id, row in targets.items()
                        if not any(_states_new(row.statement, words) for words in sentences)}
+        if (replacing and active and (targets or carry) and phrases and lead is not None
+                and not any(detail_request(statement) is not None for statement in active)):
+            # What still tells a fact a requested target forgets goes too, whole and tombstoned
+            # by the request's words, as the prepare takes it when it cannot reword it
+            # (`_residuals`); a memory the rules above kept stays as they decided.
+            asked_rows = [row for memory_id, row in targets.items()
+                          if memory_id in requested and memory_id not in seeds]
+            found_left = self._residuals(
+                scope, self._forgotten_facts(asked_rows, taken_judged),
+                skip={*picked, *targets}, taken=set(targets), judged=left, sender=sender,
+                ruled={row.statement for row in asked_rows})
+            if found_left is None:
+                raise QuoteMemError("provider_unavailable",
+                                    "The forget judge could not settle what still tells the fact")
+            left_rows, left_spans, left_calls, _ = found_left
+            calls += left_calls
+            for row in left_rows:
+                targets.setdefault(row.memory_id, row)
+                requested.add(row.memory_id)
+                seeds.setdefault(row.memory_id, self._seed(scope, statements[lead], [],
+                                                           phrases[lead]))
+            # Each goes with all its quotes, as the prepare withholds them (`_whole_quotes`).
+            carry = list({_key(span): span for span in (*carry, *left_spans, *(
+                span for row in left_rows for span in row.quotes))}.values())
         # The sentences withheld as stating the fact: a bare name quoted in one is the
         # forgotten fact's residue as one a forgotten memory quotes is (`_leftovers`).
         # The forgets run in the scope's erasure turn and hide their targets from reads from
@@ -6051,7 +7043,7 @@ class StatementForget:
         for row in rows:
             text: str = row["text"]
             held = [(span["byte_start"], span["byte_end"]) for span in row["withheld_spans"]]
-            for start, end in sentences(text):
+            for start, end in request_sentences(text):
                 first = row["byte_start"] + len(text[:start].encode("utf-8"))
                 last = row["byte_start"] + len(text[:end].encode("utf-8"))
                 sentence = text[start:end]
@@ -6205,7 +7197,7 @@ class StatementForget:
                         for statement in asked):
                     requests.append(QuoteSpanV1(evidence_id=row["object_id"], byte_start=first,
                                                 byte_end=last))
-            for start, end in sentences(text):
+            for start, end in request_sentences(text):
                 first = row["byte_start"] + len(text[:start].encode("utf-8"))
                 last = row["byte_start"] + len(text[:end].encode("utf-8"))
                 sentence = text[start:end]
@@ -6420,7 +7412,7 @@ class StatementForget:
         base = cast(int, part["byte_start"])
         held = [(cast(int, span["byte_start"]), cast(int, span["byte_end"]))
                 for span in cast(list[dict[str, object]], part["withheld_spans"])]
-        for start, end in sentences(text):
+        for start, end in request_sentences(text):
             first = base + len(text[:start].encode("utf-8"))
             last = base + len(text[:end].encode("utf-8"))
             if not any(first < high and low < last for low, high in held):
@@ -6964,7 +7956,7 @@ class StatementForget:
                 continue
             text: str = row["text"]
             held = [(span["byte_start"], span["byte_end"]) for span in row["withheld_spans"]]
-            for start, end in sentences(text):
+            for start, end in request_sentences(text):
                 first = row["byte_start"] + len(text[:start].encode("utf-8"))
                 last = row["byte_start"] + len(text[:end].encode("utf-8"))
                 if any(first < high and low < last for low, high in held) or is_request(
@@ -7185,7 +8177,15 @@ class StatementForget:
             else frozenset[tuple[str, str]]()
         name_ties = self._tie_words(scope, namers) if names else {}
         kept = {row.memory_id for row in request.candidates} - planned
-        before = {row.memory_id for row in self._memories(scope, past=True)} if complete \
+        # Every memory readable before, with its quotes: what the confirmation makes
+        # unreadable must leave none of its sentences wholly readable (`_left_shown`).
+        before_rows = self._memories(scope, past=True) if complete else []
+        before = {row.memory_id for row in before_rows}
+        current_before = {row.memory_id for row in self._memories(scope)} if complete \
+            else set[str]()
+        # The past memories the list shows for the later ones that replaced them (`_witnesses`
+        # of the past ones read above).
+        witnessed = set(self._witnesses(scope, before - current_before)) if complete \
             else set[str]()
         seed: ForgetSeedV1 | None = None
         if request.statement is not None and "pending" in states:
@@ -7233,7 +8233,7 @@ class StatementForget:
         withheld += sum(row.withheld_spans or 0 for row in outcomes
                         if row.outcome == "verified")
         if not complete:
-            return StatementConfirmed(tuple(outcomes))
+            return StatementConfirmed(tuple(self._checked(scope, outcomes, request.spans, ())))
         # A memory the forgets left unreadable that ties a name gives it too; the cascade takes
         # only what the prepare named (`_asked_names`, ``allowed``).
         lost = sorted(before - {row.memory_id for row in self._memories(scope, past=True)}
@@ -7272,6 +8272,12 @@ class StatementForget:
         # (The memories gone already are no longer current: `_memories` reads none of them.)
         affected += [ForgetStatementAffectedV1(memory_id=row.memory_id, effect="unreadable")
                      for row in hidden if row.memory_id in before]
+        # So is a past memory the list no longer shows: the forgets took every later memory
+        # that replaced it.
+        reported |= {row.memory_id for row in affected}
+        affected += [ForgetStatementAffectedV1(memory_id=memory_id, effect="unreadable")
+                     for memory_id in sorted(witnessed - set(self._witnesses(scope, witnessed)))
+                     if memory_id in before and memory_id not in reported | removed | planned]
         entry = self._entry(scope, asked=_asked_of(request))
         if entry is not None:
             # The statement stays read up to the prepare's commit: what another Add wrote
@@ -7279,7 +8285,232 @@ class StatementForget:
             self._record_handled(
                 scope, entry.request, statement="forgotten",
                 forgotten=len(removed), withheld=withheld)
-        return StatementConfirmed(tuple(outcomes), len(removed), withheld, tuple(affected))
+        # What it made unreadable: the memories gone and those it reports hidden.
+        now = {row.memory_id: row for row in self._memories(scope, past=True)}
+        unseen = {*(before - set(now)), *(row.memory_id for row in affected
+                                           if row.effect != "reworded")}
+        gone = [row for row in before_rows if row.memory_id in unseen]
+        # The facts the plan forgot of its own: a bundle's own value is not one. An older
+        # value it removed or hid is one too: a past memory a later one replaced ("The user's
+        # locker code is 4471." behind "The user's locker code is 8836 now, not 4471."), when
+        # it shares a value with what the plan took (`_shares_taken`). One the forget hid
+        # beside a fact of another value keeps its own: "The user lives in Haidian District,
+        # Beijing." behind a forgotten move to Hangzhou.
+        took = [*(row.statement for row in planned_rows if row.memory_id not in request.bundled),
+                *(text for text in self._quote_texts(list(request.spans)) if text)]
+        older = [row.statement for row in gone if row.memory_id not in current_before
+                 and row.memory_id not in planned and row.memory_id not in request.bundled
+                 and _shares_taken(row.statement, took)]
+        facts = [*(row.statement for row in planned_rows
+                   if row.memory_id not in request.bundled), *older]
+        # What the prepare listed as going, neither a target nor reworded, that is still read,
+        # and what it planned to reword that still reads as before.
+        plans = {} if record is None or not record.held else {
+            plan.memory_id: plan.statement for plan in record.rewordings}
+        shown = set[str]() if record is None or not record.held else (
+            record.listed - unseen - planned - set(plans))
+        listed = [row for memory_id, row in now.items() if memory_id in shown or (
+            memory_id in plans and memory_id not in unseen and row.statement != plans[memory_id])]
+        # A memory reworded without what names a value as replaced leaves that value nowhere
+        # readable: neither in what the plan withholds from nor in what the reworded memories
+        # quote.
+        reworded = [(old.statement, row.statement) for memory_id, row in now.items()
+                    if memory_id in plans and row.statement == plans[memory_id]
+                    and (old := reworded_heads.get(memory_id)) is not None]
+        read = {span.evidence_id for span in (*request.spans, *(
+            quote for memory_id, head in reworded_heads.items() if memory_id in plans
+            for quote in head.quote_spans))}
+        return StatementConfirmed(tuple(self._checked(
+            scope, outcomes, request.spans, facts, gone=gone, listed=listed,
+            taken=[*told, *older], reworded=reworded, read=read,
+            older=before - current_before)), len(removed), withheld, tuple(affected))
+
+    def _checked(
+        self, scope: ScopeV1, outcomes: Sequence[ForgetStatementOutcomeV1],
+        spans: Sequence[QuoteSpanV1], facts: Sequence[str], *,
+        gone: Sequence[_Candidate] = (), listed: Sequence[_Candidate] = (),
+        taken: Sequence[str] = (), reworded: Sequence[tuple[str, str]] = (),
+        read: Set[str] = frozenset(), older: Set[str] = frozenset(),
+    ) -> list[ForgetStatementOutcomeV1]:
+        """A confirmation's ``outcomes``, with one more, ``left_readable``, when it left
+        readable what the plan said it forgets (`_left_told`, `_left_shown` with the memories
+        ``older`` than it, `_left_reworded` over the Evidence ``read``): the response is then
+        ``incomplete``, never ``verified``."""
+        if not self._left_told(scope, spans, facts) and not self._left_shown(
+                scope, spans, facts, gone, listed, taken, older) and not self._left_reworded(
+                scope, reworded, read):
+            return list(outcomes)
+        return [*outcomes, ForgetStatementOutcomeV1(memory_id=None, outcome="left_readable")]
+
+    def _left_reworded(self, scope: ScopeV1, reworded: Sequence[tuple[str, str]],
+                       read: Set[str] = frozenset()) -> bool:
+        """Whether a value a rewording left out with the words naming it as replaced (a contrast
+        tail, a clause saying it no longer holds, a place left, `replaced_values`) is still
+        readable: a current memory's statement, or a readable byte of the Evidence ``read``,
+        shows it, a number or code whole or by one of its forms (`code_forms`: "0471" is no
+        part of "020 7946 0471"). ``reworded`` holds each memory's
+        statement before and after ("The user's locker code is 8836 now, not 4471." and "The
+        user's locker code is 8836 now."). ``read`` names the Evidence the plan withholds from
+        and the Evidence the reworded memories quote. Only a name, a Han value, a code or an
+        e-mail address is read: a plain word another fact may share ("bus") is not. A sentence
+        that asks to forget is the request's own."""
+        values = [value for old, new in reworded for value in replaced_values(old, [old])
+                  if not shows(new, value) and (
+                      forgotten_values(value, [value]) or code_forms(value, value)
+                      or "@" in value)]
+        if not values:
+            return False
+
+        def shown(text: str) -> bool:
+            return any(bool(code_spans(value, text)) if is_code(value) else shows(text, value)
+                       for value in values)
+
+        if any(shown(row.statement) for row in self._memories(scope)):
+            return True
+        writer = self._writer
+        with writer.write_scope():
+            evidence = [row for evidence_id in sorted(read)
+                        if (row := writer.get_row("evidence", evidence_id)) is not None
+                        and (row["scope_kind"], row["scope_id"]) == (
+                            scope.scope_kind, scope.scope_id) and row["state"] == "active"]
+        return any(shown(sentence) for part in evidence for piece in _unheld_pieces(part)
+                   for start, end in request_sentences(piece)
+                   if _ASK_VERB.match(sentence := piece[start:end]) is None
+                   and not requested(sentence, complete=True))
+
+    def _left_shown(self, scope: ScopeV1, spans: Sequence[QuoteSpanV1], facts: Sequence[str],
+                    gone: Sequence[_Candidate], listed: Sequence[_Candidate],
+                    taken: Sequence[str], older: Set[str] = frozenset()) -> bool:
+        """Whether a confirmation left readable what it made unreadable or what its prepare
+        listed as going, which Search or the list would show.
+
+        A memory it removed or hid (``gone``), or a past one it left (a later memory replaced
+        it, and the reads may hide it by the forget's names: "The user goes to Corebody Gym on
+        Mondays." beside a forgotten "The user does not go to Corebody Gym anymore."), leaves
+        its sentence when no byte of its quotes is withheld, no current memory still read
+        quotes any of them, and a quote still shows a name, value, number or code of a memory
+        the plan took (``taken``, bundles too, and the older values it removed or hid;
+        `_named_values`: a statement's own, no place it is in) that the memory shows too, as
+        whole words (`_shows`: no piece of a longer Han word), or shows no Latin letter where
+        those values are all Latin (a Chinese quote of "The user's home is on Wutong Road."):
+        "I go to Corebody Gym on Mondays." after its memory went. Such a memory is read for
+        the places a memory the plan took gives after "in", "at" or "from" too
+        (`_located_places`: "Corebody Gym" of "The user trains in Corebody Gym on Mondays."),
+        each one it gives as a value of its own, a whole name of its statement, not as where
+        it is ("The user's sister lives in Leeds." shares no value with "The user's dentist
+        works in Leeds.", nor "The user's gym is Leeds Fitness.").
+        An older memory (one past
+        before the confirmation, ``older``, or past now) is read for the place it gives as
+        where someone lives too, when a memory the plan took or a sentence it withheld gives
+        that place so (`_dwelling_places`: "Brackenmoor" of "The user lives in Brackenmoor."
+        beside a forgotten "The user used to live in Brackenmoor."). A memory its prepare
+        listed as going (``listed``) that is still read is left when its statement shows such
+        a value of the facts it forgot (``facts``, no bundle), of the sentences withheld
+        (``spans``) or of the memories removed, which no readable part of their own quotes
+        still shows. A quote that asks to forget is the request's own."""
+        if not gone and not listed and not taken and not spans:
+            return False
+        writer = self._writer
+        unseen = {row.memory_id for row in gone}
+        current = self._memories(scope, past=True)
+        present = {row.memory_id for row in self._memories(scope)} - unseen
+        read = [span for row in current if row.memory_id in present for span in row.quotes]
+        past = [row for row in current if row.memory_id not in present | unseen]
+        words = _vocabulary([row.statement for row in (*current, *gone)])
+        olders = {*(row.memory_id for row in past), *(unseen & older)}
+        dwelling = {place for text in (*taken, *self._quote_texts(list(spans))) if text
+                    for place in _dwelling_places(text)}
+        for row in (*gone, *past) if taken or dwelling else ():
+            texts = [text for text in self._quote_texts(row.quotes) if text]
+            if not texts or any(_overlaps(span, read) for span in row.quotes) or any(
+                    _ASK_VERB.match(text) is not None or requested(text, complete=True)
+                    for text in texts):
+                continue
+            with writer.write_scope():
+                if not all(self._unheld(span, whole=True) for span in row.quotes):
+                    continue
+            # A place is read only as a whole name of the memory's own, never as a word of a
+            # longer one ("Leeds" of "The user's gym is Leeds Fitness.").
+            whole = {run for found in forgotten_values(row.statement, [row.statement])
+                     if (run := _untitled(found))}
+            values = {value for fact in taken
+                      for value in _named_values([row.statement, *texts], fact)} | {
+                place for fact in taken for place in _located_places(fact)
+                if place in whole
+                and any(_shows(place, part, words) for part in (row.statement, *texts))
+                and _own_values(row.statement, [place])} | (
+                _dwelling_places(row.statement) & dwelling if row.memory_id in olders
+                else set[str]())
+            if any(_value_shown(value, text, words) for value in values for text in texts) or (
+                    values and all(value.isascii() for value in values)
+                    and not any(_LATIN_LETTER.search(text) for text in texts)):
+                return True
+        if not listed:
+            return False
+        kept = {row.memory_id for row in current}
+        sources = [*facts, *(text for text in self._quote_texts(list(spans)) if text)]
+        # A memory removed with part of its quotes still readable (a rewording that was not
+        # written) forgot none of what those parts show: "翠竹" of "The user moved from 莲塘 to
+        # 翠竹 last year." over "我去年从莲塘搬到了翠竹" with "从莲塘" withheld.
+        removed = [(row.statement, self._quote_pieces(row.quotes)) for row in gone
+                   if row.memory_id not in kept]
+        return any(_value_shown(value, row.statement, words) for row in listed
+                   for source in sources
+                   for value in _named_values([row.statement], source)) or any(
+            _value_shown(value, row.statement, words) for row in listed
+            for statement, pieces in removed
+            for value in _named_values([row.statement], statement)
+            if not any(_value_shown(value, piece, words) for piece in pieces))
+
+    def _left_told(self, scope: ScopeV1, spans: Sequence[QuoteSpanV1],
+                   facts: Sequence[str]) -> bool:
+        """Whether a confirmed plan left readable what it said it forgets: one of its
+        sentences (``spans``) with no byte withheld (the parts other memories quote may stay,
+        never the whole sentence), or a current memory that still names a name, value or
+        number of a fact it forgot (``facts``) as not, or no longer, the case, in its
+        statement or in a readable part of a quote (`_names_forgotten`, `_contrast_spans`),
+        as its prepare reads them, or a readable sentence of the scope's messages that does
+        ("We moved from Thistle Road to Saffron Avenue."), which Search would find. A
+        sentence that asks to forget is the request's own and is not read."""
+        writer = self._writer
+        with writer.write_scope():
+            if any(self._unheld(span, whole=True) for span in spans):
+                return True
+        if not facts:
+            return False
+        for row in self._memories(scope):
+            if any(_names_forgotten(row.statement, fact) for fact in facts):
+                return True
+            parts = [part for quote, text in zip(row.quotes, self._quote_texts(row.quotes),
+                                                 strict=True) if text
+                     for fact in facts for part in _contrast_spans(quote, text, [fact],
+                                                                   fact=fact)]
+            with writer.write_scope():
+                if any(self._unheld(part) for part in parts):
+                    return True
+        with writer.write_scope():
+            txn = TxnRows(writer, scope.scope_kind, scope.scope_id, 0, self._clock(), "")
+            evidence = [row for row in txn.pages(EvidenceRows(scope_kind=scope.scope_kind,
+                                                              scope_id=scope.scope_id))
+                        if row["state"] == "active"]
+        return any(
+            _names_forgotten(text, fact) for part in evidence
+            for _, text in self._readable(part)
+            if _ASK_VERB.match(text) is None and not requested(text, complete=True)
+            for fact in facts)
+
+    def _unheld(self, span: QuoteSpanV1, *, whole: bool = False) -> bool:
+        """Whether a byte of a span is readable: its Evidence is active and no withheld range
+        covers it whole; with ``whole``, whether every byte is: no withheld range meets it
+        (under the Writer scope)."""
+        row = self._writer.get_row("evidence", span.evidence_id)
+        if row is None or row["state"] != "active":
+            return False
+        held = [(cast(int, part["byte_start"]), cast(int, part["byte_end"]))
+                for part in row["withheld_spans"]]
+        if whole:
+            return not any(low < span.byte_end and span.byte_start < high for low, high in held)
+        return not _covered(span.byte_start, span.byte_end, held)
 
     def _lost(
         self, scope: ScopeV1, before: Set[str], kept: Set[str], hidden: Set[str] = frozenset(),

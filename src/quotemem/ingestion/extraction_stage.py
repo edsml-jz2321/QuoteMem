@@ -51,7 +51,8 @@ and its record (`store_settlement`); the vectors of the
 unsettled positions (``ingestion/statement_embedding.py``); every position's
 ``ProposalV2``, create-once (`build_proposals`, `store_proposals`); and the
 settlement transaction (`plan_settlement`, the chunked ``commit_settlement``),
-whose candidate rows reference them. `ExtractionStage.run` composes these
+whose candidate rows reference them, after the withholding of the forgotten names
+settlement cut positions around (``agent`` mode). `ExtractionStage.run` composes these
 steps; every one is idempotent, so a resumed owner replays them with no
 provider call it already made and no row written twice, also a cold-adopted one
 at its later pin before its first commit. An owner whose pin moved
@@ -76,6 +77,7 @@ from quotemem.core.add_read_view import AddReadView, EvidenceRecord, Sigma, span
 from quotemem.core.artifacts import DigestSettlementSetV1
 from quotemem.core.commit_plan import (
     CommitJournalV1,
+    CutPositionV1,
     DuplicatePositionV1,
     SettledCode,
     SettledPositionV1,
@@ -107,6 +109,7 @@ from quotemem.core.extraction_supplement import IMPLIED_HEALTH_RULES
 from quotemem.core.identity import ArtifactId, integrity_digest
 from quotemem.core.inference import InferenceBindingV1, StoredInferenceOutput
 from quotemem.core.proposal import (
+    CutSpanV1,
     EmbeddingUseV1,
     ProposalNamingV1,
     ProposalV2,
@@ -1228,7 +1231,8 @@ def build_proposals(
     position points at its statement entry and, with a ``corrects_text``, its
     cue entry. A representative that duplicates joined carries the joined
     groups, the united classes and the highest security of the joined
-    positions; every position carries admission's concerns with settlement's.
+    positions; every position carries admission's concerns with settlement's, and
+    what withholds a forgotten name settlement cut it around (``cut``).
 
     Args:
         units (Sequence[UnitAdmission]): The owner's admitted units.
@@ -1293,6 +1297,8 @@ def build_proposals(
                 embeddings[("correction_cue", cue)] if embedded and cue is not None else None
             ),
             embedding_space=embedding_space, pipeline_version=policy.pipeline_version,
+            cut=[CutSpanV1(evidence_id=span.evidence_id, byte_start=span.byte_start,
+                           byte_end=span.byte_end) for span in settlement.cut.get(key, ())],
         )
     return proposals
 
@@ -1349,11 +1355,15 @@ class SettlementPlan:
             whose primary is not unresolved, in canonical order.
         duplicates (tuple[DuplicatePositionV1, ...]): The duplicates of
             members, which each member's transaction writes, in canonical order.
+        cuts (tuple[CutPositionV1, ...]): What the withholding transaction withholds before
+            the settlement transaction: one entry per position settlement cut around a
+            forgotten name, settled or not, in canonical order.
     """
 
     settled: tuple[SettledPositionV1, ...]
     review: tuple[PositionKey, ...]
     duplicates: tuple[DuplicatePositionV1, ...]
+    cuts: tuple[CutPositionV1, ...] = ()
 
 
 def plan_settlement(
@@ -1372,7 +1382,9 @@ def plan_settlement(
     member. A duplicate mirrors its representative, which is never itself a
     duplicate: a member's duplicate goes to review with it, an unresolved
     primary's waits beside it, a held restatement's is ``duplicate_in_add``
-    with that memory, and an unfit duplicate's is ``support_budget_exceeded``.
+    with that memory, and an unfit duplicate's is ``support_budget_exceeded``. Every
+    position settlement cut around a forgotten name, whatever its code, has the name
+    withheld before all of them (``cuts``).
 
     Args:
         units (Sequence[UnitAdmission]): The owner's admitted units.
@@ -1382,7 +1394,8 @@ def plan_settlement(
         owner_run_id (str): The Add owner.
 
     Returns:
-        SettlementPlan: The settled positions, the members and their duplicates.
+        SettlementPlan: The settled positions, the members, their duplicates and the
+            withholding positions.
     """
     found = {
         (owner_run_id, unit.unit_no, fact.position): (unit, fact)
@@ -1404,6 +1417,7 @@ def plan_settlement(
         frozenset(settlement.unresolved), position=position,
         spans=lambda key: found[key][1].spans, lifecycle=lambda key: settlement.lifecycles[key],
         groups=lambda key: settlement.groups.get(key, found[key][1].groups),
+        cut=lambda key: settlement.cut.get(key, ()),
     )
 
 
@@ -1413,9 +1427,11 @@ def _plan_positions(
     spans: Callable[[PositionKey], Sequence[QuoteSpanV1]],
     lifecycle: Callable[[PositionKey], MemoryLifecycle],
     groups: Callable[[PositionKey], Sequence[Sequence[QuoteSpanV1]]],
+    cut: Callable[[PositionKey], Sequence[QuoteSpanV1]],
 ) -> SettlementPlan:
-    """`plan_settlement` over each position's fields, located spans, restated head lifecycle and,
-    for a merge, admitted groups.
+    """`plan_settlement` over each position's fields, located spans, restated head lifecycle,
+    for a merge, admitted groups and, for the withholding transaction, what withholds the
+    forgotten names settlement cut it around.
 
     `plan_settlement` reads them from the admitted units and the settlement;
     `rebased_outcome` rebuilds them from the owner's stored records.
@@ -1423,6 +1439,9 @@ def _plan_positions(
     settled: list[SettledPositionV1] = []
     review: list[PositionKey] = []
     duplicates: list[DuplicatePositionV1] = []
+    cuts = tuple(CutPositionV1(position_key=key, spans=[QuoteSpanV1(
+        evidence_id=span.evidence_id, byte_start=span.byte_start, byte_end=span.byte_end)
+        for span in withheld]) for key in order if (withheld := cut(key)))
 
     def write(position: dict[str, object], code: SettledCode, **fields: object) -> None:
         settled.append(SettledPositionV1.model_validate({**position, "code": code, **fields}))
@@ -1462,7 +1481,7 @@ def _plan_positions(
                 write(base, "support_budget_exceeded")
             else:
                 raise QuoteMemError("binding_mismatch", "A duplicate mirrors no representative")
-    return SettlementPlan(tuple(settled), tuple(review), tuple(duplicates))
+    return SettlementPlan(tuple(settled), tuple(review), tuple(duplicates), cuts)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1498,10 +1517,10 @@ class ExtractionOutcome:
         refused (tuple[RefusedPosition, ...]): The positions admission refused,
             replayed from each unit's stored admission record.
         spent (tuple[SpentUnit, ...]): The units a provider refusal ended.
-        withheld (tuple[QuoteSpanV1, ...]): The spans the settlement transaction withheld
-            for a forget (``agent`` mode only): the owner's input pin predates them, so its
-            first review reads a pin after them (``owner_pipeline``) and never shows a
-            forgotten name to the judge.
+        withheld (tuple[QuoteSpanV1, ...]): The spans the withholding and settlement
+            transactions withheld for a forget (``agent`` mode only): the owner's input pin
+            predates them, so its first review reads a pin after them (``owner_pipeline``)
+            and never shows a forgotten name to the judge.
         placeholders (tuple[tuple[QuoteSpanV1, str], ...]): Those of them that are a
             forgotten name's occurrences, each with how the judge sees it ("[the user's
             cat]", ``statement_settlement.name_placeholders``); every other withheld range
@@ -1539,8 +1558,8 @@ def rebased_outcome(owner: ExtractionOwner) -> ExtractionOutcome | None:
     primary at the owner's current pin. The positions admission refused and
     the units a provider refusal ended come from each unit's standing reply and
     its call accounting (`_rebased_refusals`). An owner stopped between two
-    chunks of its settlement transaction finishes it first, at the first
-    position without a row, from the same records (`_finish_settlement`).
+    chunks of its withholding or settlement transaction finishes them first, at the
+    first position without a row, from the same records (`_finish_settlement`).
     Erased replies and proposals leave content-free accounting instead of their
     bodies. Uncommitted erased positions settle ``evidence_invalidated``; journaled
     positions retain their committed classification. Surviving positions continue
@@ -1626,7 +1645,9 @@ def rebased_outcome(owner: ExtractionOwner) -> ExtractionOutcome | None:
         raise QuoteMemError("binding_mismatch", "A rebased owner's settlement did not commit")
     committed = {member.position_key for body in journals
                  if body.txn in ("rejection", "component") for member in body.members}
-    journaled = {member.position_key for body in journals for member in body.members}
+    # A withholding entry writes no candidate row: an erased position it covers still settles.
+    journaled = {member.position_key for body in journals if body.txn != "withholding"
+                 for member in body.members}
 
     def canonical(key: PositionKey) -> tuple[Sigma, PositionKey]:
         sigmas: list[Sigma] = []
@@ -1639,7 +1660,12 @@ def rebased_outcome(owner: ExtractionOwner) -> ExtractionOutcome | None:
         return max(sigmas), key
 
     order = sorted(proposals, key=canonical)
-    if written != settles:
+    cut = {key for key in order if proposals[key][1].cut}
+    withheld_cut = journaled_positions(writer, owner_run_id, owner_run_id=owner_run_id,
+                                       round_no=1, txn="withholding") - erased.keys()
+    if not withheld_cut <= cut:
+        raise QuoteMemError("binding_mismatch", "A rebased owner withheld for no cut position")
+    if written != settles or cut - withheld_cut:
         if committed:
             raise QuoteMemError("binding_mismatch",
                                 "A rebased owner reviewed before its settlement")
@@ -1694,12 +1720,12 @@ def rebased_outcome(owner: ExtractionOwner) -> ExtractionOutcome | None:
         ))
     refused, spent = _rebased_refusals(owner, stored)
     owner.check_valid()
-    # The settlement's withholding for a forget, as `ExtractionStage.run` reports it: a
-    # resumed owner's first review reads a pin after it too.
+    # The withholding for a forget, as `ExtractionStage.run` reports it: a resumed owner's
+    # first review reads a pin after it too.
     relearn = owner.policy.parameters.chat_forget == CHAT_FORGET_COMPLETE
     denied = [key for key in order if key in records and records[key].code == "denied_by_forget"]
-    withheld = tuple(span for key in denied for span in proposals[key][1].quote_spans
-                     ) if relearn else ()
+    withheld = (*(span for key in denied for span in proposals[key][1].quote_spans),
+                *(span for key in order for span in proposals[key][1].cut)) if relearn else ()
     placeholders = name_placeholders(view, (
         (proposals[key][1].statement, proposals[key][1].quote_spans, records[key].tombstone_id)
         for key in denied)) if relearn else ()
@@ -1719,13 +1745,15 @@ def _finish_settlement(
     records: Mapping[PositionKey, DigestSettlementV1], unresolved: frozenset[PositionKey],
     settles: set[PositionKey],
 ) -> None:
-    """Finish a rebased owner's settlement transaction from its stored records.
+    """Finish a rebased owner's withholding and settlement transactions from its stored
+    records.
 
-    A process that died between two chunks of the settlement transaction left
+    A process that died between two chunks of either transaction left
     the positions of the committed chunks journaled. The positions are rebuilt
     as `plan_settlement` built them: settlement's fields from each position's
     ``ProposalV2`` and settlement record, its primary resolved as settlement
-    resolved it, and a head's lifecycle read at the owner's pin. Only
+    resolved it, a head's lifecycle read at the owner's pin, and what withholds a
+    forgotten name from the proposal's ``cut``. Only withholding and
     settlement chunks committed, and they mint no entity and change no head,
     so the primaries are those of the settlement pin; each journaled position
     must rebuild to the digest its chunk recorded. `commit_settlement` then
@@ -1765,24 +1793,24 @@ def _finish_settlement(
 
     plan = _plan_positions(order, records, unresolved, position=position,
                            spans=lambda key: proposals[key][1].quote_spans, lifecycle=lifecycle,
-                           groups=groups)
-    journaled = {
-        member.position_key: member.resolution_digest
-        for _reference, body in writer.find_logical_candidates(owner_run_id, "write_set")
-        if isinstance(body, CommitJournalV1)
-        and (body.owner_run_id, body.round, body.txn) == (owner_run_id, 1, "settlement")
-        for member in body.members
-    }
+                           groups=groups, cut=lambda key: proposals[key][1].cut)
+    journaled: dict[str, dict[PositionKey, str]] = {"settlement": {}, "withholding": {}}
+    for _reference, body in writer.find_logical_candidates(owner_run_id, "write_set"):
+        if isinstance(body, CommitJournalV1) and body.txn in journaled and (
+                body.owner_run_id, body.round) == (owner_run_id, 1):
+            journaled[body.txn].update(
+                (member.position_key, member.resolution_digest) for member in body.members)
     if {item.position_key for item in plan.settled} != settles or any(
-        journaled.get(item.position_key, digest) != digest
-        for item in plan.settled for digest in (integrity_digest(item),)
+        journaled[txn].get(item.position_key, digest) != digest
+        for txn, items in (("settlement", plan.settled), ("withholding", plan.cuts))
+        for item in items for digest in (integrity_digest(item),)
     ):
         raise QuoteMemError("binding_mismatch", "A rebuilt settlement differs from its journal")
     owner.mark_phase("commit")
     owner.authorize()
     commit_settlement(owner.writer, owner.ticket, owner_run_id=owner_run_id,
                       positions=plan.settled, updated_at=owner.clock(),
-                      publish=owner.publish, clock=owner.clock)
+                      publish=owner.publish, clock=owner.clock, cuts=plan.cuts)
 
 
 def _rebased_refusals(
@@ -1904,13 +1932,14 @@ class ExtractionStage:
         owner.authorize()
         commit_settlement(owner.writer, owner.ticket, owner_run_id=owner.owner_run_id,
                           positions=plan.settled, updated_at=owner.clock(),
-                          publish=owner.publish, clock=owner.clock)
+                          publish=owner.publish, clock=owner.clock, cuts=plan.cuts)
         refused = tuple(
             RefusedPosition((owner.owner_run_id, unit.unit_no, fact.position), fact.code,
                             unit.sources)
             for unit in units for fact in unit.refused
         )
-        withheld = tuple(span for position in plan.settled for span in position.withheld)
+        withheld = (*(span for position in plan.settled for span in position.withheld),
+                    *(span for position in plan.cuts for span in position.spans))
         records = {record.position_key: record for record in settlement.records}
         placeholders = name_placeholders(view, (
             (found[key].statement, found[key].spans, record.tombstone_id)

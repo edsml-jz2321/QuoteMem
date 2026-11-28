@@ -20,7 +20,7 @@ const { resolveSettings } = await import(pathToFileURL(path.join(CORE, 'config.m
 const { resolveToken, serviceToken } = await import(pathToFileURL(path.join(CORE, 'token.mjs')).href);
 const { postJson } = await import(pathToFileURL(path.join(CORE, 'http.mjs')).href);
 const { HookMemory } = await import(pathToFileURL(path.join(CORE, 'hooks.mjs')).href);
-const { SETUP_HEADER, UNAVAILABLE_HEADER } = await import(pathToFileURL(path.join(CORE, 'format.mjs')).href);
+const { MEMORY_OFF_HEADER, SETUP_HEADER, UNAVAILABLE_HEADER } = await import(pathToFileURL(path.join(CORE, 'format.mjs')).href);
 // What a user should never see in a reply when the service is down: the
 // notes the model relays name no command, variable, address or error code.
 const NOISE = /ECONNREFUSED|not reachable|无法连接|连不上|拒绝连接|quotemem serve|aml (agent )?serve|QUOTEMEM_|quotemem_|127\.0\.0\.1:\d+|\bhook/i;
@@ -48,7 +48,8 @@ after(() => {
 // plays the service on the port it was given: it writes its token to the
 // data folder and answers /health and /memory/search for that token only.
 const STUB_HIT = JSON.stringify({ data: [HIT('01JX0000000000000000000009', 'I live in Lisbon.', { score: 0.9 })] });
-const STUB = `const fs = require('node:fs');
+const STUB = `const crypto = require('node:crypto');
+const fs = require('node:fs');
 const http = require('node:http');
 const path = require('node:path');
 const args = process.argv.slice(2);
@@ -64,6 +65,15 @@ setTimeout(() => {
     req.on('data', (c) => { body += c; });
     req.on('end', () => {
       const ok = req.headers.authorization === 'Bearer stub-service-token-77';
+      if (process.env.STUB_SEEN) fs.appendFileSync(process.env.STUB_SEEN, JSON.stringify({ pid: process.pid, mode: process.env.STUB_MODE || 'current', url: req.url, auth: req.headers.authorization !== undefined, body: body.length }) + '\\n');
+      // The listener check: the proof of the current service; one from before the check (STUB_MODE=old) has no such route.
+      if (req.url === '/agent/listener') {
+        if (process.env.STUB_MODE === 'old') { res.writeHead(404, { 'content-type': 'application/json' }); res.end('{"code":"not_found"}'); return; }
+        const address = String(req.socket.localAddress).replace(/^::ffff:/, '');
+        const proof = crypto.createHmac('sha256', 'stub-service-token-77').update('quotemem-listener-proof\\0' + address + '\\0' + req.socket.localPort + '\\0' + req.headers['x-quotemem-challenge']).digest('hex');
+        res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ proof }));
+        return;
+      }
       if (req.url === '/health') { res.writeHead(200, { 'content-type': 'application/json' }); res.end('{"status":"ok"}'); return; }
       if (!ok) { res.writeHead(401, { 'content-type': 'application/json' }); res.end('{"code":"authentication_failed"}'); return; }
       if (req.url === '/memory/search') {
@@ -421,7 +431,7 @@ test('setup writes service.env 600 in a 700 folder and never prints a key', asyn
   const asked = spawnSync(process.execPath, [CLI, 'setup', '--no-check'], { env: { HOME: box.home, USERPROFILE: box.home, PATH: process.env.PATH }, input: answers, encoding: 'utf8' });
   assert.equal(asked.status, 0, asked.stdout + asked.stderr);
   assert.doesNotMatch(asked.stdout + asked.stderr, /sk-openai-chat|sk-chat-secret|sk-embed-secret/);
-  assert.match(asked.stdout, /default \(recommended\), the competition configuration/);
+  assert.match(asked.stdout, /1\) default \(recommended\): DeepSeek V4\.1 Flash \(thinking high\) \+ Qwen3\.7 embeddings, one Model Studio key\n/);
   const again = auto.parseServiceEnv(fs.readFileSync(file, 'utf8'));
   assert.equal(again.QUOTEMEM_CHAT_BASE_URL, 'https://api.openai.com/v1');
   assert.equal(again.QUOTEMEM_CHAT_MODEL, 'gpt-4o-mini');
@@ -436,25 +446,64 @@ test('setup writes service.env 600 in a 700 folder and never prints a key', asyn
   assertMode(path.dirname(file), 0o700, 'the folder is tightened');
 
   // Missing values with --yes: refused, nothing printed but the names.
-  const missing = spawnSync(process.execPath, [CLI, 'setup', '--yes', '--no-check'], { env: { HOME: path.join(box.home, 'nowhere'), PATH: process.env.PATH }, encoding: 'utf8' });
+  const missing = spawnSync(process.execPath, [CLI, 'setup', '--yes', '--no-check'], { env: { HOME: path.join(box.home, 'nowhere'), USERPROFILE: path.join(box.home, 'nowhere'), PATH: process.env.PATH }, encoding: 'utf8' });
   assert.equal(missing.status, 2);
   assert.match(missing.stderr, /QUOTEMEM_CHAT_API_KEY/);
 });
 
-test('setup checks the settings through uvx with the saved file, without printing keys', () => {
+test('setup checks the settings through uvx with the saved file and sums the check up in a line or two, without printing keys', () => {
   const box = sandbox({ setup: false });
-  // A stub uvx for `quotemem check`: it sees the key in its environment and says so without printing it.
-  writeUvx(box.bin, `const ok = process.env.QUOTEMEM_CHAT_API_KEY === 'sk-chat-secret-DDDD';\nconsole.log('stub check ' + process.argv.slice(2).join(' ') + (ok ? ' key-seen' : ' no-key'));\nprocess.exit(ok ? 0 : 3);\n`);
+  // A stub uvx for `quotemem check`: it records its arguments and whether it saw the key,
+  // then answers as the file `mode` next to it says, with a line of uvx's own on stderr.
+  const seen = path.join(box.home, 'check-args.json');
+  const modeFile = path.join(box.bin, 'mode');
+  writeUvx(box.bin, [
+    "const fs = require('node:fs');",
+    `fs.writeFileSync(${JSON.stringify(seen)}, JSON.stringify({ args: process.argv.slice(2), key: process.env.QUOTEMEM_CHAT_API_KEY === 'sk-chat-secret-DDDD' }));`,
+    "process.stderr.write('Installed 61 packages in 812ms\\n');",
+    `const mode = fs.existsSync(${JSON.stringify(modeFile)}) ? fs.readFileSync(${JSON.stringify(modeFile)}, 'utf8') : 'ok';`,
+    "const report = (fields) => console.log(JSON.stringify({ status: 'checked', providers: {}, ...fields }));",
+    "if (mode === 'ok') { report({ ok: true, role: null, code: null, hint: null }); process.exit(0); }",
+    "if (mode === 'arrearage') { report({ ok: false, role: 'chat', code: 'http_400', provider_code: 'Arrearage', hint: 'The chat provider rejected the request' }); process.exit(1); }",
+    "if (mode === 'refused') { report({ ok: false, role: 'embedding', code: 'http_401', hint: 'The embedding provider refused the key; check QUOTEMEM_EMBED_API_KEY' }); process.exit(1); }",
+    "if (mode === 'config') { console.error(JSON.stringify({ status: 'failed', code: 'schema_invalid', message: 'QUOTEMEM_EMBED_MODEL is required' })); process.exit(1); }",
+    "console.error('Traceback (most recent call last):\\nRuntimeError: boom'); process.exit(4);",
+  ].join('\n'));
   const env = { HOME: box.home, USERPROFILE: box.home, PATH: `${box.bin}${path.delimiter}${process.env.PATH}`, QUOTEMEM_CHAT_API_KEY: 'sk-chat-secret-DDDD' };
-  const run = spawnSync(process.execPath, [CLI, 'setup', '--yes', '--chat-url', 'https://api.deepseek.com/v1', '--chat-model', 'deepseek-chat', '--embed-model', 'm'], { env, encoding: 'utf8' });
+  const setup = (args) => spawnSync(process.execPath, [CLI, 'setup', '--yes', ...args], { env, encoding: 'utf8' });
+  const custom = ['--chat-url', 'https://api.deepseek.com/v1', '--chat-model', 'deepseek-chat', '--embed-model', 'm'];
+  const run = setup(custom);
   assert.equal(run.status, 0, run.stdout + run.stderr);
-  assert.match(run.stdout, new RegExp(`stub check --from quotemem==${auto.SERVICE_RELEASE} quotemem check key-seen`));
-  assert.match(run.stdout, /ok: the settings work/);
-  assert.doesNotMatch(run.stdout + run.stderr, /sk-chat-secret/);
+  assert.deepEqual(JSON.parse(fs.readFileSync(seen, 'utf8')), { args: ['--from', `quotemem==${auto.SERVICE_RELEASE}`, 'quotemem', 'check'], key: true });
+  assert.match(run.stdout, /^Checking the key \(one call to each model; the first check downloads the service\)\.\.\.\nKey works\. The memory service starts by itself when an agent needs it\.\n$/m);
+  assert.doesNotMatch(run.stdout + run.stderr, /sk-chat-secret|Installed 61|"status"/, 'the key, uvx\'s lines and the report are not shown');
+
+  // Failures: the model, the HTTP status and the provider's code, then one hint.
+  const lines = (result) => result.stdout.slice(result.stdout.indexOf('...\n') + 4);
+  fs.writeFileSync(modeFile, 'arrearage');
+  const arrears = setup(['--preset', 'default']);
+  assert.equal(arrears.status, 1);
+  assert.equal(lines(arrears), 'Check failed: chat model, HTTP 400 Arrearage.\nThe Alibaba Cloud account is overdue: top it up, then run `quotemem check`.\n');
+  fs.writeFileSync(modeFile, 'refused');
+  const refused = setup(['--preset', 'fast']);
+  assert.equal(refused.status, 1);
+  assert.match(lines(refused), /^Check failed: embedding model, HTTP 401\.\nUse a Model Studio key \(bailian\.console\.aliyun\.com, China region\), not a DeepSeek key; run `quotemem setup` again\.\n$/);
+  fs.writeFileSync(modeFile, 'config');
+  const config = setup(custom);
+  assert.equal(config.status, 1);
+  assert.equal(lines(config), 'Check failed: schema_invalid.\nQUOTEMEM_EMBED_MODEL is required\n');
+  fs.writeFileSync(modeFile, 'crash');
+  const crash = setup(custom);
+  assert.equal(crash.status, 1);
+  assert.equal(lines(crash), 'Check failed: `quotemem check` exited with 4.\nRun `quotemem check` to see why; the settings are saved.\n');
+  for (const result of [arrears, refused, config, crash]) assert.doesNotMatch(result.stdout + result.stderr, /sk-chat-secret|Traceback|Installed 61|"status"/);
+  fs.rmSync(modeFile);
+
   // `quotemem check` on its own runs with the saved settings (the key is not in this environment).
   const check = spawnSync(process.execPath, [CLI, 'check'], { env: { HOME: box.home, USERPROFILE: box.home, PATH: env.PATH }, encoding: 'utf8' });
   assert.equal(check.status, 0, check.stdout + check.stderr);
-  assert.match(check.stdout, /key-seen/);
+  assert.equal(JSON.parse(fs.readFileSync(seen, 'utf8')).key, true);
+  assert.match(check.stdout, /"ok":true/, 'the command itself prints the full report');
 });
 
 test('a hook never waits for the start: the prompt returns at once and later prompts find the service', async () => {
@@ -632,6 +681,132 @@ test('a recorded pid that another program reuses is replaced at once on POSIX, b
   await auto.stopService({ HOME: box.home, USERPROFILE: box.home });
 });
 
+/**
+ * A service from before the listener check on the port of `box`, as an older
+ * plugin (or the user) started it: it answers /agent/listener with 404 and
+ * records what reaches it in `seen`. `release`: what service.lock records for
+ * it (null: no lock, started by hand).
+ */
+async function olderService(box, port, seen, release) {
+  const old = spawn(box.uvx, ['--from', `quotemem==${release ?? '0.3.2'}`, 'quotemem', 'serve', '--port', String(port)], {
+    detached: true, stdio: 'ignore', windowsHide: true,
+    env: { ...process.env, STUB_RECORD: box.record, STUB_MODE: 'old', STUB_SEEN: seen, QUOTEMEM_DATA_DIR: box.dataDir },
+  });
+  started.add(old.pid);
+  if (release !== null) {
+    const { bootTime } = await import(pathToFileURL(path.join(CORE, 'proc.mjs')).href);
+    fs.writeFileSync(path.join(box.home, '.quotemem', 'service.lock'), JSON.stringify({
+      pid: old.pid, startedAt: Date.now() - 60_000, nonce: `n-${old.pid}`, url: `http://127.0.0.1:${port}`, release, boot: bootTime(),
+    }), { mode: 0o600 });
+  }
+  await waitFor(async () => {
+    try { return (await fetch(`http://127.0.0.1:${port}/health`)).ok; } catch { return false; }
+  }, LAUNCH_MS + 5000, 'the older service to answer');
+  return old;
+}
+
+// What reached a stub of `mode` (old: the older service; on Windows the recorded pid is its shim's).
+const seenBy = (file, mode) => {
+  try {
+    return fs.readFileSync(file, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l)).filter((r) => r.mode === mode);
+  } catch {
+    return [];
+  }
+};
+// A started stub with what it started (Windows: the shim and its node).
+function killTree(pid) {
+  if (windows) spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
+  else try { process.kill(-pid, 'SIGKILL'); } catch { try { process.kill(pid, 'SIGKILL'); } catch { /* gone */ } }
+}
+
+test('after an upgrade, an older service the plugins started is replaced once; it gets no token and no content meanwhile', async () => {
+  const seen = path.join(root, `seen-up-${Date.now()}.jsonl`);
+  const box = sandbox({ serviceEnv: { STUB_SEEN: seen } });
+  const port = await freePort();
+  const env = envOf(box, port);
+  const old = await olderService(box, port, seen, '0.3.1');
+  // The first call after the upgrade: no token and no memory data are sent; the old one is replaced in the background.
+  const first = await caller(env);
+  assert.equal(first.error, 'ELISTENER', JSON.stringify(first));
+  assert.equal(first.autostart, 'restarting');
+  assert.ok(first.ms < AT_ONCE_MS, `a caller waited ${first.ms} ms`);
+  const again = await caller(env);
+  assert.ok(again.error, `no request goes before the current service answers: ${JSON.stringify(again)}`);
+  // Within seconds the current release answers, proves itself, and gets the call.
+  let answer = null;
+  await waitFor(async () => { answer = await caller(env); return answer.status === 200; }, 30_000, 'the current service to answer');
+  track(box);
+  assert.ok(gone(old.pid), 'the older service was stopped');
+  const toOld = seenBy(seen, 'old');
+  assert.ok(toOld.length >= 1 && toOld.every((r) => ['/agent/listener', '/health'].includes(r.url) && !r.auth && r.body === 0), JSON.stringify(toOld));
+  const recorded = starts(box);
+  assert.deepEqual(recorded.at(-1).args, ['--from', `quotemem==${auto.SERVICE_RELEASE}`, 'quotemem', 'serve', '--port', String(port)]);
+  const lock = JSON.parse(fs.readFileSync(path.join(box.home, '.quotemem', 'service.lock'), 'utf8'));
+  assert.equal(lock.release, auto.SERVICE_RELEASE);
+  // One replacement per recorded instance.
+  assert.equal(recorded.length, 2, JSON.stringify(recorded));
+  await auto.stopService({ HOME: box.home, USERPROFILE: box.home });
+});
+
+test('an older service the plugins cannot replace: no token and no memory data are sent, the prompt does not wait, the user is told once per session', async () => {
+  const seen = path.join(root, `seen-old-${Date.now()}.jsonl`);
+  const box = sandbox();
+  const port = await freePort();
+  const env = envOf(box, port);
+  // Started by hand (no lock), and one recorded with the current release itself: a restart would change nothing.
+  for (const release of [null, auto.SERVICE_RELEASE]) {
+    const old = await olderService(box, port, seen, release);
+    const saved = { PATH: process.env.PATH, HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
+    Object.assign(process.env, { PATH: env.PATH, HOME: box.home, USERPROFILE: box.home });
+    try {
+      const settings = resolveSettings({}, env, {});
+      const lines = [];
+      const memory = new HookMemory({ settings, log: memoryLog(lines), host: 'test' });
+      const session = `s-${release}`;
+      const times = [];
+      const answers = [];
+      for (const text of ['Where do I live?', 'What did I say about my job?', 'Where do I live now?']) {
+        const t0 = Date.now();
+        answers.push(await memory.prompt({ session, turn: `t${times.length}`, text }));
+        times.push(Date.now() - t0);
+      }
+      assert.ok(times.every((ms) => ms < 1500), `a prompt waited: ${times}`);
+      assert.ok(answers.every((a) => a.kind === 'unavailable'), JSON.stringify(answers.map((a) => a.kind)));
+      // It runs: not the header of a service that is not running.
+      assert.ok(answers[0].context.includes(MEMORY_OFF_HEADER) && !answers[0].context.includes(SETUP_HEADER), answers[0].context);
+      // Started by hand, only the user can stop it; started by a plugin, `npx quotemem stop` does.
+      assert.match(answers[0].context, release === null
+        ? /not started by the agents.*started yourself from an older release, stop it .*`uvx quotemem@latest serve`/s
+        : /from an older release, restart it once with the current release: run `npx quotemem stop`/s);
+      assert.doesNotMatch(answers[0].context, NOISE);
+      assert.ok(answers.slice(1).every((a) => !a.context.includes(MEMORY_OFF_HEADER)), 'the note is given once per session');
+      assert.ok(lines.some((l) => /no token and no memory data were sent to .*does not answer the check \(404\)/.test(l)), lines.join('\n'));
+      // The MCP server tells the model the same, and sends no token or memory data either.
+      const child = spawn(process.execPath, [SERVER], { env, stdio: ['pipe', 'pipe', 'pipe'] });
+      let out = '';
+      child.stdout.on('data', (d) => { out += d; });
+      child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 't', version: '1' } } })}\n`);
+      child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'quotemem_add', arguments: { messages: [{ role: 'user', content: 'My PIN is 4711.' }] } } })}\n`);
+      try {
+        await waitFor(() => out.includes('"id":2'), 8000, 'the tool answer');
+      } finally {
+        child.kill();
+      }
+      assert.match(out.split('\n').find((l) => l.includes('"id":2')), release === null
+        ? /a service the user started from an older release, the user stops it .*`uvx quotemem@latest serve`/
+        : /user's own service from an older release, restarting it once with `npx quotemem stop`/);
+    } finally {
+      Object.assign(process.env, saved);
+    }
+    assert.equal(gone(old.pid), false, 'not stopped by the plugins');
+    const toOld = seenBy(seen, 'old');
+    assert.ok(toOld.length >= 1 && toOld.every((r) => ['/agent/listener', '/health'].includes(r.url) && !r.auth && r.body === 0), JSON.stringify(toOld));
+    killTree(old.pid);
+    await waitFor(() => gone(old.pid), 5000, 'the older service to stop');
+    fs.rmSync(path.join(box.home, '.quotemem', 'service.lock'), { force: true });
+  }
+});
+
 test('a changed host name does not make the local service foreign', async () => {
   const box = sandbox({ serviceEnv: { STUB_MODE: 'hang' } });
   const port = await freePort();
@@ -693,7 +868,7 @@ test('a start that lost its lock, or could not record itself, stops the process 
   await waitFor(() => gone(children[1].pid), 3000, 'the unrecorded process to stop');
 });
 
-test('setup: Enter for the embedding key writes the chat key; keys never echo when only stdin is a terminal', async () => {
+test('setup: Enter for the embedding key writes the chat key; a key shows as * on stderr when only stdin is a terminal', async () => {
   const { cmdSetup } = await import(pathToFileURL(path.resolve(CORE, '..', 'cli', 'service.mjs')).href);
   const { PassThrough, Writable } = await import('node:stream');
   const box = sandbox({ setup: false });
@@ -721,6 +896,7 @@ test('setup: Enter for the embedding key writes the chat key; keys never echo wh
   assert.equal(await done, 0, output.text);
   assert.ok(raw, 'the terminal is in raw mode, so it echoes nothing itself');
   assert.match(echo.text, /gpt-4o-mini/, 'plain answers are echoed to stderr');
+  assert.match(echo.text, /\n\*{18}\n\n/, 'the key shows one * per character');
   assert.doesNotMatch(output.text + echo.text, /sk-typed-chat/);
   const saved = auto.parseServiceEnv(fs.readFileSync(path.join(box.home, '.quotemem', 'service.env'), 'utf8'));
   assert.equal(saved.QUOTEMEM_CHAT_API_KEY, 'sk-typed-chat-EEEE');
@@ -767,7 +943,6 @@ test('setup presets: default is the competition configuration with one key, fast
   const first = setup(box, ['--yes', '--no-check'], { QUOTEMEM_CHAT_API_KEY: 'sk-dash-one-HHHH' });
   assert.equal(first.status, 0, first.stderr);
   assert.match(first.stdout, /^preset: default; from the environment: QUOTEMEM_CHAT_API_KEY$/m);
-  assert.match(first.stdout, /Thinking is at high effort/);
   assert.doesNotMatch(first.stdout + first.stderr, /sk-dash-one/);
   assert.deepEqual(saved(box), { ...PRESETS.default.values, QUOTEMEM_CHAT_API_KEY: 'sk-dash-one-HHHH', QUOTEMEM_EMBED_API_KEY: 'sk-dash-one-HHHH', QUOTEMEM_REVIEW: 'standard' });
   assert.match(text(box), /^# preset: default, the competition configuration/m);
@@ -826,7 +1001,7 @@ test('setup presets: default is the competition configuration with one key, fast
   const one = setup(asked, ['--no-check'], {}, '\n\nsk-typed-dash-LLLL\n');
   assert.equal(one.status, 0, one.stdout + one.stderr);
   assert.equal((one.stdout.match(/API key/g) ?? []).length, 1, 'one key question');
-  assert.match(one.stdout, /Model Studio \(DashScope\) API key, for both models/);
+  assert.match(one.stdout, /\nModel Studio API key \(bailian\.console\.aliyun\.com, China region\): \nSaved to /);
   assert.doesNotMatch(one.stdout + one.stderr, /sk-typed-dash/);
   assert.deepEqual(saved(asked), { ...PRESETS.default.values, QUOTEMEM_CHAT_API_KEY: 'sk-typed-dash-LLLL', QUOTEMEM_EMBED_API_KEY: 'sk-typed-dash-LLLL', QUOTEMEM_REVIEW: 'standard' });
   const toFast = setup(asked, ['--no-check'], {}, '2\n\n\n');
@@ -888,10 +1063,10 @@ test('setup asks the review: standard by default, fixed per store; --review and 
   const asked = sandbox({ setup: false });
   const one = setup(asked, ['--no-check'], {}, '\n\nsk-typed-review-NNNN\n');
   assert.equal(one.status, 0, one.stdout + one.stderr);
-  assert.match(one.stdout, /Review \(how a new memory is checked[\s\S]*fixed when the memory store is created[\s\S]*quotemem rebuild --review/);
-  assert.match(one.stdout, /1\) fast: local review rules only, as in the competition submission/);
-  assert.match(one.stdout, /2\) standard \(recommended\): the chat model reviews only/);
-  assert.match(one.stdout, /3\) full: the chat model reviews every new memory/);
+  assert.match(one.stdout, /\nReview \(fixed when the store is created\):\n/);
+  assert.match(one.stdout, /\n {2}1\) fast: local rules only\n/);
+  assert.match(one.stdout, /\n {2}2\) standard \(recommended\): the model checks memories that may update stored ones\n/);
+  assert.match(one.stdout, /\n {2}3\) full: the model checks every new memory\n/);
   assert.match(one.stdout, /choose \[2\]: [\s\S]*API key/, 'standard is the default, asked before the key');
   assert.equal(saved(asked).QUOTEMEM_REVIEW, 'standard');
   const toFull = setup(asked, ['--no-check'], {}, '1\n3\n\n');
@@ -943,7 +1118,7 @@ test('setup: each numbered question takes the option name, in any case, as well 
   const box = sandbox({ setup: false });
   const fast = setup(box, 'Fast\nSTANDARD\nsk-typed-name-OOOO\n');
   assert.equal(fast.status, 0, fast.stdout + fast.stderr);
-  assert.match(fast.stdout, /1\) default \(recommended\), the competition configuration/);
+  assert.match(fast.stdout, /1\) default \(recommended\): DeepSeek V4\.1 Flash/);
   assert.deepEqual(saved(box), { ...PRESETS.fast.values, ...keys('sk-typed-name-OOOO'), QUOTEMEM_REVIEW: 'standard' });
   const def = setup(box, 'default\nfull\n\n');
   assert.equal(def.status, 0, def.stdout + def.stderr);
@@ -978,9 +1153,7 @@ test('setup: each numbered question takes the option name, in any case, as well 
 
 test('setup: the key question of the default and fast presets names the Model Studio key and where to get it', () => {
   const setup = (box, input) => spawnSync(process.execPath, [CLI, 'setup', '--no-check'], { env: { HOME: box.home, USERPROFILE: box.home, PATH: process.env.PATH }, encoding: 'utf8', input });
-  const note = '\n  Both models, DeepSeek included, are called through Alibaba Cloud Model Studio: the key is a Model Studio key\n'
-    + '  from https://bailian.console.aliyun.com (China region), not a DeepSeek platform key.\n'
-    + '  Model Studio (DashScope) API key, for both models (typed without echo): ';
+  const note = '\nModel Studio API key (bailian.console.aliyun.com, China region): ';
   for (const input of ['\n\nsk-typed-note-SSSS\n', 'fast\n\nsk-typed-note-SSSS\n']) {
     const run = setup(sandbox({ setup: false }), input);
     assert.equal(run.status, 0, run.stdout + run.stderr);
@@ -990,42 +1163,36 @@ test('setup: the key question of the default and fast presets names the Model St
   // Custom endpoints: no note.
   const custom = setup(sandbox({ setup: false }), `${['custom', 'https://api.openai.com/v1', 'gpt-4o-mini', '', '', '', 'm', '', 'sk-typed-note-TTTT', ''].join('\n')}\n`);
   assert.equal(custom.status, 0, custom.stdout + custom.stderr);
-  assert.doesNotMatch(custom.stdout, /bailian|Model Studio key/);
+  assert.doesNotMatch(custom.stdout, /bailian|Model Studio API key/);
 });
 
-test('setup: a key Model Studio refuses for the default or fast preset is explained; other failures keep the plain line', () => {
+test('setup: a key Model Studio refuses for the default or fast preset names the Model Studio key; other failures get their own hint', () => {
   /** A stub `quotemem check` that prints a failed report with `code` and exits 1. */
   const failing = (box, code) => writeUvx(box.bin, `console.log(JSON.stringify({ code: ${JSON.stringify(code)}, hint: 'The embedding provider refused the key; check QUOTEMEM_EMBED_API_KEY', ok: false, role: 'embedding', status: 'checked' }));\nprocess.exit(1);\n`);
   const setup = (box, args, env) => spawnSync(process.execPath, [CLI, 'setup', '--yes', ...args], { env: { HOME: box.home, USERPROFILE: box.home, PATH: `${box.bin}${path.delimiter}${process.env.PATH}`, ...env }, encoding: 'utf8' });
-  const refusedLines = (preset) => 'FAIL: Alibaba Cloud Model Studio refused the key. The ' + preset + ' preset takes a Model Studio API key\n'
-    + 'from https://bailian.console.aliyun.com (China region); a DeepSeek platform key or an international Model Studio key\n'
-    + 'is refused there. The settings are saved; to try again, run `quotemem setup`, or set DASHSCOPE_API_KEY\n'
-    + 'and run `quotemem setup --yes --preset ' + preset + '`.\n';
-  const plain = 'FAIL: `quotemem check` exited with 1; fix the settings with `quotemem setup` (the file is saved).\n';
-
+  const modelStudio = 'Use a Model Studio key (bailian.console.aliyun.com, China region), not a DeepSeek key; run `quotemem setup` again.\n';
   for (const [preset, code] of [['default', 'http_401'], ['fast', 'http_401'], ['default', 'http_403']]) {
     const box = sandbox({ setup: false });
     failing(box, code);
     const run = setup(box, ['--preset', preset, '--review', 'standard'], { DASHSCOPE_API_KEY: 'sk-refused-dash-UUUU' });
     assert.equal(run.status, 1, run.stdout + run.stderr);
-    assert.ok(run.stdout.includes(`"code": "${code}"`) || run.stdout.includes(`"code":"${code}"`), 'the report is shown');
-    assert.ok(run.stdout.endsWith(refusedLines(preset)), run.stdout);
-    assert.ok(!run.stdout.includes(plain));
+    assert.ok(run.stdout.endsWith(`...\nCheck failed: embedding model, HTTP ${code.slice(5)}.\n${modelStudio}`), run.stdout);
+    assert.doesNotMatch(run.stdout, /"code"/, 'the report is summed up, not shown');
     assert.doesNotMatch(run.stdout + run.stderr, /sk-refused-dash/);
     assert.ok(fs.existsSync(path.join(box.home, '.quotemem', 'service.env')), 'the settings are saved');
   }
-  // Another failure with a preset, and a refused key on custom endpoints: the plain line.
+  // Another failure with a preset, and a refused key on custom endpoints: their own hint.
   const busy = sandbox({ setup: false });
   failing(busy, 'http_429');
   const limited = setup(busy, ['--preset', 'default'], { DASHSCOPE_API_KEY: 'sk-refused-dash-UUUU' });
   assert.equal(limited.status, 1);
-  assert.ok(limited.stdout.endsWith(plain), limited.stdout);
+  assert.ok(limited.stdout.endsWith('...\nCheck failed: embedding model, HTTP 429.\nThe provider is rate limiting or out of quota; run `quotemem check` later.\n'), limited.stdout);
   const custom = sandbox({ setup: false });
   failing(custom, 'http_401');
   const run = setup(custom, ['--chat-url', 'https://api.deepseek.com/v1', '--chat-model', 'deepseek-chat', '--embed-model', 'm'], { QUOTEMEM_CHAT_API_KEY: 'sk-refused-custom-VVVV' });
   assert.equal(run.status, 1, run.stdout + run.stderr);
-  assert.ok(run.stdout.endsWith(plain), run.stdout);
-  assert.doesNotMatch(run.stdout, /Model Studio refused|bailian/);
+  assert.ok(run.stdout.endsWith('...\nCheck failed: embedding model, HTTP 401.\nThe embedding key was refused. Run `quotemem setup` again with a working key.\n'), run.stdout);
+  assert.doesNotMatch(run.stdout, /Model Studio|bailian/);
   assert.doesNotMatch(run.stdout + run.stderr, /sk-refused-custom/);
 });
 

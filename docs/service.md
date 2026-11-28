@@ -69,6 +69,10 @@ quotemem check   # read-only: checks the settings and probes both providers
 quotemem serve   # http://127.0.0.1:8765; the bearer token goes to <data-dir>/token
 ```
 
+- `quotemem check` prints one JSON line. When a probe fails it names the
+  `role` (`chat` or `embedding`), the `code` (such as `http_401`), the
+  provider's own `provider_code` when its reply gives one (such as
+  `Arrearage` or `invalid_api_key`) and a `hint`.
 - The service URL is `http://127.0.0.1:8765` by default; `--port` changes
   the port.
 - The service listens on loopback only, unless `--allow-remote` is given.
@@ -85,9 +89,15 @@ quotemem serve   # http://127.0.0.1:8765; the bearer token goes to <data-dir>/to
   `<data-dir>/token` (mode 0600) on the first start. Clients and the commands
   below read it from there. Do not export the token in the shell that starts
   an agent: the agent's own shell tool would inherit it.
-- The port is bound before the providers are probed. Until the store is open,
-  the memory routes and `GET /health` answer 503 with `Retry-After`, and
-  `GET /agent/status` says what is failing and how to fix it.
+- A missing or malformed setting, such as no `QUOTEMEM_CHAT_BASE_URL`, stops
+  `quotemem serve` at once with exit code 1 and one JSON line that names the
+  variable to set. Nothing is written and no port is bound. A store that
+  another process is using stops it the same way.
+- With the settings in place, the port is bound before the providers are
+  probed. Until the store is open, for example while a provider is
+  unreachable, the memory routes and `GET /health` answer 503 with
+  `Retry-After`, and `GET /agent/status` says what is failing and how to fix
+  it.
 - Stop it with Ctrl-C; it drains in-flight requests before it exits.
 
 Write a conversation turn, then search it. The token file is `token` in the
@@ -129,9 +139,18 @@ curl -s http://127.0.0.1:8765/memory/search \
   reason codes of those facts, with counts), `items` (each fact's category and
   reason code), `added` (how many new memories a read still shows) and `forgets`
   (what each forget request in the chat did).
-- Search makes no model call besides the query embedding and keeps to a
-  2.5-second deadline. Each memory hit carries a `Status:` line (`current`,
-  `past` or `possibly_outdated`).
+- With the default Search profile (`interactive`), Search makes no model call
+  besides the query embedding and keeps to a 2.5-second deadline. Each memory
+  hit carries a `Status:` line (`current`, `past` or `possibly_outdated`).
+- With the default Search profile, a Search body may add `as_of` to search the
+  past:
+  `{"mode": "world", "at": <epoch ms>}` or `{"mode": "knowledge", "at": <epoch ms>}`.
+  - `world` answers what held at that time, by the dates the store holds: the
+    memories valid then, and as hits only the message parts said by then.
+  - `knowledge` answers what the store knew at that time: each memory as it was
+    recorded by then. It returns no message parts, and `at` must not be in the
+    future.
+  - Each memory's `Status:` line is read at that time, from what the read shows.
 
 Routes:
 
@@ -145,6 +164,7 @@ Routes:
 | `POST /memory/forget/prepare` | Step 1 of a forget: the body names exactly one of `statement` (the user's words) or `memory_id` with `expected_revision_id` |
 | `POST /memory/forget/confirm` | Step 2: send back the prepare's `confirmation` unchanged |
 | `GET /agent/ready` | 200 once serving (no token) |
+| `GET /agent/listener` | With `x-quotemem-challenge`: proof that this service holds the token, for the address and port it listens on (no token sent; only on a loopback address, to a client on this computer); the plugins and the `quotemem` commands check it before they send the token (a `localhost` URL is checked and used as 127.0.0.1) |
 | `GET /agent/status` | Phase, store binding, provider health and counters, without content |
 | `POST /agent/admin/delete-user` | Erase one user |
 | `POST /agent/admin/repair` | Inspect, resume or skip a quarantined user |

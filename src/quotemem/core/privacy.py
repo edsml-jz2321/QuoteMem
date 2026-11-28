@@ -920,6 +920,7 @@ def trimmed_support(
     speakers: Callable[[QuoteSpanV1], frozenset[str]] | None = None,
     any_script: bool = False,
     given: str = "",
+    shared: frozenset[str] = frozenset(),
 ) -> TrimmedSupport | None:
     """The groups a forget's dependent keeps on the readable parts of its quotes.
 
@@ -984,6 +985,9 @@ def trimmed_support(
             head gives none: its statement is the head's. It holds nothing when the head may
             show a withheld value in another script (``_given_safe``: "Li Wei" over a withheld
             李伟, "Shanghai" over a withheld 上海).
+        shared: The words the statement may share with the group's withheld bytes: the word a
+            new value's name ends with that the forgotten name ends with too ("幼儿园" of a
+            kept 蓝湾幼儿园 beside a withheld 启明幼儿园), which names neither.
 
     Returns:
         The qualifying groups and the keywords the requoted head keeps; None when no
@@ -1067,7 +1071,7 @@ def trimmed_support(
                     text for part in hidden if (text := quoted(part)) is not None]) else ""]):
             continue
         if (kept_words is not None and hidden_words is not None
-                and needed <= kept_words and not shows & hidden_words):
+                and needed <= kept_words and not shows & hidden_words - shared):
             trimmed.add(tuple(sorted(set(kept), key=lambda part: (
                 part.evidence_id, part.byte_start, part.byte_end))))
             withheld_words |= hidden_words

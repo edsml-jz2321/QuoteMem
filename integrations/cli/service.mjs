@@ -3,14 +3,15 @@
 // QuoteMem runs on the user's own computer. `setup` asks once for the model
 // settings and writes them to ~/.quotemem/service.env (mode 0600, in a 0700
 // folder); from then on the plugins start the service by themselves when an
-// agent needs it (integrations/core/autostart.mjs). Keys are read from the
-// terminal without echo, or from the environment, never from the command
-// line, and are never printed.
+// agent needs it (integrations/core/autostart.mjs). Keys are read from
+// setup's input (a terminal shows one * per character) or from the
+// environment, never from the command line, and are never printed.
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
 import { Writable } from 'node:stream';
+import { StringDecoder } from 'node:string_decoder';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { plainHttpUrl } from '../core/autostart.mjs';
@@ -51,11 +52,11 @@ const COMPETITION = Object.freeze({
 /** The ready-made model settings `setup` offers; `custom` asks for each value instead. */
 export const PRESETS = Object.freeze({
   default: Object.freeze({
-    label: 'default (recommended), the competition configuration: DeepSeek V4.1 Flash with thinking at high effort and Qwen3.7 embeddings (1024 dimensions), both through Alibaba Cloud Model Studio with one key. Saving memories is slower (a large batch of corrections can take minutes), and thinking adds output tokens to the bill',
+    label: 'default (recommended): DeepSeek V4.1 Flash (thinking high) + Qwen3.7 embeddings, one Model Studio key',
     values: Object.freeze({ ...COMPETITION, QUOTEMEM_CHAT_REASONING: CHAT_REASONING.high }),
   }),
   fast: Object.freeze({
-    label: 'fast: the same models and key with thinking off. Memories are saved in seconds',
+    label: 'fast: the same models, thinking off; faster and cheaper',
     values: Object.freeze({ ...COMPETITION, QUOTEMEM_CHAT_REASONING: CHAT_REASONING.off }),
   }),
 });
@@ -71,9 +72,9 @@ const REASONING_CHOICES = { high: CHAT_REASONING.high, off: CHAT_REASONING.off, 
  * change them here, and only here, when it does.
  */
 export const REVIEWS = Object.freeze({
-  fast: 'fast: local review rules only, as in the competition submission. No review calls, so the fastest and cheapest; a change said outright ("Hangzhou, not Beijing") retires the old memory',
-  standard: 'standard (recommended): the chat model reviews only the new memories that may repeat, update or correct a stored one',
-  full: 'full: the chat model reviews every new memory. The slowest and most careful, with the most model calls',
+  fast: 'fast: local rules only',
+  standard: 'standard (recommended): the model checks memories that may update stored ones',
+  full: 'full: the model checks every new memory',
 });
 export const DEFAULT_REVIEW = 'standard';
 const REVIEW = 'QUOTEMEM_REVIEW';
@@ -111,21 +112,25 @@ const MODEL_OPTIONS = ['chat-url', 'chat-model', 'embed-url', 'embed-model'];
 export const SETUP_USAGE = `usage: quotemem setup [options]
 
 Asks which models the memory service calls, saves the settings to
-~/.quotemem/service.env (mode 600), and checks them with \`quotemem check\`.
-After that the service starts by itself, on this computer, whenever an agent
-needs it. Keys are typed without echo; they are never taken from the command
-line.
+~/.quotemem/service.env (mode 600), and checks them with \`quotemem check\`
+(one call to each model). After that the service starts by itself, on this
+computer, whenever an agent needs it. On a terminal, a key shows one * per
+character as you type it; keys are never taken from the command line.
 
 presets (--preset NAME):
   default   recommended, the competition configuration: chat model
             deepseek-v4.1-flash-1017 with thinking at high effort, embedding
             model qwen3.7-text-embedding (1024 dimensions), both through
             Alibaba Cloud Model Studio (DashScope) with one key. Saving
-            memories is slower, and thinking adds output tokens to the bill.
+            memories is slower (a large batch of corrections can take
+            minutes), and thinking adds output tokens to the bill.
   fast      the same models with thinking off: memories are saved in
             seconds.
   custom    any OpenAI-compatible chat and embedding endpoints, models and
             keys.
+Both presets take a Model Studio API key from ${MODEL_STUDIO_CONSOLE}
+(China region). A DeepSeek platform key or an international Model Studio key
+is refused there.
 
 review (--review NAME; asked after the models, Enter keeps the saved one,
 else standard). It decides whether a new memory repeats, updates or corrects
@@ -133,11 +138,12 @@ a stored one, and it is fixed when the memory store is created: to change it
 for an existing store, rebuild the store (\`quotemem rebuild --from <data dir>
 --to <new data dir> --review NAME\`, then point QUOTEMEM_DATA_DIR at the new one).
   fast      local review rules only, as in the competition submission: no
-            review calls, the fastest and cheapest.
+            review calls, the fastest and cheapest. A change said outright
+            ("Hangzhou, not Beijing") retires the old memory.
   standard  the default: the chat model reviews only the new memories that may
             repeat, update or correct a stored one.
   full      the chat model reviews every new memory: the slowest and most
-            careful.
+            careful, with the most model calls.
 
 options (each skips its question):
   --preset default|fast|custom   (the fast preset turns thinking off; it is not
@@ -156,6 +162,10 @@ options (each skips its question):
                --preset: custom when a model option is given or settings are
                saved (the saved values fill the rest), else default.
   --no-check   do not run \`quotemem check\`
+
+The check ends with "Key works." or with the model that failed, the
+provider's error code (such as 401 or Arrearage) and a hint; the settings are
+saved either way. \`quotemem check\` prints the full report.
 
 Every value stays editable in ~/.quotemem/service.env; for example
 QUOTEMEM_CHAT_REASONING=${CHAT_REASONING.off} turns thinking off.
@@ -183,21 +193,18 @@ function sameHost(a, b) {
 const printable = (value) => /^[\x20-\x7e]+$/.test(value) && value.trim() === value;
 
 /**
- * A question reader on a terminal (keys without echo) or on piped lines.
- * Whether the answers come from a terminal decides alone: readline then puts
- * the terminal in raw mode (it echoes nothing itself) and echoes the typed
- * answers to `output`, or to `echo` (stderr) when `output` is not a terminal
- * (`setup | tee`), with keys muted either way.
+ * A question reader on a terminal or on piped lines. Whether the answers come
+ * from a terminal decides alone. On a terminal the answers are echoed to
+ * `output`, or to `echo` (stderr) when `output` is not a terminal
+ * (`setup | tee`); a key shows one `*` per character. Piped answers are not
+ * echoed. `ask` throws `EOF` when the input ends and `ABORT` on Ctrl-C.
  */
-function prompter(input, output, echo) {
-  const tty = Boolean(input.isTTY);
-  const echoTo = output.isTTY ? output : echo?.isTTY ? echo : new Writable({ write(_chunk, _encoding, done) { done(); } });
-  const rl = readline.createInterface({ input, output: tty ? echoTo : undefined, terminal: tty });
-  let muted = false;
-  if (tty) {
-    const write = rl._writeToOutput.bind(rl);
-    rl._writeToOutput = (text) => { if (!muted) write(text); };
+export function prompter(input, output, echo) {
+  if (input.isTTY) {
+    const echoTo = output.isTTY ? output : echo?.isTTY ? echo : new Writable({ write(_chunk, _encoding, done) { done(); } });
+    return terminalPrompter(input, output, echoTo);
   }
+  const rl = readline.createInterface({ input, terminal: false });
   const lines = [];
   const waiting = [];
   let closed = false;
@@ -211,16 +218,114 @@ function prompter(input, output, echo) {
     for (const next of waiting.splice(0)) next(null);
   });
   return {
-    async ask(question, { secret = false } = {}) {
+    async ask(question) {
       output.write(question);
-      muted = secret;
       const line = lines.length > 0 ? lines.shift() : closed ? null : await new Promise((resolve) => waiting.push(resolve));
-      muted = false;
-      if (secret && tty) echoTo.write('\n');
-      if (line === null) throw Object.assign(new Error('no more input'), { code: 'EOF' });
+      if (line === null) throw endOfInput('EOF');
       return line.trim();
     },
     close() { rl.close(); },
+  };
+}
+
+const endOfInput = (code) => Object.assign(new Error(code === 'ABORT' ? 'cancelled' : 'no more input'), { code });
+
+/**
+ * Answers typed on a terminal, read in raw mode so the terminal echoes
+ * nothing itself: a plain answer is echoed as typed, a secret one as one `*`
+ * per character (a paste too). Backspace removes the last character and
+ * Ctrl-U the whole answer; Enter ends it. Ctrl-C, and Ctrl-D on an empty
+ * answer, end the questions; `close` gives the terminal back as it was.
+ * Escape sequences (arrow keys, paste brackets) are ignored. Text typed
+ * before a question is kept for it.
+ */
+function terminalPrompter(input, output, echoTo) {
+  const decoder = new StringDecoder('utf8');
+  let pending = '';
+  let current = null;
+  let ended = null;
+  let afterCr = false;
+  const finish = (answer) => {
+    const { resolve } = current;
+    current = null;
+    resolve(answer);
+  };
+  const fail = (code) => {
+    ended = code;
+    const { reject } = current;
+    current = null;
+    reject(endOfInput(code));
+  };
+  const drain = () => {
+    while (current && pending) {
+      const c = pending[0];
+      if (c === '\x1b') {
+        // CSI (ESC [ params final) or SS3 (ESC O x); wait for the rest of a split one.
+        const match = /^\x1b(?:\[[0-?]*[ -/]*[@-~]|O.|[^[O])/.exec(pending);
+        if (!match) {
+          if (pending.length < 16) return;
+          pending = pending.slice(1);
+          continue;
+        }
+        pending = pending.slice(match[0].length);
+        afterCr = false;
+        continue;
+      }
+      pending = pending.slice(1);
+      if (c === '\n' && afterCr) {
+        afterCr = false;
+        continue;
+      }
+      afterCr = c === '\r';
+      if (c === '\r' || c === '\n') {
+        echoTo.write('\n');
+        finish(current.chars.join(''));
+      } else if (c === '\x03') {
+        echoTo.write('\n');
+        fail('ABORT');
+      } else if (c === '\x04') {
+        if (current.chars.length === 0) {
+          echoTo.write('\n');
+          fail('EOF');
+        }
+      } else if (c === '\x7f' || c === '\b') {
+        if (current.chars.pop() !== undefined) echoTo.write('\b \b');
+      } else if (c === '\x15') {
+        echoTo.write('\b \b'.repeat(current.chars.length));
+        current.chars = [];
+      } else if (c >= ' ') {
+        current.chars.push(c);
+        echoTo.write(current.secret ? '*' : c);
+      }
+    }
+  };
+  const onData = (chunk) => {
+    pending += typeof chunk === 'string' ? chunk : decoder.write(chunk);
+    drain();
+  };
+  const onEnd = () => {
+    if (current) fail('EOF');
+    else ended ??= 'EOF';
+  };
+  input.setRawMode?.(true);
+  input.on('data', onData);
+  input.on('end', onEnd);
+  input.resume();
+  return {
+    async ask(question, { secret = false } = {}) {
+      if (ended === 'ABORT') throw endOfInput(ended);
+      output.write(question);
+      const answer = new Promise((resolve, reject) => { current = { secret, chars: [], resolve, reject }; });
+      drain();
+      if (current && ended) fail(ended);
+      return (await answer).trim();
+    },
+    close() {
+      input.off('data', onData);
+      input.off('end', onEnd);
+      input.setRawMode?.(false);
+      input.pause();
+    },
   };
 }
 
@@ -258,10 +363,11 @@ async function askName(ask, question, fallback) {
   }
 }
 
-async function askKey(ask, label, saved, fallbackLabel, out) {
+async function askKey(ask, label, saved, fallbackLabel, out, where = null) {
   const hint = saved ? 'Enter keeps the saved key' : fallbackLabel ? `Enter uses ${fallbackLabel}` : null;
+  const notes = [where, hint].filter(Boolean).join('; ');
   for (;;) {
-    const key = await ask(`  ${label} (typed without echo${hint ? `; ${hint}` : ''}): `, { secret: true });
+    const key = await ask(`${label}${notes ? ` (${notes})` : ''}: `, { secret: true });
     if (key === '' && (saved || fallbackLabel)) return null;
     if (key && printable(key) && !/\s/.test(key)) return key;
     out.write(key ? '  a key is printable text without spaces\n' : '  a key is needed\n');
@@ -483,23 +589,20 @@ function settingsWithoutQuestions(presetName, flags, env, previous) {
 async function askKeys(ask, out, values, previous, preset) {
   const sharedHost = sameHost(embedUrlOf(values), values.QUOTEMEM_CHAT_BASE_URL);
   const savedChat = savedKey(previous, values, 'QUOTEMEM_CHAT_API_KEY');
+  out.write('\n');
   if (preset && sharedHost) {
+    // Both models, DeepSeek included, are called through Model Studio with its key.
     const modelStudio = values.QUOTEMEM_CHAT_BASE_URL === DASHSCOPE_URL;
-    const label = modelStudio ? 'Model Studio (DashScope) API key, for both models' : 'API key, for both models';
-    out.write('\n');
-    if (modelStudio) {
-      const deepseek = /^deepseek/i.test(values.QUOTEMEM_CHAT_MODEL ?? '');
-      out.write(`  Both models${deepseek ? ', DeepSeek included,' : ''} are called through Alibaba Cloud Model Studio: the key is a Model Studio key\n`);
-      out.write(`  from ${MODEL_STUDIO_CONSOLE} (China region)${deepseek ? ', not a DeepSeek platform key' : ''}.\n`);
-    }
-    const key = (await askKey(ask, label, Boolean(savedChat), null, out)) ?? savedChat;
+    const where = modelStudio ? `${new URL(MODEL_STUDIO_CONSOLE).host}, China region` : null;
+    const label = modelStudio ? 'Model Studio API key' : 'API key for both models';
+    const key = (await askKey(ask, label, Boolean(savedChat), null, out, where)) ?? savedChat;
     values.QUOTEMEM_CHAT_API_KEY = key;
     values.QUOTEMEM_EMBED_API_KEY = key;
     return;
   }
-  values.QUOTEMEM_CHAT_API_KEY = (await askKey(ask, 'chat API key', Boolean(savedChat), null, out)) ?? savedChat;
+  values.QUOTEMEM_CHAT_API_KEY = (await askKey(ask, 'Chat API key', Boolean(savedChat), null, out)) ?? savedChat;
   const savedEmbed = savedKey(previous, values, 'QUOTEMEM_EMBED_API_KEY');
-  const embedKey = await askKey(ask, 'embedding API key', Boolean(savedEmbed), sharedHost ? 'the chat key' : null, out);
+  const embedKey = await askKey(ask, 'Embedding API key', Boolean(savedEmbed), sharedHost ? 'the chat key' : null, out);
   // Enter takes the saved key, else the chat key: written out either way.
   values.QUOTEMEM_EMBED_API_KEY = embedKey ?? (savedEmbed || values.QUOTEMEM_CHAT_API_KEY);
 }
@@ -508,23 +611,23 @@ async function askKeys(ask, out, values, previous, preset) {
 async function askCustom(ask, out, flags, previous) {
   const values = {};
   const keep = (name) => (previous[name] ? `; Enter keeps ${previous[name]}` : '');
-  out.write('\nChat model (any OpenAI-compatible endpoint; it picks out and reviews memories)\n');
+  out.write('\nChat model (OpenAI-compatible; it picks out and reviews memories):\n');
   put(values, 'QUOTEMEM_CHAT_BASE_URL', flags['chat-url'] ?? await askUrl(ask, out, `  base URL (https://…/v1${keep('QUOTEMEM_CHAT_BASE_URL')}): `, previous.QUOTEMEM_CHAT_BASE_URL));
   put(values, 'QUOTEMEM_CHAT_MODEL', flags['chat-model'] ?? await askName(ask, `  model name${previous.QUOTEMEM_CHAT_MODEL ? ` (Enter keeps ${previous.QUOTEMEM_CHAT_MODEL})` : ''}: `, previous.QUOTEMEM_CHAT_MODEL));
   put(values, 'QUOTEMEM_CHAT_STRUCTURED_OUTPUT', flags['chat-structured-output'] ?? await menu(ask, out, '  structured output:', [
     { label: 'json_schema: strict JSON schemas (OpenAI and most providers)', value: 'json_schema' },
-    { label: 'json_object: JSON mode, the schema in the prompt (DeepSeek, Model Studio and others without strict schemas)', value: 'json_object' },
+    { label: 'json_object: JSON mode (DeepSeek, Model Studio, others without strict schemas)', value: 'json_object' },
   ]));
   put(values, 'QUOTEMEM_CHAT_REASONING', flags['chat-reasoning'] !== undefined ? REASONING_CHOICES[flags['chat-reasoning']] : await menu(ask, out, '  thinking:', [
-    { label: 'the provider\'s default (no reasoning parameters are sent)', name: 'default', value: REASONING_CHOICES.default },
+    { label: 'the provider\'s default (no thinking parameters are sent)', name: 'default', value: REASONING_CHOICES.default },
     { label: 'off (faster writes)', value: REASONING_CHOICES.off },
-    { label: 'high effort (slower writes, more output tokens)', value: REASONING_CHOICES.high },
+    { label: 'high (slower writes, more output tokens)', value: REASONING_CHOICES.high },
   ]));
   // A saved pattern is kept for the same model on the same endpoint.
   const samePlace = previous.QUOTEMEM_CHAT_MODEL === values.QUOTEMEM_CHAT_MODEL && previous.QUOTEMEM_CHAT_BASE_URL === values.QUOTEMEM_CHAT_BASE_URL;
   put(values, 'QUOTEMEM_CHAT_MODEL_PATTERN', flags['chat-model-pattern'] ?? (samePlace ? previous.QUOTEMEM_CHAT_MODEL_PATTERN : ''));
 
-  out.write('\nEmbedding model (any OpenAI-compatible endpoint; it searches memories)\n');
+  out.write('\nEmbedding model (OpenAI-compatible; it searches memories):\n');
   put(values, 'QUOTEMEM_EMBED_BASE_URL', flags['embed-url'] ?? await askUrl(ask, out, '  base URL (Enter uses the chat URL): ', values.QUOTEMEM_CHAT_BASE_URL));
   const savedModel = embedUrlOf(previous) === values.QUOTEMEM_EMBED_BASE_URL ? previous.QUOTEMEM_EMBED_MODEL : undefined;
   put(values, 'QUOTEMEM_EMBED_MODEL', flags['embed-model'] ?? await askName(ask, `  model name${savedModel ? ` (Enter keeps ${savedModel})` : ''}: `, savedModel));
@@ -535,7 +638,7 @@ async function askCustom(ask, out, flags, previous) {
 async function askReview(ask, out, previous) {
   const saved = reviewOf(previous).value ?? DEFAULT_REVIEW;
   const options = REVIEW_NAMES.map((name) => ({ label: REVIEWS[name], value: name }));
-  return menu(ask, out, 'Review (how a new memory is checked against the stored ones; fixed when the memory store is created,\nchanging it later needs `quotemem rebuild --review`):', options, REVIEW_NAMES.indexOf(saved));
+  return menu(ask, out, 'Review (fixed when the store is created):', options, REVIEW_NAMES.indexOf(saved));
 }
 
 /**
@@ -584,13 +687,13 @@ export async function cmdSetup(flags, { env = process.env, input = process.stdin
   } else {
     const ask = prompter(input, output, echo);
     try {
-      output.write(`QuoteMem runs on this computer and keeps its memory here. Its memory service calls one chat model\n(to pick out memories) and one embedding model (to search them). Settings go to ${paths.envFile}.\n`);
+      output.write(`QuoteMem keeps its memory on this computer. Settings go to ${paths.envFile}.\n`);
       let choice = flags.preset ?? (modelOption ? 'custom' : null);
       if (!choice) {
         const options = [
           { label: PRESETS.default.label, value: 'default' },
           { label: PRESETS.fast.label, value: 'fast' },
-          { label: 'custom: your own OpenAI-compatible chat and embedding endpoints, models and keys', value: 'custom' },
+          { label: 'custom: your own OpenAI-compatible endpoints', value: 'custom' },
         ];
         if (previous.QUOTEMEM_CHAT_BASE_URL && previous.QUOTEMEM_CHAT_MODEL) {
           const savedPreset = presetOf(nonKeys(previous));
@@ -617,6 +720,10 @@ export async function cmdSetup(flags, { env = process.env, input = process.stdin
       if (error?.code === 'EOF') {
         process.stderr.write('\nquotemem setup: input ended before every question was answered; nothing was saved\n');
         return 2;
+      }
+      if (error?.code === 'ABORT') {
+        process.stderr.write('quotemem setup: cancelled; nothing was saved\n');
+        return 130;
       }
       throw error;
     } finally {
@@ -647,10 +754,7 @@ export async function cmdSetup(flags, { env = process.env, input = process.stdin
 
   writeServiceEnv(paths, serialize(values, previous));
   const preset = presetOf(values);
-  output.write(`\nsaved ${paths.envFile} (mode 600; the keys are not shown)${preset ? `: preset ${preset}` : ''}, review ${values[REVIEW]}\n`);
-  if (preset === 'default') {
-    output.write(`Thinking is at high effort, as in the competition configuration: saving memories takes longer.\nFor faster writes run \`quotemem setup --preset fast\`, or set QUOTEMEM_CHAT_REASONING=${CHAT_REASONING.off} in that file.\n`);
-  }
+  output.write(`\nSaved to ${paths.envFile}${preset ? `: preset ${preset}` : ''}, review ${values[REVIEW]}.\n`);
   // A store keeps the review it was created with; the service refuses another one.
   const savedReview = reviewOf(previous).value;
   const dataDir = dataDirOf(serviceEnvironment(env, { ...previous, ...values }), paths.dir);
@@ -663,53 +767,90 @@ export async function cmdSetup(flags, { env = process.env, input = process.stdin
     ].join('\n') + '\n');
   }
   if (flags['no-check']) {
-    output.write('not checked (--no-check); run `quotemem check` to check the settings\n');
+    output.write('Not checked (--no-check); `quotemem check` checks the settings.\n');
     return 0;
   }
-  output.write('checking the settings with `quotemem check` (one call to each model; the first run downloads the service)...\n');
-  // The check's report goes to the output as it comes, and is read for a refused key.
-  const { child } = await runServiceCommand('check', [], { env, stdio: ['ignore', 'pipe', 'inherit'], release, exact: true });
+  const oneKey = values.QUOTEMEM_CHAT_API_KEY === values.QUOTEMEM_EMBED_API_KEY;
+  output.write(`Checking the ${oneKey ? 'key' : 'keys'} (one call to each model; the first check downloads the service)...\n`);
+  // The check's report (one JSON line) and its errors are read, not shown: setup sums them up.
+  const { child } = await runServiceCommand('check', [], { env, stdio: ['ignore', 'pipe', 'pipe'], release, exact: true });
   if (!child) {
-    output.write('could not check: uvx is not on PATH. Install uv (https://docs.astral.sh/uv/); the memory service runs through it.\n');
+    output.write('Could not check: uvx is not on PATH. Install uv (https://docs.astral.sh/uv/).\n');
     return 1;
   }
-  let report = '';
-  child.stdout.on('data', (chunk) => {
-    output.write(chunk);
-    if (report.length < REPORT_CHARS) report += chunk.toString('utf8');
-  });
+  const read = { stdout: '', stderr: '' };
+  for (const stream of ['stdout', 'stderr']) {
+    child[stream].on('data', (chunk) => {
+      if (read[stream].length < REPORT_CHARS) read[stream] += chunk.toString('utf8');
+    });
+  }
   const code = await new Promise((resolve) => {
     child.on('error', () => resolve(127));
     child.on('close', (exitCode, signal) => resolve(signal ? 1 : exitCode ?? 1));
   });
   if (code === 0) {
-    output.write('ok: the settings work. The memory service now starts by itself whenever an agent needs it.\n');
+    output.write(`${oneKey ? 'Key works' : 'Keys work'}. The memory service starts by itself when an agent needs it.\n`);
     return 0;
   }
-  if ((preset === 'default' || preset === 'fast') && keyRefused(report)) {
-    output.write([
-      `FAIL: Alibaba Cloud Model Studio refused the key. The ${preset} preset takes a Model Studio API key`,
-      `from ${MODEL_STUDIO_CONSOLE} (China region); a DeepSeek platform key or an international Model Studio key`,
-      'is refused there. The settings are saved; to try again, run `quotemem setup`, or set DASHSCOPE_API_KEY',
-      `and run \`quotemem setup --yes --preset ${preset}\`.`,
-    ].join('\n') + '\n');
-    return 1;
-  }
-  output.write(`FAIL: \`quotemem check\` exited with ${code}; fix the settings with \`quotemem setup\` (the file is saved).\n`);
+  output.write(`${checkFailure(lastReport(read.stdout) ?? lastReport(read.stderr), code, preset).join('\n')}\n`);
   return 1;
 }
 
 /** Characters of the check's output `setup` reads; its report is one short line. */
 const REPORT_CHARS = 1 << 16;
 
-/** Whether the check's report (one JSON line on its output) says a provider refused the key. */
-function keyRefused(text) {
+/** The last JSON object line of the check's output, else null. */
+function lastReport(text) {
+  let found = null;
   for (const line of text.split('\n')) {
-    let value = null;
-    try { value = JSON.parse(line); } catch { continue; }
-    if (value && typeof value === 'object' && ['http_401', 'http_403'].includes(value.code)) return true;
+    try {
+      const value = JSON.parse(line);
+      if (value && typeof value === 'object' && !Array.isArray(value)) found = value;
+    } catch {
+      // not a report line
+    }
   }
-  return false;
+  return found;
+}
+
+/** A word the check report gives (a code), shown only when it is a plain identifier. */
+const plainCode = (value) => (typeof value === 'string' && /^[A-Za-z0-9_.-]{1,64}$/.test(value) ? value : null);
+
+/**
+ * Two lines for a failed check: what failed (the model, and the HTTP status
+ * and the provider's error code when the report has them), then one hint.
+ * The report is the check's own (`ok`, `role`, `code`, `provider_code`,
+ * `hint`) or a refused configuration (`status: failed`, `code`, `message`).
+ */
+export function checkFailure(report, exitCode, preset) {
+  const modelStudio = preset === 'default' || preset === 'fast';
+  const code = plainCode(report?.code);
+  if (!report || !code) {
+    return [`Check failed: \`quotemem check\` exited with ${exitCode}.`, 'Run `quotemem check` to see why; the settings are saved.'];
+  }
+  if (report.status === 'failed') {
+    const message = typeof report.message === 'string' && printable(report.message) ? report.message : 'Run `quotemem check` to see why.';
+    return [`Check failed: ${code}.`, message];
+  }
+  const model = report.role === 'embedding' ? 'embedding model' : report.role === 'chat' ? 'chat model' : 'model';
+  const http = /^http_([0-9]{3})$/.exec(code)?.[1];
+  const providerCode = plainCode(report.provider_code);
+  const what = [http ? `HTTP ${http}` : code, providerCode].filter(Boolean).join(' ');
+  const keyName = report.role === 'embedding' ? 'embedding key' : 'chat key';
+  let hint;
+  if (/arrear/i.test(providerCode ?? '')) {
+    hint = 'The Alibaba Cloud account is overdue: top it up, then run `quotemem check`.';
+  } else if (http === '401' || http === '403' || /api.?key/i.test(providerCode ?? '')) {
+    hint = modelStudio
+      ? `Use a Model Studio key (${new URL(MODEL_STUDIO_CONSOLE).host}, China region), not a DeepSeek key; run \`quotemem setup\` again.`
+      : `The ${keyName} was refused. Run \`quotemem setup\` again with a working key.`;
+  } else if (http === '429') {
+    hint = 'The provider is rate limiting or out of quota; run `quotemem check` later.';
+  } else {
+    const given = typeof report.hint === 'string' && printable(report.hint) ? report.hint.replace(/\.$/, '') : null;
+    hint = `${given ?? 'Run `quotemem check` to see why'}; the settings are saved.`;
+  }
+  return [`Check failed: ${model}, ${what}.`, hint];
 }
 
 /** `quotemem status`: whether the service runs, where, and its log. */
@@ -722,7 +863,9 @@ export async function cmdStatus(env = process.env, { release, probe }) {
   const state = auto.serviceState(env);
   auto.capLog(paths.log);
   const lines = [];
-  const health = settings.url ? await probe(`${settings.url}/health`, { method: 'GET' }) : { status: 0, error: 'no URL' };
+  const { onThisComputer, pinnedUrl } = await core('http.mjs');
+  // A service on this computer is reached at one address (`localhost` is 127.0.0.1).
+  const health = settings.url ? await probe(`${onThisComputer(settings.url) ? pinnedUrl(settings.url) : settings.url}/health`, { method: 'GET' }) : { status: 0, error: 'no URL' };
   const answering = health.status >= 200 && health.status < 300;
   lines.push(`memory service: ${answering ? 'running' : state.running ? 'starting (not answering yet)' : 'not running'}`);
   lines.push(`url: ${settings.url ?? '(invalid QUOTEMEM_URL)'}${health.status ? ` (/health ${health.status})` : ''}`);
@@ -737,7 +880,7 @@ export async function cmdStatus(env = process.env, { release, probe }) {
   lines.push(`review: ${reviewLine(auto.readServiceEnv(env))}`);
   const local = settings.localService;
   lines.push(`autostart: ${!local ? 'off (QUOTEMEM_URL is not on this computer)' : local.autostart ? `on (quotemem==${release} through uvx)` : !local.configured ? 'off (run `quotemem setup`)' : 'off (QUOTEMEM_AUTOSTART=0)'}`);
-  const other = answering && local ? await otherUserNote(settings, env, probe) : null;
+  const other = answering && local ? await otherUserNote(settings, env) : null;
   if (other) lines.push(`problem: ${other}`);
   process.stdout.write(`${lines.join('\n')}\n`);
   return answering && !other ? 0 : 1;
@@ -747,15 +890,32 @@ export async function cmdStatus(env = process.env, { release, probe }) {
  * Two people signed in at once share 127.0.0.1:8765: the service there may
  * be another user's, which refuses this user's token. Null when it is not.
  */
-async function otherUserNote(settings, env, probe) {
+// The user of the program on the service's port (null when it cannot be read).
+async function ownerOfPort(settings) {
   const proc = await core('proc.mjs');
-  const owner = proc.portOwner(settings.localService.port);
-  let refused = false;
+  const { OWNER_LOOKUP_MS, listenerAddress } = await core('listener.mjs');
+  const parsed = new URL(settings.url);
+  return proc.portOwnerAsync(settings.localService.port, listenerAddress(parsed.hostname), { timeoutMs: OWNER_LOOKUP_MS });
+}
+
+async function otherUserNote(settings, env) {
+  const proc = await core('proc.mjs');
+  let owner = null;
   if (settings.token) {
-    const { authHeaders } = await core('http.mjs');
-    refused = (await probe(`${settings.url}/agent/status`, { method: 'GET', headers: authHeaders(settings) })).status === 401;
+    const { checkedGet } = await core('http.mjs');
+    // The token goes only to a listener that proved it holds it (the plugins'
+    // own check), at the address it checked, on the connection it proved.
+    // The port's owner is read only to explain a refusal (describeRefusal,
+    // or a 401 below), once.
+    const checked = await checkedGet(settings, '/agent/status');
+    if (!checked.verdict.ok) return (await core('listener.mjs')).describeRefusal(settings, checked.verdict, { env });
+    if (checked.status !== 401) return null;
+    owner = await ownerOfPort(settings);
+  } else {
+    // No token to check with: only the port's owner can tell.
+    owner = await ownerOfPort(settings);
+    if (!(owner && !owner.mine)) return null;
   }
-  if (!refused && !(owner && !owner.mine)) return null;
   return `the memory service at ${settings.url} ${owner && !owner.mine ? `runs as another user (${owner.owner})` : 'refused this user\'s token'}: it may be another user's QuoteMem on this computer (two people signed in at once). Give this user a port of its own: QUOTEMEM_URL=http://127.0.0.1:${proc.userPort(env)} in ~/.quotemem/env and in the environment Claude Code, Codex and DSH start in (its plugins then start its own service there)`;
 }
 

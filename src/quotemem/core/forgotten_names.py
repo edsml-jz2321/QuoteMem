@@ -9,8 +9,11 @@ show the name either.
 
 `forgotten_names` reads the names a forget took from the scope's tombstones: a non-user entity's
 naming or tie statement ("The user's cat is named bob.", "Priya is the user's manager.") whose
-name exactly one known entity bears. A name another entity or the user also bears, a single Han
-character, and an alias ("Ben is also known as Benjamin") are none: those memories go on as before.
+name exactly one known entity bears. The extraction may anchor such a statement on the user
+first ("The user has a sister named Anna."); its tombstone is then the user's, and the one it
+names is the other entity it is about (`bearer_of`). A name another entity or the user also
+bears, a single Han character, and an alias ("Ben is also known as Benjamin") are none: those
+memories go on as before.
 
 For one such name, `occurrences` finds it in a text in each of its forms (`name_forms`; a Latin
 name as whole words, a capitalized one in Latin text as written or capitalized; a Han name as
@@ -18,9 +21,11 @@ written), `reword` writes a statement without it, and `cut` takes its bytes out 
 statement that still `shows` the name in a form those rules produce is refused; a transliteration
 they cannot produce ("鲍勃" for "bob") is left to the review judge, which reads each withheld
 occurrence as whom it names (``statement_settlement.name_placeholders``). Settlement uses them
-before review (``ingestion/statement_settlement._without_forgotten_names``); the commit withholds
-the name's bytes that a written head's quote was cut around (``store/component_commit``). Nothing
-here reads a withheld byte: the name comes from a tombstone, which only Add reads.
+before review (``ingestion/statement_settlement._without_forgotten_names``), and the owner's
+withholding transaction withholds the name's bytes a kept position's quotes were cut around
+before that review, whatever it decides; the commit withholds those a written head's quote
+was cut around too (``store/component_commit``). Nothing here reads a withheld byte: the name
+comes from a tombstone, which only Add reads.
 """
 
 from __future__ import annotations
@@ -145,6 +150,140 @@ def other_kind(bearer: Kind, entity_type: str, descriptor: str) -> bool:
     return (bearer.animal and own.person) or (bearer.person and own.animal)
 
 
+def declares_other(bearer: Kind, text: str) -> bool:
+    """Whether a text declares someone of another sort than the bearer by a tie word ("the
+    user's coworker" beside a cat; "the user's dog" beside a manager) and names nothing of
+    the bearer's sort. An entity type or a bare noun ("person", "a man")
+    declares no one: the extraction gives one to a bare name it cannot place ("Bob knocked my
+    coffee over" after the forget of a cat's name)."""
+    found = tie_words(text)
+    if not found or bearer.shown(text):
+        return False
+    return (bearer.animal and not found & _ANIMALS) or (bearer.person and found <= _ANIMALS)
+
+
+def declared_beside(text: str, name: ForgottenName, bearer: Kind) -> bool:
+    """Whether a text puts a noun phrase declaring another sort than the bearer right beside
+    the name (`declares_other`): "My coworker Bob knocked my coffee over." and "Bob, my
+    coworker, called." do; "I took Bob to the doctor." and "Bob met my friend." do not."""
+    return any(declares_other(bearer, phrase) for _start, _end, phrase in _apposed(text, name))
+
+
+def declares_another(bearer: Kind, text: str) -> bool:
+    """Whether a text declares another person than a person bearer by a tie word of its own:
+    "the user's friend" beside a forgotten sister's name; "the user's sister", "a person" and
+    a bare name do not. An animal's sort words name every animal, so none declares another."""
+    found = tie_words(text)
+    return bearer.person and bool(found - _ANIMALS) and not bearer.shown(text)
+
+
+def declared_another_beside(text: str, name: ForgottenName, bearer: Kind) -> bool:
+    """Whether a text puts a noun phrase declaring another one of the bearer's sort, or of
+    another sort, right beside the name: "My friend Anna came over." after the forget of a
+    sister's name Anna. A text that also puts the bearer's own sort beside it ("My new
+    coworker Max and my cat Max") names two of that name, so it declares no other alone."""
+    phrases = [phrase for _start, _end, phrase in _apposed(text, name)]
+    return not any(bearer.shown(phrase) for phrase in phrases) and any(
+        declares_another(bearer, phrase) or declares_other(bearer, phrase)
+        for phrase in phrases)
+
+
+_GIVING: Final = (
+    r"(?:\b(?:is|was|are|were|be|been|being|got|get|gets|\w+['’]s)\s+(?:also\s+|now\s+|still\s+)?"
+    r"(?:called|named)|\b(?:(?:re|nick)?named(?:\s+(?:her|him|it|them))?|known\s+as"
+    r"|goes\s+by|go\s+by|went\s+by)"
+    r"|\b(?:a|an|the|my|our|his|her|their)\s+[A-Za-z]+(?:\s+[A-Za-z]+)?\s+called"
+    r"|\bcalls?\s+(?:her|him|it|them)|\bcalled\s+(?:her|him|it|them)"
+    r"|\bname(?:['’]s|\s+is|\s+was|\s+will\s+be)|叫做|叫|名字(?:是|叫)?|取名(?:为|叫)?|起名(?:为|叫)?"
+    r"|改名(?:为|叫)?)")
+
+
+def _forms(name: str) -> str:
+    """A pattern of every form of ``name`` (`name_forms`), longest first, blanks between words
+    loose."""
+    return "|".join(r"\s+".join(re.escape(word) for word in form.split())
+                    for form in sorted(name_forms(name), key=len, reverse=True))
+
+
+_NEGATED: Final = re.compile(
+    r"(?:(?<![0-9A-Za-z])(?:not|never|no\s+longer)|n['’]t|不是|并不|并非|不再|没有|不|没)\s*$",
+    re.IGNORECASE)
+"""Words right before a naming that deny it ("is not named Bob", "不叫豆豆")."""
+_DENIED: Final = re.compile(
+    r"(?<![0-9A-Za-z])(?:not|never)(?![0-9A-Za-z])|n['’]t(?![0-9A-Za-z])|不|没", re.IGNORECASE)
+"""Words inside a naming that deny it ("Bob is not my cat's name")."""
+
+
+def gives_name(text: str, name: str) -> bool:
+    """Whether the user's words give a name to someone (`NAME_LINK`) and that name is
+    ``name``: "My cat is called Bob.", "我的猫叫bob", "Her name is Anna.", "Anna is my sister's
+    name."; "Anna called me yesterday." and "I called Anna." mention it and give none, and
+    "my cat is called Max, not Bob", "is not named Bob" and "我的猫叫团团，不叫豆豆" deny it."""
+    names = _forms(name)
+    if not names:
+        return False
+    before = rf"{_GIVING}\s*[\"'“‘「『]?\s*(?:{names})(?![0-9A-Za-z])"
+    after = (rf"(?<![0-9A-Za-z])(?:{names})\s*[\"'”’」』]?\s+(?:is|was)\s+(?:\w+['’]s\s+|my\s+"
+             rf"|his\s+|her\s+|its\s+|their\s+|the\s+)?(?:[\w'’]+\s+){{0,3}}name\b"
+             rf"|(?<![0-9A-Za-z])(?:{names})\s*(?:是|就是)[^。！？!?.]{{0,12}}名字")
+    return any(_NEGATED.search(text[:found.start()]) is None
+               for found in re.finditer(before, text, re.IGNORECASE)) or any(
+        _DENIED.search(found.group(0)) is None
+        for found in re.finditer(after, text, re.IGNORECASE))
+
+
+_SET_ASIDE: Final = (
+    r"(?:(?<![0-9A-Za-z])(?:(?:and\s+|but\s+)?not|rather\s+than|instead\s+of|(?:formerly"
+    r"|previously|originally|wrongly|mistakenly)(?:\s+(?:called|named|known\s+as))?)"
+    r"(?![0-9A-Za-z])|而不是|并不是|不是|并不叫|也不叫|不再叫|不叫)"
+)
+"""Words that set a name aside after the one the user gives: "my cat is called Max, not Bob",
+"Max rather than Bob", "我的猫叫团团，不叫豆豆"."""
+_ASIDE_EDGE: Final = r"[\s,;:，、；：(（]*"
+_ASIDE_TAIL: Final = re.compile(rf"{_ASIDE_EDGE}{_SET_ASIDE}[\s\"'“‘「『]*$", re.IGNORECASE)
+_ASIDE_GAP: Final = re.compile(rf"{_ASIDE_EDGE}{_SET_ASIDE}[\s\"'“‘「『]*", re.IGNORECASE)
+
+
+def before_set_aside(text: str) -> str:
+    """``text`` without the words at its end that set a name aside: "my cat is called Max" of
+    "my cat is called Max, not ", the quote before a forgotten name they set aside."""
+    found = _ASIDE_TAIL.search(text)
+    return text if found is None else text[:found.start()].rstrip()
+
+
+def given_aside(text: str, name: ForgottenName) -> str | None:
+    """A name annotation without a forgotten name it sets aside: "Max" of "Max, not Bob";
+    ``text`` itself when it does not show the name; None when nothing else is left ("Bob",
+    "Bob Jr")."""
+    found = occurrences(name.name, text)
+    if not found:
+        return text
+    head = before_set_aside(text[:found[0][0]]).strip(" ,;:，；：(（")
+    if not head or head == text[:found[0][0]].strip() or occurrences(name.name, head):
+        return None
+    return head
+
+
+def without_set_aside(statement: str, name: ForgottenName) -> str | None:
+    """A naming or tie statement that gives a name and then sets the forgotten one aside,
+    without the setting aside: "The user's cat is named Max." of "The user's cat is named Max,
+    not Bob." after a forget took Bob. None for any other statement."""
+    names = _forms(name.name)
+    if not names:
+        return None
+    found = re.fullmatch(
+        rf"(?P<head>.+?){_ASIDE_EDGE}{_SET_ASIDE}\s*(?:(?:called|named)\s+)?[\"'“‘]?"
+        rf"(?:{names})(?![0-9A-Za-z])[\"'”’]?\s*[)）]?\s*[.!。]?\s*", statement.strip(),
+        re.IGNORECASE)
+    if found is None:
+        return None
+    head = found["head"].rstrip(" ,;:，；：")
+    kept = f"{head}."
+    if not head or occurrences(name.name, head) or tie_of(kept) is None:
+        return None
+    return kept
+
+
 def tie_of(statement: str) -> tuple[str, str] | None:
     """The name a naming or tie statement gives and how it names its subject without it:
     ("bob", "the user's cat") of "The user's cat is named bob.", ("Priya", "the user's
@@ -180,33 +319,61 @@ def names_of(statement: str, naming: Iterable[str] = ()) -> frozenset[str]:
     return frozenset(found)
 
 
+def bearer_of(entity_id: str, about: Iterable[str], statement: str) -> str | None:
+    """The entity a forgotten naming or tie statement (`tie_of`) names, by its tombstone's
+    anchors: the primary anchor, or, for a statement the extraction anchored on the user
+    first ("The user has a sister named Anna.", about the sister), the one other entity it
+    is about. None for any other statement, for the user's own name ("The user is named
+    Ann."), and for a statement of the user's about no other entity or about several.
+
+    Args:
+        entity_id: The tombstone's primary anchor.
+        about: Its other anchors (``about_entity_ids``).
+        statement: Its statement.
+
+    Returns:
+        The named entity's id, or None.
+    """
+    tied = tie_of(statement)
+    if tied is None:
+        return None
+    if entity_id != USER:
+        return entity_id
+    others = set(about) - {USER}
+    if tied[1] == "the user" or len(others) != 1:
+        return None
+    return next(iter(others))
+
+
 def forgotten_names(
-    tombstones: Iterable[tuple[str, str, str]], bearers: Callable[[str], Iterable[str]],
+    tombstones: Iterable[tuple[str, str, Iterable[str], str]],
+    bearers: Callable[[str], Iterable[str]],
 ) -> tuple[ForgottenName, ...]:
     """The names the scope's forgets took, each from exactly one known entity.
 
     Args:
-        tombstones: Each tombstone's ``(object_id, entity_id, statement)``, in ``object_id``
-            order.
+        tombstones: Each tombstone's ``(object_id, entity_id, about_entity_ids,
+            statement)``, in ``object_id`` order.
         bearers: The active entities a name (its ``name_norm``'s source text) is readable
             on now, the user included.
 
     Returns:
-        One entry per name, by its first tombstone: a non-user entity's naming or tie
-        statement (`tie_of`) whose name no other entity's tombstone gives and no other
-        entity bears now, and that is more than one Han character.
+        One entry per name, by its first tombstone: a naming or tie statement (`tie_of`)
+        of a non-user entity (`bearer_of`) whose name no other entity's tombstone gives and
+        no other entity bears now, and that is more than one Han character.
     """
     found: dict[str, list[ForgottenName]] = {}
-    for object_id, entity_id, statement in tombstones:
+    for object_id, entity_id, about, statement in tombstones:
         tied = tie_of(statement)
-        if entity_id == USER or tied is None:
+        bearer = bearer_of(entity_id, about, statement)
+        if bearer is None or tied is None:
             continue
         name, tie = tied
         tokens = token_seq(name)
         if not tokens or (len(tokens) == 1 and own_token(tokens[0])):
             continue
         found.setdefault(name.casefold(), []).append(
-            ForgottenName(entity_id, name, tie, object_id))
+            ForgottenName(bearer, name, tie, object_id))
     return tuple(
         entries[0] for _key, entries in sorted(found.items())
         if len({entry.entity_id for entry in entries}) == 1
@@ -405,13 +572,13 @@ def untie(statement: str, name: ForgottenName, kind: Kind) -> str | None:
     return None if found is None or kind.shown(found) else found
 
 
-def without_name(text: str, name: ForgottenName) -> str:
-    """A description without the name ("the pet named bob" -> "the pet", `bare`), or the
-    bearer's tie when nothing else is left."""
+def without_name(text: str, name: ForgottenName, empty: str | None = None) -> str:
+    """A description without the name ("the pet named bob" -> "the pet", `bare`), or, when
+    nothing else is left, ``empty`` (the bearer's tie by default)."""
     found = text
     for start, end, phrase in reversed(_apposed(found, name)):
         found = found[:start] + phrase + found[end:]
-    return bare(found, name.name) or name.tie
+    return bare(found, name.name) or (name.tie if empty is None else empty)
 
 
 def cut(span: QuoteSpanV1, text: str, byte_start: int,
@@ -452,13 +619,20 @@ def cut(span: QuoteSpanV1, text: str, byte_start: int,
     return pieces, names
 
 
+def _adjacent(gap: str) -> bool:
+    """Whether a quote ending ``gap`` before a name touches it: only blanks between, or only
+    words setting the name aside ("my cat is called Max" + ", not " + "Bob")."""
+    return not gap.strip() or _ASIDE_GAP.fullmatch(gap) is not None
+
+
 def touching(spans: Sequence[QuoteSpanV1], text: str, byte_start: int, evidence_id: str,
              found: Sequence[tuple[int, int]], kind: Kind) -> list[QuoteSpanV1]:
     """The occurrences of a forgotten name (character offsets in ``text``) that a head's
     quote was cut around: between two of its spans in the same part, or right before or
     after one in a sentence that names the bearer's sort (`Kind.shown`), with only blanks
-    between. A quote that merely ends before the name ("My new coworker" of "My new coworker
-    Max ...") cut nothing."""
+    between, or after one with only words setting the name aside (`_adjacent`). A quote that
+    merely ends before the name ("My new coworker" of "My new coworker Max ...") cut
+    nothing."""
     data = text.encode("utf-8")
     own = [span for span in spans if span.evidence_id == evidence_id]
     bounds = sentences(text)
@@ -470,8 +644,9 @@ def touching(spans: Sequence[QuoteSpanV1], text: str, byte_start: int, evidence_
             continue  # The head quotes the name itself: no cut was made here.
         after = any(not data[last - byte_start:span.byte_start - byte_start].strip()
                     and last <= span.byte_start for span in own)
-        before = any(not data[span.byte_end - byte_start:first - byte_start].strip()
-                     and span.byte_end <= first for span in own)
+        before = any(span.byte_end <= first and _adjacent(
+            data[span.byte_end - byte_start:first - byte_start].decode("utf-8", "replace"))
+            for span in own)
         sentence = next((text[low:high] for low, high in bounds if low <= start < high), text)
         if (after and before) or ((after or before) and kind.shown(sentence)):
             found_spans.append(QuoteSpanV1(evidence_id=evidence_id, byte_start=first,

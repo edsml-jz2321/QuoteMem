@@ -11,16 +11,21 @@ and fusion plus the rules of `quotemem.core.recall_agent`; `recall_pure` is unch
 
 from __future__ import annotations
 
+import bisect
 import functools
 import re
+import threading
 from collections import Counter
 from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
+from concurrent.futures import Future
 from dataclasses import dataclass, field, replace
 from decimal import ROUND_HALF_EVEN, Decimal, localcontext
+from typing import Final, cast
 
 from quotemem.core.delivery import MemoryMode, QuoteKey, QuoteSource, format_date, rendered_quotes
 from quotemem.core.entities import MemorySnapshotV2, Origin
 from quotemem.core.errors import QuoteMemError
+from quotemem.core.forget_match import named_ties, without_ties
 from quotemem.core.pool_rerank import (
     RERANK_CANDIDATES,
     RERANK_MIN_PARTS,
@@ -40,6 +45,7 @@ from quotemem.core.recall_agent import (
     PAST_FACTOR,
     QUOTE_COVER,
     QUOTE_SHARE,
+    RELEVANCE_FLOOR,
     AgentContext,
     AgentHit,
     ForgetShadow,
@@ -49,6 +55,7 @@ from quotemem.core.recall_agent import (
     Status,
     asked_terms,
     asks_back,
+    asks_name,
     asks_own,
     change_cue,
     collapse,
@@ -61,6 +68,7 @@ from quotemem.core.recall_agent import (
     freshness,
     kind_factor,
     may_request,
+    name_question_rest,
     non_increasing,
     overlaps,
     quoted_share,
@@ -1466,7 +1474,8 @@ class _AgentScope:
 def _agent_scope(
     memories: Sequence[_Document], evidence: Sequence[_Document],
     sources: Mapping[str, SourceRowV2], context: AgentContext, asks_assistant: bool,
-    kept: dict[int, object], now: int, not_holders: Collection[str] = (),
+    kept: dict[object, object], now: int, not_holders: Collection[str] = (), *,
+    held: bool = False,
 ) -> _AgentScope:
     """The candidates an agent read may show and the scope it reads statuses from.
 
@@ -1477,6 +1486,9 @@ def _agent_scope(
     ``AgentContext.unmatched``). `recall_interactive` and `agent_listing` both read this, so a
     listing hides what Search hides and labels each memory from the same scope; the memories
     only a listing reads (``not_holders``, `listed_memories`) hold no name for it.
+
+    ``now`` is the time statuses are read at; ``held`` says every memory given held at
+    that time (a ``world`` read's, `_at`).
     """
     withheld: list[tuple[str, int, int]] = list(context.marks)
     forgotten = ForgetShadowTerms()
@@ -1625,7 +1637,7 @@ def _agent_scope(
                 if document.key[0] == "memory" or (
                     isinstance(value := document.value, EvidenceDocument)
                     and value.row.role == "user")}
-    store = {document.key[1]: _at(readings[document.key], now)
+    store = {document.key[1]: _at(readings[document.key], now, held=held)
              for document in stated if document.key[0] == "memory"}
     return _AgentScope(allowed, quotes, stated, facts, said, readings, store)
 
@@ -1651,6 +1663,7 @@ def recall_interactive(
     withdrawn: Collection[str] = (),
     lexical_only: bool = False,
     hidden: Hidden | None = None,
+    knowledge: Mapping[str, MemoryRowV2] | None = None,
 ) -> InteractiveRanking:
     """Rank a frozen query for an agent plugin (the interactive profile, ``agent-v2``).
 
@@ -1679,21 +1692,28 @@ def recall_interactive(
       when none of them is ``current``, else each from `RELEVANCE_FLOOR` with its own; a part
       all of whose memories are ``past`` is dropped. What `standing` reads from the whole scope as
       replacing or possibly replacing a selected memory joins it with its score, and
-      `recency_order` puts it directly above; the result is cut to ``depth`` by
-      `collapse` and the first ``top_k`` are delivered. Scores never increase down the
-      list.
+      `recency_order` puts it directly above. A hit whose score is below `RELEVANCE_FLOOR`
+      is dropped, whether the query chose it or it joined another (the factors above can
+      take a relevance that passed `delivery_floor` below it). The result is cut to
+      ``depth`` by `collapse` and the first ``top_k`` are delivered. Scores never increase
+      down the list.
 
     Nothing in the ranking depends on ``top_k`` but the cut, so the hits of a smaller
     ``top_k`` are the first hits of a larger one, and a memory's status is the store's.
-    Summary rollups never open an interactive read, and an ``as_of`` read is the bench
-    ranking's (the caller's).
+    Summary rollups never open an interactive read.
+
+    An ``as_of`` read ranks the same way over what it may show at its instant t, with
+    statuses read at t. A ``world`` read shows the memories that held at t (each held
+    then, so it is ``past`` only when a memory that also held then replaced it) and the
+    parts said by t (`said_by`); a ``knowledge`` read shows the versions the store had
+    recorded by t, and no part.
 
     Args:
         root: The read pin's snapshot.
         query: Frozen QueryBundleV1 retrieval fields.
         policy: The released v4 policy.
         allowed_scopes: Frozen exact singleton authorization.
-        mode: ``plain`` or ``current``.
+        mode: ``plain``, ``current``, or an ``as_of`` read's ``world`` or ``knowledge``.
         context: The scope's marks, recorded shadow and request finder.
         depth: Hits the ranking is computed to: the server's largest ``top_k``. A larger
             ``top_k`` deepens it.
@@ -1702,6 +1722,7 @@ def recall_interactive(
         lexical_only: The keyword fallback of a late query embedding.
         hidden: What an accepted forget of the scope withholds (`Hidden`), as `recall_pure`
             reads it.
+        knowledge: A ``knowledge`` read's selected versions, as `recall_pure` reads them.
 
     Returns:
         The locators in delivery order and each delivered memory's status.
@@ -1710,32 +1731,32 @@ def recall_interactive(
         QuoteMemError: As `recall_pure`.
     """
     prepared = prepare_recall(root, query, policy, allowed_scopes=allowed_scopes, mode=mode,
-                              cache=cache, lexical_only=lexical_only)
+                              cache=cache, knowledge=knowledge, lexical_only=lexical_only)
     parameters = policy.parameters
     depth = max(depth, query.top_k)
+    # An as-of read reads statuses at its instant; a world read shows only what held then.
+    now = query.query_time if query.as_of is None else query.as_of.at
+    held_then = mode == "world"
     excluded = {(entry.kind, entry.object_id) for entry in (*query.exclude, *query.session_lru)}
-    memories = _shown(prepared.memories, hidden)
-    # A part a complete forget withheld bytes of ranks by its remainder alone, and shows its
-    # readable bytes alone (``core.forget_remainder``).
-    evidence = _shown((*prepared.evidence, *prepared.remainders), hidden)
-    sources = {row.object_id: row for row in root.source_corpus(prepared.scope_id)}
-    sources.update((document.row.object_id, document.row) for document in prepared.remainders)
     asks_assistant = recalls_assistant(query.query) or asks_back(query.query)
     asks_user = asks_own(query.query)
-    kept = _scope_hits(cache, prepared.scope_id)
-    scope = _agent_scope(memories, evidence, sources, context, asks_assistant, kept,
-                         query.query_time)
-    allowed, quotes, stated, facts = scope.allowed, scope.quotes, scope.stated, scope.facts
-    said, readings, store = scope.said, scope.readings, scope.store
-    factual = {document.key for document in facts}
+    reading = _scope_reading(root, prepared, context, cache, hidden=hidden,
+                             asks_assistant=asks_assistant, now=now, held=held_then,
+                             own=knowledge is None, kept=(
+                                 knowledge is None and hidden is None and query.as_of is None))
+    memories, evidence, sources = reading.memories, reading.evidence, reading.sources
+    scope = reading.scope
+    allowed, quotes, stated = scope.allowed, scope.quotes, scope.stated
+    said, readings = scope.said, scope.readings
+    standings = reading.at(now)
+    store, before = standings.store, standings.before
+    factual = reading.factual
     echo = _echoes(query.query, (*memories, *evidence), sources, query.carried)
     summary = summary_read(query.query)
     candidates = [document for document in (allowed if summary else stated)
                   if document.key not in excluded and document.key not in echo
-                  and (_ordinary(_Scored(document, _ZERO)) or document.key[1] not in withdrawn)
+                  and (document.key in reading.ordinary or document.key[1] not in withdrawn)
                   and (asks_user or document.key[0] == "memory" or document.key in factual)]
-    held = {document.key[1]: document for document in stated if document.key[0] == "memory"}
-    before = ended(store.values())
     with localcontext() as decimal_context:
         decimal_context.prec = 40
         scored = {document.key: document for document in (*candidates, *said)}
@@ -1744,9 +1765,9 @@ def recall_interactive(
                         if document.key in cosines}
         weights, unseen = _term_weights(prepared, asked_terms(query.query))
         least = unseen if prepared.vector is not None else _ZERO
-        commits = sorted({_support(document, sources) for document in allowed})
-        rank = {commit: index for index, commit in enumerate(commits)}
-        scale = Decimal(max(1, len(commits) - 1))
+        supports, rank, scale = reading.supports, reading.rank, reading.scale
+        needed = _name_asked(query.query, weights)
+        named = asks_name(query.query) and bool(needed)
 
         def meaning_of(document: _Document) -> Decimal | None:
             meaning = cosines.get(document.key)
@@ -1770,12 +1791,39 @@ def recall_interactive(
                 score *= factor
             elif document.key[1] in before:
                 score *= PAST_FACTOR
-            return _quantize(score * freshness(
-                Decimal(rank[_support(document, sources)]) / scale))
+            return _quantize(score * freshness(Decimal(rank[supports[document.key]]) / scale))
 
-        relevances = {document.key: relevance(
-            meaning_of(document), coverage(weights, _terms(document, quotes), least))
-            for document in candidates}
+        # A text holding no form of an asked term covers what a text holding nothing covers;
+        # equal inputs give equal relevances, so each pair is computed once.
+        holders = reading.holding(weights)
+        uncovered = coverage(weights, frozenset(), least)
+        computed: dict[tuple[Decimal | None, Decimal], Decimal] = {}
+
+        def covered(document: _Document) -> Decimal:
+            """The query's `coverage`; full for a memory giving a name that holds every
+            other word of a question asking for one (`asks_name`)."""
+            value = document.value
+            if named and isinstance(value, MemoryDocument) and any(
+                    entry.name_kind != "former" for entry in value.snapshot.naming):
+                # A Chinese question's needed ties need not be asked terms, so a text
+                # outside `holders` may still hold every one of them.
+                terms = reading.terms.get(document.key)
+                if terms is None:
+                    terms = _terms(document, quotes)
+                if all(any(form in terms for form in word_forms(term)) for term in needed):
+                    return _ONE
+            if document.key not in holders:
+                return uncovered
+            return coverage(weights, reading.terms[document.key], least)
+
+        def relevance_of(document: _Document) -> Decimal:
+            pair = (meaning_of(document), covered(document))
+            found = computed.get(pair)
+            if found is None:
+                found = computed[pair] = relevance(*pair)
+            return found
+
+        relevances = {document.key: relevance_of(document) for document in candidates}
         floor = delivery_floor(max(relevances.values(), default=_ZERO))
         pool: list[_Scored] = []
         for document in candidates:
@@ -1799,63 +1847,17 @@ def recall_interactive(
             [document.vector for document in (*memories, *evidence) if document.key in excluded],
             fold,
         )
-        vectors = {document.key[1]: document.value.vector for document in facts
-                   if document.value.vector is not None}
-        parts = [readings[document.key].hit for document in said]
-        # What `standing` compares a memory with: state memories and cued user parts. Their
-        # vectors are stacked once per Search (zero-copy views), and each memory asked about
-        # scores against all of them in one product.
-        comparable = [hit.key for hit in (*store.values(), *parts)
-                      if (hit.state or hit.cue) and hit.key in vectors]
-        index = {key: place for place, key in enumerate(comparable)}
-        stacked: UnitRows | None = None
-        against: dict[str, list[float]] = {}
-
-        def prefetch(keys: Sequence[str]) -> None:
-            """Score the memories of ``keys`` against every comparable row in one product."""
-            nonlocal stacked
-            wanted = [key for key in dict.fromkeys(keys)
-                      if key not in against and key in vectors]
-            if not wanted:
-                return
-            if not comparable:
-                against.update((key, []) for key in wanted)
-                return
-            if stacked is None:
-                rows = [vectors[key] for key in comparable]
-                stacked = UnitRows(rows, [unit_array(row) for row in rows])
-            against.update(zip(wanted, stacked.cosines_many(
-                [vectors[key] for key in wanted]), strict=True))
-
-        def similar(first: AgentHit, others: Sequence[AgentHit]) -> Sequence[float]:
-            vector = vectors.get(first.key)
-            if vector is None:
-                return [0.0] * len(others)
-            prefetch([first.key])
-            row = against[first.key]
-            found: list[float] = []
-            for other in others:
-                place = index.get(other.key)
-                other_vector = vectors.get(other.key)
-                found.append(row[place] if place is not None else 0.0 if other_vector is None
-                             else cosine(vector, other_vector))
-            return found
-
-        scope = list(store.values())
-        reader = StandingReader(scope, parts, similar)
 
         def hit_of(key: str) -> AgentHit:
             """A memory's hit: a stated one's from ``store``, a summary-only one's from its
             reading (a summary read's candidates include those, `store` does not)."""
-            return store.get(key) or _at(readings[("memory", key)], query.query_time)
+            return store.get(key) or _at(readings[("memory", key)], now, held=held_then)
 
         def statuses(keys: Iterable[str], known: Standing | None = None) -> Standing:
             """The standing of the memories of ``keys`` (each memory's own, `standing`)."""
             asked_keys = [key for key in dict.fromkeys(keys)
                           if known is None or key not in known.status]
-            asked_hits = [hit_of(key) for key in asked_keys]
-            prefetch([hit.key for hit in asked_hits if hit.state])
-            read = reader.read(asked_hits)
+            read = standings.read([hit_of(key) for key in asked_keys])
             if known is None:
                 return read
             return Standing({**known.status, **read.status},
@@ -1865,14 +1867,14 @@ def recall_interactive(
         chosen = {member.document.key[1] for member in selected}
         open_memories = {document.key[1]: document for document in candidates
                          if document.key[0] == "memory"}
-        quoting: dict[str, list[str]] = {}
-        for hit in scope:
-            if hit.key in open_memories:
-                for evidence_id in dict.fromkeys(quote[0] for quote in hit.quotes):
-                    quoting.setdefault(evidence_id, []).append(hit.key)
         delivered_parts = [(member.document.key[1], member.final) for member in selected
                            if isinstance(value := member.document.value, EvidenceDocument)
                            and value.row.role == "user"]
+        quoting: dict[str, list[str]] = {}
+        for part, _score in delivered_parts:
+            keys = [key for key in reading.quoting.get(part, ()) if key in open_memories]
+            if keys:
+                quoting[part] = keys
         found = statuses([*(member.document.key[1] for member in selected
                             if member.document.key[0] == "memory"),
                           *(key for part, _score in delivered_parts
@@ -1891,7 +1893,7 @@ def recall_interactive(
         # A selected memory's replacement (a memory, or a user part when no memory
         # replaces it) is delivered with it, directly above it (`recency_order`), with its
         # score, though the query alone would not have ranked it so high.
-        joinable = {**{document.key[1]: document for document in said}, **held}
+        joinable = reading.joinable
         joined: list[_Scored] = []
         for member in selected:
             for key in found.replacers.get(member.document.key[1], ()):
@@ -1909,6 +1911,9 @@ def recall_interactive(
                 else _agent_hit(member.document, member.final, sources, query.query_time, quotes)
                 for member in selected]
         order = recency_order(hits, found.replacers, statements_first=not asks_assistant)
+        # No hit is delivered below the floor: not one the query chose whose factors took it
+        # there (a past memory, a part), nor one that joined such a hit at its score.
+        order = [hit for hit in order if hit.final >= RELEVANCE_FLOOR]
         delivered = non_increasing(
             collapse(order, depth), lambda hit: hit.final,
             lambda hit, value: replace(hit, final=value))[:query.top_k]
@@ -1948,6 +1953,30 @@ def _query_cosines(
         found.update((document.key, _number(value))
                      for document, value in zip(scored, values, strict=True))
     return found
+
+
+_HAN_CHAR = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
+
+
+_NAME_ASKING = frozenset({"name", "names", "named", "called"})
+"""The words a question asks for a name with (`asks_name`), no word a memory giving the name
+must hold."""
+
+
+def _name_asked(query: str, weights: Mapping[str, Decimal]) -> frozenset[str]:
+    """The words a memory giving a name holds to answer a question asking for one in full
+    (`asks_name`): every asked word (``weights``), or, for a Chinese question, its Latin
+    words and the ties of its person and animal words ("cat" of a question for the name of
+    the user's cat), when nothing else is left of it once its asking, user and possessive
+    words go (`name_question_rest`); empty when something else is. The words asking for the
+    name (`_NAME_ASKING`) are no asked word here."""
+    if not _HAN_CHAR.search(query):
+        # "What is the user's parrot called?" asks "called" for the name it wants: a
+        # memory giving the name "is named Mango" need not hold it.
+        return frozenset(term for term in weights if term not in _NAME_ASKING)
+    if _HAN_CHAR.search(without_ties(name_question_rest(query))):
+        return frozenset()
+    return frozenset(term for term in weights if term.isascii()) | named_ties(query)
 
 
 def _term_weights(
@@ -2001,7 +2030,7 @@ class _HitEntry:
 
 def _scope_hits(
     cache: SnapshotRecallCache | None, scope_id: str,
-) -> dict[int, object]:
+) -> dict[object, object]:
     """The kept readings of one root's scope (`SnapshotRecallCache.readings`); a fresh dict
     without a recall cache."""
     return {} if cache is None else cache.readings(scope_id)
@@ -2009,7 +2038,7 @@ def _scope_hits(
 
 def _member(
     document: _Document, sources: Mapping[str, SourceRowV2], quotes: Mapping[_Key, list[str]],
-    kept: dict[int, object],
+    kept: dict[object, object],
 ) -> _HitEntry:
     """A scope member's reading, built once per root (`_HitEntry`)."""
     value = document.value
@@ -2031,11 +2060,310 @@ def _member(
     return made
 
 
-def _at(entry: _HitEntry, query_time: int) -> AgentHit:
-    """A kept reading at a query time: a state whose validity ended is no longer current."""
+def _at(entry: _HitEntry, query_time: int, *, held: bool = False) -> AgentHit:
+    """A kept reading at a query time: a state whose validity ended is no longer current.
+
+    With ``held`` the memory held at that time (a ``world`` read shows only such memories),
+    so it is current whatever its lifecycle is now.
+    """
+    if held:
+        return entry.hit if entry.hit.current else replace(entry.hit, current=True)
     if entry.valid_to is not None and entry.valid_to <= query_time and entry.hit.current:
         return replace(entry.hit, current=False)
     return entry.hit
+
+
+_SCOPE_READINGS: Final = "agent-scope-readings"
+"""The key of a scope's `_ScopeReading` table among its kept readings
+(`SnapshotRecallCache.readings`): each reading, or the build of it in flight."""
+MAX_SCOPE_READINGS: Final = 4
+"""Scope readings kept per root and scope: one per forget context and assistant read."""
+MAX_STANDINGS: Final = 4
+"""Standings kept per scope reading: one per set of ended validities."""
+PREFETCH_BATCH: Final = 32
+"""Memories scored together against one tail of a scope reading's rows."""
+_READINGS_LOCK: Final = threading.Lock()
+
+
+class _Standings:
+    """The scope's memories at one set of ended validities, and every status read there.
+
+    A memory's status depends on the scope alone (`standing`), so each one read is kept for
+    the later Searches of the root. The reader compares a state memory only with the rows
+    within its reach (`_ScopeReading.reach`), as `agent_listing` does: every newer state
+    memory and cued user part whose cosine with it reaches `CORRECTION_COSINE`, with that
+    cosine. Every other newer row is below it, and the reader compares a memory with newer
+    rows only, so each status and replacer is the one a reader comparing every row reads.
+
+    Attributes:
+        store: Each stated memory's `AgentHit` at these validities.
+        before: The memories of ``store`` that are ``past`` (`ended`).
+    """
+
+    __slots__ = ("_known", "_reader", "_reading", "before", "store")
+
+    def __init__(self, reading: _ScopeReading, store: dict[str, AgentHit]) -> None:
+        self.store = store
+        self.before = ended(store.values())
+        self._reading = reading
+        self._reader = StandingReader(list(store.values()), reading.parts, reading.similar,
+                                      reading.reach)
+        self._known: dict[str, tuple[Status, tuple[str, ...] | None]] = {}
+
+    def read(self, asked: Sequence[AgentHit]) -> Standing:
+        """The status and replacers of each asked memory (`standing`), each read once.
+
+        Every hit asked about must be this scope's own at these validities.
+        """
+        with self._reading.lock:
+            fresh = list({hit.key: hit for hit in asked
+                          if hit.kind == "memory" and hit.key not in self._known}.values())
+            if fresh:
+                self._reading.prefetch([hit for hit in fresh if hit.state])
+                read = self._reader.read(fresh)
+                for hit in fresh:
+                    self._known[hit.key] = (read.status[hit.key], read.replacers.get(hit.key))
+            status: dict[str, Status] = {}
+            replacers: dict[str, tuple[str, ...]] = {}
+            for hit in asked:
+                if hit.kind != "memory" or hit.key in status:
+                    continue
+                status[hit.key], found = self._known[hit.key]
+                if found is not None:
+                    replacers[hit.key] = found
+        return Standing(status, replacers)
+
+
+class _ScopeReading:
+    """What the interactive ranking reads from one scope that no query changes.
+
+    It is a function of the scope's documents (held, so their ids stay theirs), its forget
+    context and whether assistant parts are read (`_agent_scope`); `_scope_reading` keeps it
+    with the root's recall cache under exactly those inputs. The store's statuses depend
+    besides only on which validities ended by the read's time (`at`). The next root, and
+    `SnapshotRecallCache.drop` and ``clear``, discard every reading of a scope, so an Add, a
+    forget or an erasure is read afresh and nothing derived from an erased text outlives it.
+
+    Attributes:
+        memories: The scope's memory documents the read may rank.
+        evidence: Its Evidence documents and forget remainders.
+        sources: Each part's source row.
+        scope: The agent scope (`_agent_scope`).
+        ordinary: The allowed documents that are not summary-only memories.
+        factual: Those less the user parts that state no fact.
+        held: The stated memories by id.
+        joinable: What may join a selected memory as its replacement, by id.
+        supports: Each allowed document's support (`_support`).
+        rank: Each support's place among the allowed supports.
+        scale: The largest such place, at least 1.
+        parts: The stated user parts' hits, as `StandingReader` reads them.
+        quoting: The stated memories quoting each part, in the store's order.
+        lock: Held while statuses are read: a reading serves concurrent Searches.
+    """
+
+    __slots__ = (
+        "_comparable", "_ends", "_held", "_reached", "_rows", "_standings", "_supports",
+        "_terms", "_vectors", "evidence", "factual", "held", "joinable", "lock", "memories",
+        "ordinary", "parts", "quoting", "rank", "scale", "scope", "sources", "supports",
+    )
+
+    def __init__(
+        self, root: RecallSnapshot, prepared: PreparedRecall, context: AgentContext,
+        members: dict[object, object], hidden: Hidden | None, *, asks_assistant: bool,
+        now: int, held: bool,
+    ) -> None:
+        """Read the scope once (the population and forget rules of `recall_interactive`)."""
+        self.memories = memories = _shown(prepared.memories, hidden)
+        # A part a complete forget withheld bytes of ranks by its remainder alone, and shows
+        # its readable bytes alone (``core.forget_remainder``).
+        self.evidence = evidence = _shown((*prepared.evidence, *prepared.remainders), hidden)
+        sources = {row.object_id: row for row in root.source_corpus(prepared.scope_id)}
+        sources.update((document.row.object_id, document.row)
+                       for document in prepared.remainders)
+        self.sources = sources
+        self.scope = scope = _agent_scope(memories, evidence, sources, context, asks_assistant,
+                                          members, now, held=held)
+        self.lock = threading.Lock()
+        self._held = held
+        self.ordinary = frozenset(document.key for document in scope.stated)
+        self.factual = frozenset(document.key for document in scope.facts)
+        self.held = {document.key[1]: document for document in scope.stated
+                     if document.key[0] == "memory"}
+        self.joinable = {**{document.key[1]: document for document in scope.said},
+                         **self.held}
+        self.supports = {document.key: _support(document, sources)
+                         for document in scope.allowed}
+        commits = sorted(set(self.supports.values()))
+        self.rank = {commit: index for index, commit in enumerate(commits)}
+        self.scale = Decimal(max(1, len(commits) - 1))
+        readings = scope.readings
+        self.parts = [readings[document.key].hit for document in scope.said]
+        self._vectors = {document.key[1]: document.value.vector for document in scope.facts
+                         if document.value.vector is not None}
+        store = scope.store
+        # What `standing` compares a memory with: state memories and cued user parts, by
+        # ascending support (`StandingReader` compares a memory only with newer ones).
+        comparable = sorted((hit for hit in (*store.values(), *self.parts)
+                             if (hit.state or hit.cue) and hit.key in self._vectors),
+                            key=lambda hit: hit.support)
+        self._comparable = [hit.key for hit in comparable]
+        self._supports = [hit.support for hit in comparable]
+        self._rows: UnitRows | None = None
+        self._reached: dict[str, dict[str, float]] = {}
+        quoting: dict[str, list[str]] = {}
+        for hit in store.values():
+            for evidence_id in dict.fromkeys(quote[0] for quote in hit.quotes):
+                quoting.setdefault(evidence_id, []).append(hit.key)
+        self.quoting = quoting
+        self._terms: dict[_Key, frozenset[str]] | None = None
+        self._ends = sorted(entry.valid_to for entry in readings.values()
+                            if entry.valid_to is not None and entry.hit.current)
+        self._standings = {self._bucket(now): _Standings(self, store)}
+
+    @property
+    def terms(self) -> Mapping[_Key, frozenset[str]]:
+        """Each allowed document's terms (`_terms`), read at the first Search asking them."""
+        found = self._terms
+        if found is None:
+            quotes = self.scope.quotes
+            found = self._terms = {document.key: _terms(document, quotes)
+                                   for document in self.scope.allowed}
+        return found
+
+    def holding(self, weights: Mapping[str, Decimal]) -> frozenset[_Key]:
+        """The allowed documents holding a form (`word_forms`) of an asked term stem."""
+        forms = {form for stem in weights for form in word_forms(stem)}
+        if not forms:
+            return frozenset()
+        return frozenset(key for key, terms in self.terms.items() if not forms.isdisjoint(terms))
+
+    def _bucket(self, now: int) -> int:
+        """How many validities ended by ``now``: equal counts end the same memories."""
+        return -1 if self._held else bisect.bisect_right(self._ends, now)
+
+    def at(self, now: int) -> _Standings:
+        """The scope's memories at a read's time (`_at`) and their statuses."""
+        bucket = self._bucket(now)
+        with self.lock:
+            found = self._standings.get(bucket)
+            if found is None:
+                readings = self.scope.readings
+                store = {document.key[1]: _at(readings[document.key], now, held=self._held)
+                         for document in self.scope.stated if document.key[0] == "memory"}
+                found = _Standings(self, store)
+                while len(self._standings) >= MAX_STANDINGS:
+                    del self._standings[next(iter(self._standings))]
+                self._standings[bucket] = found
+        return found
+
+    def prefetch(self, asked: Sequence[AgentHit]) -> None:
+        """Read the reach of each asked memory not read yet (under ``lock``).
+
+        The memories are scored by ascending support in batches of `PREFETCH_BATCH`, each
+        against the rows newer than its oldest member only (`UnitRows.tail`).
+        """
+        wanted = sorted({hit.key: hit for hit in asked if hit.key not in self._reached
+                         and hit.key in self._vectors}.values(), key=lambda hit: hit.support)
+        if not wanted:
+            return
+        if self._rows is None:
+            self._rows = UnitRows([self._vectors[key] for key in self._comparable])
+        for low in range(0, len(wanted), PREFETCH_BATCH):
+            batch = wanted[low:low + PREFETCH_BATCH]
+            start = bisect.bisect_right(self._supports, batch[0].support)
+            found = self._rows.tail(start).reaching(
+                [self._vectors[hit.key] for hit in batch], CORRECTION_COSINE)
+            for hit, scores in zip(batch, found, strict=True):
+                self._reached[hit.key] = {self._comparable[start + place]: score
+                                          for place, score in scores.items()}
+
+    def reach(self, hit: AgentHit) -> Collection[str]:
+        """The rows newer than a prefetched memory whose cosine with it reaches
+        `CORRECTION_COSINE`, with perhaps some older ones (`StandingReader` reads only the
+        newer)."""
+        return self._reached.get(hit.key, {}).keys()
+
+    def similar(self, first: AgentHit, others: Sequence[AgentHit]) -> Sequence[float]:
+        """Each row's cosine with ``first`` within its reach, 0 for every other (`Cosines`)."""
+        known = self._reached.get(first.key, {})
+        return [known.get(other.key, 0.0) for other in others]
+
+
+def _reading_identity(
+    prepared: PreparedRecall, context: AgentContext, asks_assistant: bool,
+) -> tuple[object, ...] | None:
+    """The inputs a `_ScopeReading` is a function of, compared by value; None when one of
+    them cannot be (a forgotten statement's vector)."""
+    recorded = context.recorded
+    if recorded.vectors:
+        return None
+    identity = (
+        asks_assistant, context.marks, recorded.names, recorded.topics, recorded.digest,
+        frozenset(recorded.name_times.items()), frozenset(recorded.topic_times.items()),
+        frozenset(recorded.topic_seen.items()), context.requests, context.asserts,
+        frozenset(context.kept.items()), context.unmatched, context.add_key, context.reach,
+        tuple(map(id, prepared.memories)), tuple(map(id, prepared.evidence)),
+        tuple(map(id, prepared.remainders)),
+    )
+    try:
+        hash(identity)
+    except TypeError:
+        return None
+    return identity
+
+
+def _scope_reading(
+    root: RecallSnapshot, prepared: PreparedRecall, context: AgentContext,
+    cache: SnapshotRecallCache | None, *, hidden: Hidden | None, asks_assistant: bool,
+    now: int, held: bool, own: bool, kept: bool,
+) -> _ScopeReading:
+    """The scope's `_ScopeReading`: with ``kept``, the one the root's recall cache keeps
+    under its inputs (`_reading_identity`), else a reading of this Search alone.
+
+    ``own`` says the documents are the root's own (not a knowledge read's), so the members'
+    readings kept with the cache are theirs. One Search builds a kept reading (single
+    flight): the others asking for it meanwhile wait for it, so concurrent Searches of a new
+    root pay for it once. A failed build keeps nothing, and each waiter then asks again.
+    """
+    members = _scope_hits(cache, prepared.scope_id) if own else {}
+    identity = None if cache is None or not kept else _reading_identity(
+        prepared, context, asks_assistant)
+    if identity is None:
+        return _ScopeReading(root, prepared, context, members, hidden,
+                             asks_assistant=asks_assistant, now=now, held=held)
+    while True:
+        pending: Future[_ScopeReading] | None = None
+        with _READINGS_LOCK:
+            table = members.setdefault(_SCOPE_READINGS, {})
+            assert isinstance(table, dict)
+            readings = cast(dict[tuple[object, ...], _ScopeReading | Future[_ScopeReading]],
+                            table)
+            found = readings.get(identity)
+            if found is None:
+                while len(readings) >= MAX_SCOPE_READINGS:
+                    del readings[next(iter(readings))]
+                found = pending = readings[identity] = Future[_ScopeReading]()
+        if isinstance(found, _ScopeReading):
+            return found
+        if pending is None:
+            try:
+                return found.result()
+            except Exception:  # noqa: BLE001 - the builder failed and kept nothing: ask again
+                continue
+        try:
+            made = _ScopeReading(root, prepared, context, members, hidden,
+                                 asks_assistant=asks_assistant, now=now, held=held)
+        except BaseException as error:
+            with _READINGS_LOCK:
+                if readings.get(identity) is pending:
+                    del readings[identity]
+            pending.set_exception(error)
+            raise
+        with _READINGS_LOCK:
+            if readings.get(identity) is pending:
+                readings[identity] = made
+        pending.set_result(made)
+        return made
 
 
 def _agent_hit(

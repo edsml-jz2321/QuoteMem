@@ -205,8 +205,8 @@ test('recall: a memory question gets additionalContext; statements, subagents an
   assert.ok(context.startsWith(`${RECALL_HEADER}\n`));
   assert.match(context, /untrusted background data/);
   assert.match(context, /&gt; "User lives in Lisbon"/);
-  // At least 10 hits are asked for; only top_k (5) are inserted.
-  assert.deepEqual(server.of('/memory/search')[0].body, { user_id: 'quei', query: 'Where do I live? Do you remember?', top_k: 10 });
+  // The service's largest list is asked for once; only top_k (5) are inserted.
+  assert.deepEqual(server.of('/memory/search')[0].body, { user_id: 'quei', query: 'Where do I live? Do you remember?', top_k: 20 });
 
   const sub = await c.hook(P.prompt(SID(4), TID(1), 'Where do I live?', { agent_id: 'agent-7', agent_type: 'explorer' }));
   silent(sub);
@@ -403,11 +403,19 @@ test('install.mjs: dry run, merge with the user\'s files, idempotent, notify onl
   assert.equal(fs.readFileSync(path.join(home, 'config.toml'), 'utf8').trim(), userConfig.trim());
 });
 
-test('install.mjs: a hook command never lets the shell expand a path', () => {
-  const command = installer.hookCommand('/opt/n$de `x` "q"\\bin/node', 'Stop');
+test('install.mjs: a hook command never lets the shell expand a path', { skip: process.platform === 'win32' ? 'needs /bin/sh' : false }, () => {
+  const command = installer.hookCommand('/opt/n$de `x` "q"\\bin/node', 'Stop', 'linux');
   assert.ok(command.startsWith('"/opt/n\\$de \\`x\\` \\"q\\"\\\\bin/node" '), command);
   const echoed = execFileSync('/bin/sh', ['-c', `printf %s ${command.split(' "')[0]}`]).toString();
   assert.equal(echoed, '/opt/n$de `x` "q"\\bin/node');
+  assert.ok(installer.isOurs(command));
+});
+
+test('install.mjs: on Windows a hook command keeps each backslash of a path as it is', () => {
+  const command = installer.hookCommand('C:\\Program Files\\nodejs\\node.exe', 'Stop', 'win32');
+  assert.ok(command.startsWith('"C:\\Program Files\\nodejs\\node.exe" "'), command);
+  assert.ok(!command.includes('\\\\'), command);
+  assert.ok(command.endsWith('hook.mjs" Stop'), command);
   assert.ok(installer.isOurs(command));
 });
 
@@ -421,7 +429,7 @@ test('MCP server starts with the minimal environment Codex gives a stdio server'
   // Codex passes only HOME, PATH, … plus the env_vars and env of .mcp.json.
   const mcp = JSON.parse(fs.readFileSync(path.join(PLUGIN, '.mcp.json'), 'utf8')).mcpServers.quotemem;
   const source = { PATH: process.env.PATH, HOME: root, USERPROFILE: root, QUOTEMEM_URL: server.url, QUOTEMEM_TOKEN: TOKEN, QUOTEMEM_USER_ID: 'quei', UNRELATED: 'x' };
-  const env = { PATH: source.PATH, HOME: source.HOME, ...mcp.env };
+  const env = { PATH: source.PATH, HOME: source.HOME, USERPROFILE: source.USERPROFILE, ...mcp.env };
   for (const name of mcp.env_vars) if (source[name] !== undefined) env[name] = source[name];
   const child = spawn(mcp.command, mcp.args, { cwd: path.resolve(PLUGIN, mcp.cwd), env, stdio: ['pipe', 'pipe', 'pipe'] });
   const lines = [];

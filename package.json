@@ -1,6 +1,6 @@
 {
   "name": "quotemem",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "mcpName": "io.github.edsml-jz2321/quotemem",
   "description": "Auditable long-term memory for agents: every memory keeps its exact source quote, updates are versioned, and forgetting is confirmed.",
   "main": "integrations/dsh/index.cjs",

@@ -78,8 +78,8 @@
 <text class="t" x="395.3" y="132.0">as the nurse memory</text>
 <rect class="new" x="344.7" y="147" width="281" height="83" rx="6"/>
 <text class="t" x="354.7" y="167.0">The user works as a nurse.</text>
-<text class="ts" x="354.7" y="184.0">quote: &quot;I work as a nurse&quot;</text>
-<text class="ts" x="354.7" y="201.0">quote: &quot;I&#x27;m a nurse&quot;   ← added</text>
+<text class="ts" x="354.7" y="184.0">quote: &quot;I work as a nurse.&quot;</text>
+<text class="ts" x="354.7" y="201.0">quote: &quot;I&#x27;m a nurse, by the way.&quot;  ← added</text>
 <text class="okt" x="354.7" y="218.0">same memory · version 2</text>
 <rect class="frame" x="653.4" y="8" width="308.7" height="354" rx="10"/>
 <circle class="numbg" cx="673.4" cy="29" r="11"/>

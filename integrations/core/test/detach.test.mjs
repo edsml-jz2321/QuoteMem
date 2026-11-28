@@ -101,6 +101,58 @@ test('a caller reading a hook\'s output through a pipe sees it end while the flu
   started.delete(result.pid);
 });
 
+test('a launch file Windows refuses to remove for a moment is tried again; the start never fails on it', async () => {
+  const { removeLaunchFile } = await import(pathToFileURL(path.join(CORE, 'proc.mjs')).href);
+  const rmWith = (codes) => {
+    const calls = [];
+    const rm = () => {
+      calls.push(1);
+      const code = codes[calls.length - 1];
+      if (code) throw Object.assign(new Error(code), { code });
+    };
+    return { calls, rm };
+  };
+  const wait = () => {};
+  const busy = rmWith(['EPERM', 'EBUSY', 'EACCES']);
+  assert.equal(removeLaunchFile('x.started', { rm: busy.rm, wait }), true);
+  assert.equal(busy.calls.length, 4, 'three refusals, then removed');
+  const held = rmWith(Array(100).fill('EPERM'));
+  assert.equal(removeLaunchFile('x.started', { rm: held.rm, wait }), false, 'never throws');
+  assert.ok(held.calls.length > 1 && held.calls.length < 100, `bounded (${held.calls.length} tries)`);
+  const other = rmWith(['EIO']);
+  assert.equal(removeLaunchFile('x.started', { rm: other.rm, wait }), false);
+  assert.equal(other.calls.length, 1);
+  const dir = tempDir();
+  const real = path.join(dir, 'x.started');
+  fs.writeFileSync(real, '');
+  assert.equal(removeLaunchFile(real), true);
+  assert.ok(!fs.existsSync(real));
+  assert.equal(removeLaunchFile(real), true, 'a file already gone');
+});
+
+test('settleLaunches waits, within its time, for a start asked for once another start is done', async () => {
+  // DiskQueue.startFlusher asks for a flusher start again once the start on
+  // its way is done: a hook about to exit waits for that one too.
+  const env = { ...process.env, QUOTEMEM_TEST_LAUNCH_DELAY_MS: '300' };
+  const quick = ['-e', '0'];
+  let second = null;
+  let secondDone = false;
+  const next = () => {
+    second = core.spawnDetachedAsync(process.execPath, quick, { env });
+    second.then(() => { secondDone = true; }, () => { secondDone = true; });
+  };
+  core.spawnDetachedAsync(process.execPath, quick, { env }).then(next, next);
+  await core.settleLaunches(30_000);
+  assert.ok(second, 'the second start was asked for');
+  assert.ok(secondDone, 'and waited for');
+  // Never longer than its time.
+  const slow = core.spawnDetachedAsync(process.execPath, quick, { env: { ...env, QUOTEMEM_TEST_LAUNCH_DELAY_MS: '3000' } });
+  const t0 = Date.now();
+  await core.settleLaunches(200);
+  assert.ok(Date.now() - t0 < 2500, `returned after ${Date.now() - t0} ms`);
+  await slow.catch(() => null);
+});
+
 test('on Windows, a word with a quote is refused before anything starts', () => {
   assert.throws(() => core.spawnDetached(process.execPath, ['a"b'], { platform: 'win32' }), { code: 'EINVAL' });
   assert.throws(() => core.spawnDetached(process.execPath, [''], { platform: 'win32' }), { code: 'EINVAL' });

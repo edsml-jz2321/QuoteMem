@@ -156,8 +156,8 @@ on whether it is the desktop app or Cursor's CLI, and on the app's version:
     unless a note or a tool result says so. Such a forget is kept for a
     week (the statement only, in `forgotten/` under `~/.quotemem` and
     under `QUOTEMEM_STATE_DIR` when set, mode 600) and applied again behind the run's words
-    when they are saved at its end, so a fact said earlier in the run does
-    not come back. Words of a later run are kept; a turn of the same run and
+    when they are saved at its end, so a fact said earlier in the run gets
+    the forget too. Words of a later run are kept; a turn of the same run and
     minute is forgotten too, since Cursor's times have minutes only;
   - in print mode, Cursor runs the MCP tools only with
     `--approve-mcps --force`; with `--approve-mcps` alone it rejects the
@@ -379,7 +379,8 @@ openclaw plugins inspect quotemem --runtime --json   # check that it loaded
   `~/.quotemem/env`.
 - Behaviour settings can also go in `plugins.entries.quotemem.config`:
   `captureEvery`, `recall`, `recallGate`, `topK`, `maxInjectChars`, `forget`
-  and others; see `openclaw.plugin.json`.
+  and others; see `openclaw.plugin.json`. `maxInjectChars` takes 500 to
+  50000, and a value below 2500 is raised to 2500.
 
 **Whose memory.** By default all conversations share the owner's memory,
 and only the owner uses it.

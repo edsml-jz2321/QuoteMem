@@ -341,6 +341,12 @@ _ASKS_NAME: Final = (
 )
 """Any request ending with a name asked for, whoever bears it (`asks_name`)."""
 _HAN_TIE = "|".join(_HAN_TIES)
+_HAN_TIE_WORD: Final = re.compile(_HAN_TIE)
+
+
+def without_ties(text: str) -> str:
+    """A text without its Han person and animal words ("猫", "同事")."""
+    return _HAN_TIE_WORD.sub("", text)
 
 
 def _zh_request(nouns: str) -> re.Pattern[str]:

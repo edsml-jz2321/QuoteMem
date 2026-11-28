@@ -10,7 +10,7 @@ import path from 'node:path';
 import { after, test } from 'node:test';
 import { pathToFileURL } from 'node:url';
 
-import { CORE, TOKEN, forgetTargetRefusal, memoryLog, plan, sleep, stubServer, tempDir, testSettings, waitFor } from './helpers.mjs';
+import { CORE, TOKEN, WINDOWS_ENV, forgetTargetRefusal, memoryLog, plan, sleep, stubServer, tempDir, testSettings, waitFor } from './helpers.mjs';
 
 const core = await import(pathToFileURL(path.join(CORE, 'index.mjs')).href);
 const { DiskQueue, PROBE_EVERY_MS, buildJobs, lockHeld, releaseLock, runFlusher, tryLock } = core;
@@ -44,7 +44,7 @@ function runChild(source, env = {}) {
   const file = path.join(root, `child-${Math.random().toString(16).slice(2)}.mjs`);
   fs.writeFileSync(file, source);
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [file], { stdio: ['ignore', 'inherit', 'inherit'], env: { PATH: process.env.PATH, ...env } });
+    const child = spawn(process.execPath, [file], { stdio: ['ignore', 'inherit', 'inherit'], env: { ...WINDOWS_ENV, PATH: process.env.PATH, ...env } });
     child.on('error', reject);
     child.on('exit', (code) => resolve(code));
   });
@@ -940,6 +940,25 @@ test('background flusher: a short-lived hook process queues and exits; the detac
   assert.equal(queue.startFlusher(), false, 'nothing queued: no flusher');
 });
 
+test('background flusher: a start asked for while another is on its way is tried again after it', async () => {
+  const server = await serve({ '/memory/add': () => ({ body: { success: true } }) });
+  const settings = await testSettings(server.url, newDir());
+  const queue = new DiskQueue(settings, memoryLog());
+  // A start still on its way, whose flusher read the queue before the job
+  // below was added and exited (on Windows PowerShell can take seconds).
+  let finish;
+  queue.launching = new Promise((resolve) => { finish = resolve; }).finally(() => { queue.launching = null; });
+  queue.enqueue([addJob(settings, 'S', 1)]);
+  assert.equal(queue.startFlusher(), false, 'one start at a time');
+  assert.equal(queue.startFlusher(), false);
+  await sleep(300);
+  assert.equal(server.of('/memory/add').length, 0, 'nothing started meanwhile');
+  finish();
+  await waitFor(() => server.of('/memory/add').length === 1, 15_000, 'the start tried again');
+  await waitFor(() => !fs.existsSync(queue.lockFile), 15_000, 'the flusher exits when idle');
+  assert.equal(server.of('/memory/add').length, 1, 'one flusher');
+});
+
 test('stub service: the forget pair refuses a body naming no single target, as the service does', () => {
   const refused = (route, body) => forgetTargetRefusal(route, body)?.status ?? 200;
   assert.equal(refused('/memory/forget/prepare', { statement: 'my address' }), 200);
@@ -1009,12 +1028,17 @@ test('flusher: async Add: reads back off to at most 3 s, and the service\'s Retr
   const settings = await testSettings(server.url, newDir());
   const queue = new DiskQueue(settings, memoryLog());
   queue.enqueue([addJob(settings, 'S', 1)]);
-  assert.equal(await runFlusher(settings, memoryLog()), 'empty');
+  const lines = [];
+  assert.equal(await runFlusher(settings, memoryLog(lines)), 'empty');
+  // The schedule: 1 s, 2 s, then capped at 3 s; after the Retry-After of 1 s, 1 s.
+  const planned = lines.map((line) => /read again in (\d+) ms/.exec(line)?.[1]).filter(Boolean).map(Number);
+  assert.deepEqual(planned, [1000, 2000, 3000, 3000, 1000]);
   const gaps = server.of('/memory/add').slice(1).map((r, i) => r.at - server.of('/memory/add')[i].at);
   assert.equal(gaps.length, 5);
-  // 1 s, 2 s, then capped at 3 s; after the Retry-After of 1 s, 1 s.
+  // The reads came on that schedule: never early. A loaded Windows machine
+  // has made one read seconds late, so the upper bound is checked elsewhere.
   for (const [i, low, high] of [[0, 950, 1500], [1, 1950, 2500], [2, 2950, 3500], [3, 2950, 3500], [4, 950, 1500]]) {
-    assert.ok(gaps[i] >= low && gaps[i] < high, `read ${i + 2} came ${gaps[i]} ms after the one before`);
+    assert.ok(gaps[i] >= low && (process.platform === 'win32' || gaps[i] < high), `read ${i + 2} came ${gaps[i]} ms after the one before`);
   }
   assert.equal(core.pollDelayMs(10), 3000);
 });
@@ -1107,7 +1131,7 @@ test('forget: memories the confirmation left unreadable beside its targets are c
       affected: [{ memory_id: M(2), effect: 'forgotten', statement: HAS_CAT }, { memory_id: M(3), effect: 'unreadable', statement: 'The user has a pet.' }, { memory_id: M(4), effect: 'forgotten', statement: 'The cat is a tabby.' }],
       confirmed: [{ memory_id: M(2), effect: 'forgotten' }, { memory_id: M(3), effect: 'unreadable' }, { memory_id: M(4), effect: 'forgotten' }],
       want: { dependents: 2, unreadable: 1 },
-      note: /Done: 3 stored memories were forgotten \(2 of them because they relied only on what the user asked to forget\), and 1 more sentence.* 1 other stored memory relies only on what was forgotten, so it can no longer be recalled until the user says it again\. Tell the user that 3 related memories went with it/,
+      note: /Done: 3 stored memories were forgotten \(2 of them because they relied only on what the user asked to forget\), and 1 more sentence.* 1 other stored memory can no longer be recalled\. Tell the user that 3 related memories were affected/,
     },
     // "My cat is called Bob.", then "forget my cat's name": the cat was quoted anew and stays readable.
     requoted: { affected: [], confirmed: [], want: {}, note: /Done: 1 stored memory was forgotten, and 1 more sentence of the saved conversation that stated it\. Confirm briefly\./ },
@@ -1164,6 +1188,33 @@ test('forget: a repeated confirmation, whose first answer was lost, counts what 
   assert.ok(!carried.includes('The user has a cat.'), 'the carry on disk keeps ids only');
   const again = await core.runForget(settings, body, { substitute: false, carry: JSON.parse(carried) });
   assert.deepEqual([again.status, again.forgotten, again.dependents], ['forgotten', 1, 1]);
+});
+
+test('forget: a confirmation that left part of it readable stays incomplete after one more prepare', async () => {
+  // The service's own check found part of what it forgot still readable
+  // (`left_readable`): one more prepare may take what is left, and the forget
+  // is never reported as forgotten, even when that prepare finds nothing.
+  for (const again of ['nothing', 'verified']) {
+    let prepares = 0;
+    const server = await serve({
+      '/memory/forget/prepare': (body) => {
+        prepares += 1;
+        return prepares === 1 || again === 'verified' ? { body: plan(body, [M(prepares)]) } : NOTHING();
+      },
+      '/memory/forget/confirm': (body) => (body.targets[0].memory_id === M(1)
+        ? CONFIRMED('incomplete', [{ memory_id: M(1), outcome: 'verified' }, { memory_id: null, outcome: 'left_readable' }])
+        : CONFIRMED('verified', [{ memory_id: M(2), outcome: 'verified' }])),
+      '/memory/search': () => ({ body: { data: [] } }),
+    });
+    const settings = await testSettings(server.url, newDir());
+    const result = await core.runForget(settings, forgetJob(settings, 'my old address', `r-left-${again}`).body);
+    assert.equal(prepares, 2, again);
+    assert.deepEqual([result.status, result.left, result.changed], ['incomplete', true, 0], again);
+    assert.equal(result.forgotten, again === 'verified' ? 2 : 1, again);
+    const note = core.forgetNote('my old address', result);
+    assert.match(note, /Partly done: .*still readable afterwards/, note);
+    assert.doesNotMatch(note, /changed while the forget ran|Done:/, note);
+  }
 });
 
 test('forget: a repeated confirmation counts what its lost first answer removed as forgotten now', async () => {
@@ -1245,7 +1296,7 @@ test('in-chat forget: what it removed beyond the plugin\'s own forget of the sam
   assert.deepEqual(taken, [{ status: 'forgotten', forgotten: 1, withheld: 0, bundled: 1, unreadable: 1, more: true }]);
   const note = core.chatForgetNote(taken);
   assert.match(note, /For a request to forget in an earlier message that was already reported, saving the conversation removed more: 1 stored memory was forgotten\./);
-  assert.match(note, /1 other stored memory relies only on what was forgotten, so it can no longer be recalled until the user says it again\./);
+  assert.match(note, /1 other stored memory can no longer be recalled\./);
   assert.doesNotMatch(note, /cat|phone|"/, 'counts only');
   assert.doesNotMatch(fs.readFileSync(queue.chatForgetsFile, 'utf8'), /cat|phone/, 'no request words on disk');
   assert.deepEqual(await queue.takeChatForgets(), [], 'told once');
@@ -1333,7 +1384,7 @@ test('forget: reworded memories are counted apart from forgotten ones, kept with
   assert.equal(result.key, core.requestKey('Sofia\'s name'));
   assert.ok(Number.isFinite(result.created), 'the outcome keeps when its forget started');
   const now = core.forgetNote('Sofia\'s name', result);
-  assert.match(now, /Done: 2 stored memories were forgotten \(1 of them because it relied only on what the user asked to forget\)\. Tell the user that a related memory went with it/);
+  assert.match(now, /Done: 2 stored memories were forgotten \(1 of them because it relied only on what the user asked to forget\)\. Tell the user that a related memory was affected/);
   assert.match(now, /2 related memories were reworded to leave out what the user asked to forget, and are still stored\./);
   // The same request sent again (a resent prompt) and a later turn read the counts kept on disk.
   queue.markResultRead('r-reword');
@@ -1414,7 +1465,7 @@ test('in-chat forget: other memories the plugin\'s own forget reported are not c
   assert.deepEqual(taken, [{ status: 'forgotten', forgotten: 2, withheld: 0, bundled: 1, unreadable: 1, reworded: 1, more: true }]);
   const note = core.chatForgetNote(taken);
   assert.match(note, /removed more: 2 stored memories were forgotten\. One forgotten memory also held other details/);
-  assert.match(note, /1 other stored memory relies only on what was forgotten.* 1 related memory was reworded/);
+  assert.match(note, /1 other stored memory can no longer be recalled\..* 1 related memory was reworded/);
   assert.doesNotMatch(note, /relied only on what the user asked to forget/, 'M2 was told by the plugin\'s own note');
   assert.doesNotMatch(fs.readFileSync(queue.chatForgetsFile, 'utf8'), /Sofia|pharmacist|01JX/, 'counts and keys only on disk');
   // The same outcome again: nothing more, its reworded memory included.
@@ -1614,4 +1665,179 @@ test('forget outcomes and retries keep no memory text on disk once no note can q
   assert.ok(!JSON.stringify(carry).includes('Porto'));
   assert.deepEqual(carry.plan.bundled, [[M(1), '']]);
   assert.equal(carry.sum.whole, 1);
+});
+
+test('renameOver: a rename Windows reports busy is tried again; any other failure is not', async () => {
+  const { renameOver } = await import(pathToFileURL(path.join(CORE, 'lock.mjs')).href);
+  const busy = (codes) => {
+    const calls = [];
+    const rename = () => {
+      calls.push(1);
+      const code = codes[calls.length - 1];
+      if (code) throw Object.assign(new Error(code), { code });
+    };
+    return { calls, rename };
+  };
+  const wait = () => {};
+  const windows = busy(['EPERM', 'EACCES', 'EBUSY']);
+  renameOver('a', 'b', { platform: 'win32', rename: windows.rename, wait });
+  assert.equal(windows.calls.length, 4, 'three busy answers, then the rename');
+  const posix = busy(['EPERM']);
+  assert.throws(() => renameOver('a', 'b', { platform: 'linux', rename: posix.rename, wait }), { code: 'EPERM' });
+  assert.equal(posix.calls.length, 1, 'elsewhere EPERM is a real refusal');
+  const missing = busy(['ENOENT']);
+  assert.throws(() => renameOver('a', 'b', { platform: 'win32', rename: missing.rename, wait }), { code: 'ENOENT' });
+  assert.equal(missing.calls.length, 1);
+  const stuck = busy(Array(100).fill('EPERM'));
+  assert.throws(() => renameOver('a', 'b', { platform: 'win32', rename: stuck.rename, wait }), { code: 'EPERM' });
+  assert.ok(stuck.calls.length > 1 && stuck.calls.length < 100, `bounded (${stuck.calls.length} tries)`);
+});
+
+test('openExclusive: a create Windows reports busy is tried again; any other failure is not', async () => {
+  const { openExclusive } = await import(pathToFileURL(path.join(CORE, 'lock.mjs')).href);
+  const busy = (codes) => {
+    const calls = [];
+    const open = (file, flags) => {
+      calls.push(flags);
+      const code = codes[calls.length - 1];
+      if (code) throw Object.assign(new Error(code), { code });
+      return 7;
+    };
+    return { calls, open };
+  };
+  const wait = () => {};
+  const windows = busy(['EPERM', 'EACCES', 'EBUSY']);
+  assert.equal(openExclusive('a', 0o600, { platform: 'win32', open: windows.open, wait }), 7);
+  assert.deepEqual(windows.calls, ['wx', 'wx', 'wx', 'wx'], 'three busy answers, then the create');
+  const held = busy(['EEXIST']);
+  assert.throws(() => openExclusive('a', 0o600, { platform: 'win32', open: held.open, wait }), { code: 'EEXIST' });
+  assert.equal(held.calls.length, 1, 'a file that is there is not waited for');
+  const posix = busy(['EACCES']);
+  assert.throws(() => openExclusive('a', 0o600, { platform: 'linux', open: posix.open, wait }), { code: 'EACCES' });
+  assert.equal(posix.calls.length, 1, 'elsewhere EACCES is a real refusal');
+  const stuck = busy(Array(100).fill('EPERM'));
+  assert.throws(() => openExclusive('a', 0o600, { platform: 'win32', open: stuck.open, wait }), { code: 'EPERM' });
+  assert.ok(stuck.calls.length > 1 && stuck.calls.length < 100, `bounded (${stuck.calls.length} tries)`);
+});
+
+test('tryLock: a stale lock is broken by one process at a time; a guard is removed only once its breaker is gone', () => {
+  const file = path.join(tempDir(), 'dead.lock');
+  const guard = `${file}.break`;
+  const record = (pid, nonce) => JSON.stringify({ host: os.hostname(), boot: Date.now() - os.uptime() * 1000, pid, nonce });
+  const dead = () => fs.writeFileSync(file, record(999_999, 'dead'));
+  const old = new Date(Date.now() - 60_000);
+  dead();
+  // A live process is breaking it (this one stands for it): its guard stays, however old.
+  fs.writeFileSync(guard, record(process.pid, 'live'));
+  fs.utimesSync(guard, old, old);
+  assert.equal(tryLock(file), null, 'not broken while a live process breaks it');
+  assert.equal(core.readJson(guard)?.nonce, 'live', 'a live breaker\'s guard is kept');
+  assert.equal(core.readJson(file).nonce, 'dead');
+  // That process died: its guard is removed at once, and the lock is broken.
+  fs.writeFileSync(guard, record(999_999, 'gone'));
+  const handle = tryLock(file) ?? tryLock(file);
+  assert.ok(handle, 'taken over at once');
+  assert.ok(!fs.existsSync(guard), 'no guard left');
+  releaseLock(handle);
+  // A guard with no record (its process died before writing it) goes once old.
+  dead();
+  fs.writeFileSync(guard, '');
+  assert.equal(tryLock(file), null, 'a new guard with no record yet is kept');
+  assert.ok(fs.existsSync(guard));
+  fs.utimesSync(guard, old, old);
+  const again = tryLock(file) ?? tryLock(file);
+  assert.ok(again, 'taken over once the empty guard is old');
+  releaseLock(again);
+  assert.deepEqual(fs.readdirSync(path.dirname(file)), [], 'nothing left aside');
+});
+
+test('tryLock: processes that take, release and read one lock at once never fail', async () => {
+  // On Windows a lock file just released stays, pending delete, while
+  // another process reads it, and a create meanwhile is refused for a moment.
+  const file = path.join(tempDir(), 'busy.lock');
+  const script = `const { tryLock, releaseLock, lockHeld } = await import(${JSON.stringify(pathToFileURL(path.join(CORE, 'lock.mjs')).href)});
+const file = process.argv[1];
+const reader = process.argv[2] === 'read';
+let failed = 0;
+for (const end = Date.now() + 1500; Date.now() < end;) {
+  try { if (reader) lockHeld(file); else releaseLock(tryLock(file)); } catch { failed += 1; }
+}
+console.log(failed);`;
+  const failures = await Promise.all(['take', 'take', 'take', 'read', 'read'].map((role) => new Promise((resolve) => {
+    const child = spawn(process.execPath, ['--input-type=module', '-e', script, file, role], { stdio: ['ignore', 'pipe', 'ignore'] });
+    let out = '';
+    child.stdout.on('data', (d) => { out += d; });
+    child.on('exit', () => resolve(out.trim()));
+  })));
+  assert.deepEqual(failures, ['0', '0', '0', '0', '0']);
+});
+
+test('writeFileAtomic: processes that read and replace one file at once all succeed', async () => {
+  // As a hook and its flusher hand a lock over: on Windows a rename over a
+  // file the other process is reading is refused for a moment.
+  const dir = tempDir();
+  const file = path.join(dir, 'handed.lock');
+  fs.writeFileSync(file, '{}');
+  const script = `const { writeFileAtomic } = await import(${JSON.stringify(pathToFileURL(path.join(CORE, 'lock.mjs')).href)});
+const fs = await import('node:fs');
+const file = process.argv[1];
+let failed = 0;
+for (const end = Date.now() + 1500; Date.now() < end;) {
+  try { JSON.parse(fs.readFileSync(file, 'utf8')); writeFileAtomic(file, JSON.stringify({ pid: process.pid })); } catch { failed += 1; }
+}
+console.log(failed);`;
+  const failures = await Promise.all(Array.from({ length: 3 }, () => new Promise((resolve) => {
+    const child = spawn(process.execPath, ['--input-type=module', '-e', script, file], { stdio: ['ignore', 'pipe', 'ignore'] });
+    let out = '';
+    child.stdout.on('data', (d) => { out += d; });
+    child.on('exit', () => resolve(out.trim()));
+  })));
+  assert.deepEqual(failures, ['0', '0', '0']);
+  assert.deepEqual(fs.readdirSync(dir).filter((name) => name.endsWith('.tmp')), [], 'no temporary file left');
+});
+
+test('state.key: made whole by one of several processes; one cut short is replaced', async () => {
+  const dir = tempDir();
+  // Five processes at once get one key.
+  const script = `const { stateKey } = await import(${JSON.stringify(pathToFileURL(path.join(CORE, 'lock.mjs')).href)}); console.log(stateKey(process.argv[1]).toString('hex'));`;
+  const keys = await Promise.all(Array.from({ length: 5 }, () => new Promise((resolve) => {
+    const child = spawn(process.execPath, ['--input-type=module', '-e', script, dir], { stdio: ['ignore', 'pipe', 'ignore'] });
+    let out = '';
+    child.stdout.on('data', (d) => { out += d; });
+    child.on('exit', () => resolve(out.trim()));
+  })));
+  assert.equal(new Set(keys).size, 1, JSON.stringify(keys));
+  assert.equal(fs.readFileSync(path.join(dir, 'state.key')).toString('hex'), keys[0]);
+  if (process.platform !== 'win32') assert.equal(fs.statSync(path.join(dir, 'state.key')).mode & 0o777, 0o600);
+  assert.deepEqual(fs.readdirSync(dir).filter((name) => name.endsWith('.tmp')), [], 'no temporary file left');
+  // An empty key left by a write that was cut short (a full disk, a crash): replaced once it is old.
+  const broken = tempDir();
+  const file = path.join(broken, 'state.key');
+  fs.writeFileSync(file, '', { mode: 0o600 });
+  const old = new Date(Date.now() - 60_000);
+  fs.utimesSync(file, old, old);
+  const key = core.stateKey(broken);
+  assert.equal(key.length, 32);
+  assert.ok(fs.readFileSync(file).equals(key));
+  // One cut short and found by several processes at once: one replaces it
+  // and all of them keep the key left on disk (several rounds, as the race
+  // is a matter of timing).
+  const name = path.basename(file);
+  for (let round = 0; round < 8; round += 1) {
+    const shared = tempDir();
+    const cut = path.join(shared, name);
+    fs.writeFileSync(cut, 'short', { mode: 0o600 });
+    const past = new Date(Date.now() - 20_000);
+    fs.utimesSync(cut, past, past);
+    const found = await Promise.all(Array.from({ length: 8 }, () => new Promise((resolve) => {
+      const child = spawn(process.execPath, ['--input-type=module', '-e', script, shared], { stdio: ['ignore', 'pipe', 'ignore'] });
+      let out = '';
+      child.stdout.on('data', (d) => { out += d; });
+      child.on('exit', () => resolve(out.trim()));
+    })));
+    const onDisk = fs.readFileSync(cut).toString('hex');
+    assert.equal(onDisk.length, 64);
+    assert.deepEqual(found, found.map(() => onDisk), `round ${round}`);
+    assert.deepEqual(fs.readdirSync(shared).filter((entry) => entry !== name), [], 'no guard or temporary file left');
+  }
 });

@@ -42,8 +42,8 @@ test('nativeAdapterFor: a recent marker, or the host\'s own hook files that run 
   const other = JSON.stringify({ Stop: [{ hooks: [{ type: 'command', command: 'my-hook.sh' }] }] });
 
   const none = home();
-  assert.equal(nativeAdapterFor('devin', { HOME: none, DEVIN_PROJECT_DIR: none }), false);
-  assert.equal(nativeAdapterFor(null, { HOME: none }), false);
+  assert.equal(nativeAdapterFor('devin', { HOME: none, USERPROFILE: none, DEVIN_PROJECT_DIR: none }), false);
+  assert.equal(nativeAdapterFor(null, { HOME: none, USERPROFILE: none }), false);
 
   // Cursor's hooks are per user: its marker counts. Devin's are per project:
   // its marker does not, or one project's hooks would silence every other.
@@ -59,9 +59,9 @@ test('nativeAdapterFor: a recent marker, or the host\'s own hook files that run 
   const project = home();
   fs.mkdirSync(path.join(project, '.devin'));
   fs.writeFileSync(path.join(project, '.devin', 'hooks.v1.json'), ours);
-  assert.equal(nativeAdapterFor('devin', { HOME: none, DEVIN_PROJECT_DIR: project }), true, 'the project hooks file');
+  assert.equal(nativeAdapterFor('devin', { HOME: none, USERPROFILE: none, DEVIN_PROJECT_DIR: project }), true, 'the project hooks file');
   fs.writeFileSync(path.join(project, '.devin', 'hooks.v1.json'), other);
-  assert.equal(nativeAdapterFor('devin', { HOME: none, DEVIN_PROJECT_DIR: project }), false, 'another hook is not ours');
+  assert.equal(nativeAdapterFor('devin', { HOME: none, USERPROFILE: none, DEVIN_PROJECT_DIR: project }), false, 'another hook is not ours');
 
   // Devin reads hook files in the folders above too, up to the repository root.
   const repo = home();
@@ -70,14 +70,14 @@ test('nativeAdapterFor: a recent marker, or the host\'s own hook files that run 
   fs.writeFileSync(path.join(repo, '.devin', 'hooks.v1.json'), ours);
   const sub = path.join(repo, 'packages', 'app');
   fs.mkdirSync(sub, { recursive: true });
-  assert.equal(nativeAdapterFor('devin', { HOME: none, DEVIN_PROJECT_DIR: sub }), true, 'a hooks file in a folder above');
+  assert.equal(nativeAdapterFor('devin', { HOME: none, USERPROFILE: none, DEVIN_PROJECT_DIR: sub }), true, 'a hooks file in a folder above');
   // Not past the repository root.
   const outer = home();
   fs.mkdirSync(path.join(outer, '.devin'));
   fs.writeFileSync(path.join(outer, '.devin', 'hooks.v1.json'), ours);
   const inner = path.join(outer, 'repo');
   fs.mkdirSync(path.join(inner, '.git'), { recursive: true });
-  assert.equal(nativeAdapterFor('devin', { HOME: none, DEVIN_PROJECT_DIR: inner }), false, 'not above the repository root');
+  assert.equal(nativeAdapterFor('devin', { HOME: none, USERPROFILE: none, DEVIN_PROJECT_DIR: inner }), false, 'not above the repository root');
 
   const user = home();
   fs.mkdirSync(path.join(user, '.config', 'devin'), { recursive: true });

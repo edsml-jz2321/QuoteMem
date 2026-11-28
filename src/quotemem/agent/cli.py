@@ -216,7 +216,13 @@ def check(
 
 def _operator(options: argparse.Namespace) -> int:
     """``repair`` and ``delete-user``: one authenticated call to the running service."""
-    from quotemem.agent.client import service_token, service_url, unreachable
+    from quotemem.agent.client import (
+        ListenerClient,
+        service_token,
+        service_url,
+        unreachable,
+        verify_listener,
+    )
     from quotemem.agent.serve import notice
     from quotemem.agent.settings import default_data_dir
 
@@ -236,9 +242,12 @@ def _operator(options: argparse.Namespace) -> int:
         action = "inspect" if options.inspect else "skip" if options.skip else "resume"
         path, body = "/agent/admin/repair", {"user_id": user_id, "action": action}
     try:
-        with httpx.Client(base_url=url, timeout=cast(float, options.timeout_seconds),
-                          trust_env=False) as client:
-            response = client.post(path, json=body,
+        # The token goes only to a listener that holds it (another user may have the port),
+        # on the connection the check proved.
+        seconds = cast(float, options.timeout_seconds)
+        with ListenerClient(timeout_seconds=seconds) as client:
+            target = verify_listener(url, token, timeout_seconds=seconds, client=client)
+            response = client.post(target + path, json=body,
                                    headers={"Authorization": f"Bearer {token}"})
     except (httpx.ConnectError, httpx.ConnectTimeout):
         raise unreachable(url) from None

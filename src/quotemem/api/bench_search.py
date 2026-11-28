@@ -341,8 +341,20 @@ def agent_context(
         tuple((span.evidence_id, span.byte_start, span.byte_end)
               for span in scope_marks(writer, scope)),
         recorded, _asked, asserts, scope_kept(writer, scope), scope_unmatched(writer, scope),
-        lambda request_id: bind(HANDLED_PURPOSE, {"scope": scope.scope_id, "add": request_id}),
-        _reach)
+        _AddKey(bind, scope.scope_id), _reach)
+
+
+@dataclass(frozen=True, slots=True)
+class _AddKey:
+    """The keyed digest of one of a scope's Adds, as ``forget_add:{s}`` keys it
+    (`HANDLED_PURPOSE`); equal for the same binder and scope, so the interactive ranking
+    keeps one scope reading for every Search of a root (``core/recall._scope_reading``)."""
+
+    bind: Callable[[str, Any], str]
+    scope_id: str
+
+    def __call__(self, request_id: str) -> str:
+        return self.bind(HANDLED_PURPOSE, {"scope": self.scope_id, "add": request_id})
 
 
 def scope_unmatched(writer: ControlReader, scope: ScopeV1) -> frozenset[str]:
@@ -769,10 +781,9 @@ class SearchUseCase:
             )
         allowed = context.allowed_scopes
         withdrawn = self._withdrawn(scope)
-        # The interactive profile ranks plain and current reads for an agent plugin.
+        # The interactive profile ranks every read for an agent plugin, as-of reads too.
         agent = self._agent_context(scope) if (
-            self._interactive is not None and knowledge is None
-            and mode in {"plain", "current"} and not _BENCH_RANKING.get()) else None
+            self._interactive is not None and not _BENCH_RANKING.get()) else None
         # What an accepted forget withholds is ranked out, so the top k are filled without
         # it; such a ranking is never reused.
         hidden = _hidden(withheld_in(writer, scope.scope_id))
@@ -782,6 +793,9 @@ class SearchUseCase:
             agent=agent,
         )
         statuses: Mapping[str, Status] = {}
+        selected = None if knowledge is None else {
+            row.object_id: row for row in knowledge.root.memory_rows(scope.scope_id)
+        }
         if key is not None and state.ranked is not None and state.ranked[0] == key:
             returned = tuple(item.model_copy() for item in state.ranked[1])
             statuses = state.ranked[2]
@@ -791,15 +805,14 @@ class SearchUseCase:
                 context=agent, depth=self._interactive.max_top_k,
                 cache=self._publisher.recall_corpora(root),
                 withdrawn=withdrawn, lexical_only=state.lexical_only, hidden=hidden,
+                knowledge=selected,
             )
             returned, statuses = ranking.returned, ranking.statuses
         else:
             returned = recall_pure(
                 root, bundle, bundle.policy_snapshot, allowed_scopes=allowed,
                 mode=mode, cache=self._publisher.recall_corpora(root),
-                knowledge=None if knowledge is None else {
-                    row.object_id: row for row in knowledge.root.memory_rows(scope.scope_id)
-                },
+                knowledge=selected,
                 rerank=self._rerank,
                 withdrawn=withdrawn,
                 lexical_only=state.lexical_only,

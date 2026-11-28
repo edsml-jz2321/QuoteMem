@@ -257,7 +257,7 @@ def check(
                 "/agent/status providers or set the model or its pattern")
     return {
         "status": "checked", "ok": ok, "role": role, "code": code,
-        "hint": hint, "store": store,
+        "hint": hint, "provider_code": result.provider_code, "store": store,
         "controls": {"scrub_pii": routes.scrub, "auto_repair": policy,
                      "spend": limits.describe() if limits.capped else None},
         "providers": {

@@ -31,8 +31,10 @@ Per-item refusals inside the transaction: the tombstone guard gives
 every stored group lost a span gives ``evidence_invalidated``, and a partly
 unusable write drops those groups (not a target change); a merge whose added
 groups no longer fit the head it is committed against (a head re-bound after
-the resolution pinned it) gives ``support_budget_exceeded``.
-A refused creator's dependants mirror it and links to it are
+the resolution pinned it) gives ``support_budget_exceeded``. A merge drops the
+groups quoting a name a correction gave onto a memory that still states the
+name it replaced (`_unrenamed`), and one left with none gives
+``evidence_invalidated``. A refused creator's dependants mirror it and links to it are
 dropped. A component whose rows exceed ``MAX_TX_ROWS``, by the Writer's count
 or by its capacity refusal while sizing, writes every member as
 ``support_budget_exceeded`` instead (never split). So does a component
@@ -71,8 +73,16 @@ from pydantic import ValidationError
 from quotemem.core.add_read_view import AddReadView, ReadPin
 from quotemem.core.commit_plan import CommitJournalV1
 from quotemem.core.descriptor_repair import HeadRepairV1
-from quotemem.core.entities import MemorySnapshotV2, NameKind, PositionKey, QuoteSpanV1, ReasonCode
+from quotemem.core.entities import (
+    USER,
+    MemorySnapshotV2,
+    NameKind,
+    PositionKey,
+    QuoteSpanV1,
+    ReasonCode,
+)
 from quotemem.core.errors import QuoteMemError
+from quotemem.core.forget_match import named_ties
 from quotemem.core.forgotten_names import (
     ForgottenName,
     forgotten_names,
@@ -81,6 +91,7 @@ from quotemem.core.forgotten_names import (
     touching,
 )
 from quotemem.core.identity import IntegrityDigest, integrity_digest, new_ulid
+from quotemem.core.replaced_names import supports, supports_cut, tie_span, unnamed
 from quotemem.core.resolution import (
     MemberResolutionV1,
     MemoryRefV1,
@@ -91,6 +102,7 @@ from quotemem.core.resolution import (
 from quotemem.core.review_rounds import MAX_ROUND, RoundNo
 from quotemem.core.semantic import ScopeKind
 from quotemem.core.statement import (
+    MAX_GROUP_SPANS,
     MAX_MEMORY_SPANS,
     MAX_SUPPORT_GROUPS,
     name_norm,
@@ -118,6 +130,7 @@ from quotemem.store.entity_ops import (
     link_row,
     project_about,
     rederive_entity_names,
+    requote_on,
     revision_row,
     support_union,
 )
@@ -492,7 +505,9 @@ class _Build:
         ``_without_forgotten_names``): each occurrence, in a part the head quotes, of a name a
         forget took from exactly one entity, between two of its quotes or next to one in a
         sentence naming the bearer's sort (`forgotten_names.touching`). The commit withholds
-        them, so the new sentence keeps no readable name."""
+        them, so the new sentence keeps no readable name. The owner's withholding transaction
+        withheld the occurrences its own settlement cut before review (``ProposalV2.cut``),
+        whatever the review decides; this check covers a head written all the same."""
         txn = self.txn
         if not self.cut:
             return []
@@ -509,7 +524,8 @@ class _Build:
                     lambda row: row["name_norm"] == norm)] if norm else []
 
             self.names = forgotten_names(sorted(
-                (str(row["object_id"]), str(row["entity_id"]), str(row["statement"]))
+                (str(row["object_id"]), str(row["entity_id"]),
+                 tuple(str(entity) for entity in row["about_entity_ids"]), str(row["statement"]))
                 for row in rows if row["statement"]), bearers)
         if not self.names:
             return []
@@ -672,6 +688,17 @@ def _apply_write(build: _Build, member: ComponentMemberV1) -> None:
         if item is None:
             raise QuoteMemError("reference_missing", "A write target lost its Item")
         head = txn.get("revision", item["current_revision_id"])
+        if write.form == "merge" and head is not None:
+            kept = _unrenamed(txn, memory_id, head, groups)
+            if groups and not kept:
+                build.refused[key] = DispositionV1(
+                    "evidence_invalidated",
+                    build.entity(resolution.anchors[0] if resolution.anchors else None,
+                                 mint=False),
+                    judge_result_ref=member.judge_result_ref,
+                )
+                return
+            groups = kept
         if write.form == "merge" and head is not None and not _support_fits(head, groups):
             build.refused[key] = DispositionV1(
                 "support_budget_exceeded",
@@ -793,6 +820,285 @@ def _repair_heads(build: _Build, member: ComponentMemberV1,
         build.repaired.add(repair.memory_id)
 
 
+def _about(txn: TxnRows, entity_id: str) -> list[str]:
+    """The memories whose head anchors or is about an entity, in id order."""
+    found = {str(row["object_id"]) for row in txn.memories_of(entity_id)}
+    for link in txn.links_to("about_entity", entity_id):
+        revision = txn.get("revision", str(link["source_revision_id"]))
+        if revision is not None:
+            found.add(str(revision["memory_id"]))
+    return sorted(found)
+
+
+def _unname_siblings(build: _Build, member: ComponentMemberV1) -> None:
+    """Requote the memories about an entity a correction renamed that state no name but
+    quote the old one (``core/replaced_names``, the ``agent`` mode).
+
+    After "my cat is called Max, not Bob" corrects the cat's name, "The user has a cat."
+    quoting "My cat is called Bob" quotes "My cat": a requote (op ``requote``, the same
+    statement) on the same Evidence, its keywords less those showing the old name, when what
+    is left still holds every word it claims. The old name stays in the corrected memory's
+    history: a correction is no forget, and nothing is withheld. The replaced names are
+    those the corrected memory marks ``former`` and those its previous version gave the same
+    entity that it no longer gives while it gives that entity another (`_replaced`), so a
+    judge leaving out the ``former`` mark changes nothing. A memory this component itself
+    wrote, other than the corrected one, is requoted too when its new statement no longer
+    shows the old name ("The user's dog Rex loves the park." corrected to "The user's dog
+    loves the park." still quoting "My dog Rex loves the park."): its requote is a version
+    after the one this component wrote. A memory stating the old name, one not readable, and
+    an old name another entity bears are left as they are. Like a head repair, the requote
+    of a memory the component did not write changes no fact, so it is no target change for
+    the round's later components.
+
+    A memory told in another message than the old name's tie ("Rex and I went hiking.")
+    takes the tie from the correction's own quote ("my dog" of "my dog is called Rocky, not
+    Rex"). A readable memory still showing the old name after this (its statement states
+    it, or no requote holds what it claims) gets a ``contradicts`` link from the corrected
+    head, without ``correction_requested``: Search reads a state memory as possibly
+    outdated. A support group such a memory has that quotes the new name is dropped first
+    (`_without_given`), and a later merge of one into it is refused (`_unrenamed`), so no
+    memory quotes both names."""
+    write = member.resolution.write
+    key = member.position.position_key
+    final = build.final.get(key)
+    if write is None or write.reason != "correction" or key in build.refused or (
+            final is None or final.memory_id is None):
+        return
+    txn = build.txn
+    item = txn.get("item", final.memory_id)
+    head = None if item is None else txn.get("revision", str(item["current_revision_id"]))
+    if head is None:
+        return
+    read = readability(txn)
+    corrected = MemorySnapshotV2.model_validate(head["snapshot"])
+    told = [(span, text) for span in corrected.quote_spans
+            if (text := _quoted(txn, span)) is not None]
+    linked = {str(link["target_key"]) for link in txn.links_of(str(head["object_id"]))
+              if link["link_type"] == "contradicts"}
+    for entity_id, name in _replaced(txn, head):
+        if _bearers(txn, name_norm(name)) - {entity_id}:
+            continue
+        given = [entry.name for entry in corrected.naming
+                 if entry.entity_id == entity_id and entry.name_kind != "former"]
+        for memory_id in _about(txn, entity_id):
+            if memory_id == final.memory_id:
+                continue
+            sibling = txn.get("item", memory_id)
+            if sibling is None or sibling["lifecycle_state"] != "active":
+                continue
+            version = txn.get("revision", str(sibling["current_revision_id"]))
+            if version is None:
+                continue
+            snapshot = MemorySnapshotV2.model_validate(version["snapshot"])
+            if snapshot.erased or not read.p_ver(snapshot):
+                continue
+            groups = None if occurrences(name, snapshot.statement) else _unnamed_groups(
+                txn, snapshot, name, told, given)
+            if groups is None:
+                if memory_id not in linked and _shows(txn, snapshot, name):
+                    # No requote hides the old name: the correction questions the memory,
+                    # which reads as possibly outdated, as a contradiction does.
+                    _without_given(build, memory_id, version, snapshot, given)
+                    txn.put("link", link_row(txn, head, "contradicts", memory_id,
+                                             verdict_ref=member.judge_result_ref))
+                    linked.add(memory_id)
+                continue
+            keywords = [keyword for keyword in snapshot.keywords
+                        if not occurrences(name, keyword)]
+            if ("revision", version["object_id"]) in txn.written:
+                # This transaction wrote the head: it is written again on the new quotes, as
+                # a memory takes one new version per transaction.
+                _requote_written(txn, version, snapshot, groups, keywords)
+                continue
+            if memory_id not in build.changed:
+                build.repaired.add(memory_id)
+            requote_on(txn, memory_id, version=version, support=groups,
+                       policy_release_ref=build.policy_release_ref, keywords=keywords)
+
+
+def _requote_written(txn: TxnRows, version: Row, snapshot: MemorySnapshotV2,
+                     groups: Sequence[Sequence[QuoteSpanV1]], keywords: Sequence[str]) -> None:
+    """A revision this transaction wrote, written again on ``groups`` and ``keywords``, as
+    ``entity_ops.requote_on`` builds a requote's snapshot: the same id, version and links."""
+
+    def key(span: QuoteSpanV1) -> tuple[str, int, int]:
+        return span.evidence_id, span.byte_start, span.byte_end
+
+    spans = sorted({key(span): span for group in groups for span in group}.values(), key=key)
+    position = {key(span): index for index, span in enumerate(spans)}
+    requoted = MemorySnapshotV2.model_validate({
+        **snapshot.model_dump(mode="json"),
+        "quote_spans": [span.model_dump(mode="json") for span in spans],
+        "support_groups": [list(group) for group in sorted({
+            tuple(sorted(position[key(span)] for span in group)) for group in groups})],
+        "keywords": list(keywords),
+        "last_confirmed_at": confirmed_at(txn, (span.evidence_id for span in spans)),
+    })
+    image = requoted.model_dump(mode="json")
+    txn.put("revision", {
+        **version, "snapshot": image, "content_hash": str(integrity_digest(requoted)),
+        "evidence_ids": sorted({span["evidence_id"] for span in image["quote_spans"]})})
+
+
+def _replaced(txn: TxnRows, head: Row) -> list[tuple[str, str]]:
+    """The names a correction's new head replaced, as ``(entity_id, name)``: each name it
+    marks ``former``, and each its previous version gave an entity (as a name or an alias)
+    that it no longer gives while it gives that entity another. A name the new head still
+    gives, or one inside a name it gives ("Bob" of "Bob Smith"), and the user's own names,
+    are none."""
+    corrected = MemorySnapshotV2.model_validate(head["snapshot"])
+    current = [entry for entry in corrected.naming if entry.name_kind != "former"]
+    found = {(entry.entity_id, entry.name) for entry in corrected.naming
+             if entry.name_kind == "former"}
+    previous = head.get("previous_revision_id")
+    row = None if previous is None else txn.get("revision", str(previous))
+    if row is not None:
+        before = MemorySnapshotV2.model_validate(row["snapshot"])
+        found |= {(entry.entity_id, entry.name) for entry in before.naming
+                  if entry.name_kind != "former" and any(
+                      own.entity_id == entry.entity_id for own in current)}
+    return sorted((entity_id, name) for entity_id, name in found
+                  if entity_id != USER and name_norm(name) and not any(
+                      occurrences(name, own.name) for own in current))
+
+
+def _bearers(txn: TxnRows, norm: str) -> set[str]:
+    """The entities a name (its ``name_norm``) is an ``entity_name`` row of."""
+    return {str(row["entity_id"]) for row in txn.merged("entity_name", txn.pages(
+        EntityNameRows(scope_kind=txn.scope_kind, scope_id=txn.scope_id, name_norms=(norm,))),
+        lambda row: row["name_norm"] == norm)}
+
+
+def _unnamed_groups(txn: TxnRows, snapshot: MemorySnapshotV2, name: str,
+                    told: Sequence[tuple[QuoteSpanV1, str]] = (),
+                    given: Sequence[str] = ()) -> list[list[QuoteSpanV1]] | None:
+    """A memory's support groups quoting no form of an old name (`replaced_names.unnamed`),
+    or None when none of its quotes shows the name, a group would be left empty, the
+    spans exceed their bound, or the pieces no longer hold what the statement claims
+    (`supports`, `supports_cut`). A group whose pieces no longer show whom the statement
+    is about ("Kiwi is five years old." cut to "is five years old.") also quotes the
+    phrase of the same message showing it (`tie_span`: "My parrot"), or else the one of the
+    correction's quotes ``told`` that shows no name ``given``."""
+    groups: list[list[QuoteSpanV1]] = []
+    changed = False
+    ties = named_ties(snapshot.statement)
+    for group in snapshot.support_groups:
+        pieces: list[QuoteSpanV1] = []
+        row: Row | None = None
+        for index in group:
+            span = snapshot.quote_spans[index]
+            row = txn.get("evidence", span.evidence_id)
+            if row is None:
+                return None
+            found = unnamed(span, str(row["text"]), int(row["byte_start"]), name)
+            if found is None:
+                return None
+            changed = changed or found != [span]
+            pieces.extend(found)
+        shown = " ".join(text for span in pieces if (text := _quoted(txn, span)) is not None)
+        if ties and row is not None and not ties <= named_ties(shown):
+            text, first = str(row["text"]), int(row["byte_start"])
+            phrase = tie_span(snapshot.statement, text, name)
+            if phrase is not None:
+                pieces.insert(0, QuoteSpanV1(
+                    evidence_id=snapshot.quote_spans[group[-1]].evidence_id,
+                    byte_start=first + len(text[:phrase[0]].encode("utf-8")),
+                    byte_end=first + len(text[:phrase[1]].encode("utf-8"))))
+            else:
+                pieces.extend(_told_tie(snapshot.statement, told, name, given))
+        groups.append(sorted({(span.evidence_id, span.byte_start, span.byte_end): span
+                              for span in pieces}.values(),
+                             key=lambda span: (span.evidence_id, span.byte_start)))
+    spans = {(span.evidence_id, span.byte_start, span.byte_end)
+             for group in groups for span in group}
+    if not changed or len(spans) > MAX_MEMORY_SPANS or any(
+            len(group) > MAX_GROUP_SPANS for group in groups):
+        return None
+    quoted = [text for group in groups for span in group
+              if (text := _quoted(txn, span)) is not None]
+    before = [text for span in snapshot.quote_spans if (text := _quoted(txn, span)) is not None]
+    return groups if supports(snapshot.statement, quoted) or supports_cut(
+        snapshot.statement, before, quoted) else None
+
+
+def _told_tie(statement: str, told: Sequence[tuple[QuoteSpanV1, str]], name: str,
+              given: Sequence[str]) -> list[QuoteSpanV1]:
+    """The first phrase of the correction's quotes ``told`` showing whom ``statement`` is
+    about and no name, old or ``given`` ("my dog" of "my dog is called Rocky, not Rex"), as
+    one span; none when no quote holds one."""
+    for span, text in told:
+        phrase = tie_span(statement, text, name)
+        if phrase is None or any(occurrences(other, text[phrase[0]:phrase[1]])
+                                 for other in given):
+            continue
+        return [QuoteSpanV1(
+            evidence_id=span.evidence_id,
+            byte_start=span.byte_start + len(text[:phrase[0]].encode("utf-8")),
+            byte_end=span.byte_start + len(text[:phrase[1]].encode("utf-8")))]
+    return []
+
+
+def _shows(txn: TxnRows, snapshot: MemorySnapshotV2, name: str) -> bool:
+    """Whether a memory's statement or one of its quotes shows a name."""
+    return bool(occurrences(name, snapshot.statement)) or any(
+        occurrences(name, text) for span in snapshot.quote_spans
+        if (text := _quoted(txn, span)) is not None)
+
+
+def _without_given(build: _Build, memory_id: str, version: Row, snapshot: MemorySnapshotV2,
+                   given: Sequence[str]) -> None:
+    """A memory still showing the old name, requoted without the support groups that quote
+    a new name ``given`` (the judge merged "my cat is called Nova" into "Luna is the user's
+    cat."); unchanged when no group or every group quotes one. A head this transaction
+    wrote is written again; an earlier one is requoted (`entity_ops.requote_on`)."""
+    txn = build.txn
+    if not given:
+        return
+
+    def quotes_given(group: Sequence[int]) -> bool:
+        return any(occurrences(other, text) for index in group
+                   if (text := _quoted(txn, snapshot.quote_spans[index])) is not None
+                   for other in given)
+
+    kept = [group for group in snapshot.support_groups if not quotes_given(group)]
+    if not kept or len(kept) == len(snapshot.support_groups):
+        return
+    support = [[snapshot.quote_spans[index] for index in group] for group in kept]
+    if ("revision", version["object_id"]) in txn.written:
+        _requote_written(txn, version, snapshot, support, snapshot.keywords)
+        return
+    if memory_id not in build.changed:
+        build.repaired.add(memory_id)
+    requote_on(txn, memory_id, version=version, support=support,
+               policy_release_ref=build.policy_release_ref, keywords=snapshot.keywords)
+
+
+def _unrenamed(txn: TxnRows, memory_id: str, head: Row,
+               groups: Sequence[Sequence[QuoteSpanV1]]) -> list[Sequence[QuoteSpanV1]]:
+    """A merge's groups less those quoting a name a live correction gave an entity while the
+    target still shows the name the correction replaced, in its statement or a quote
+    (`_unname_siblings` linked the target ``contradicts``): the judge merged "my cat is
+    called Nova" into "Luna is the user's cat.", which would then quote both names."""
+    target = MemorySnapshotV2.model_validate(head["snapshot"])
+    given: set[str] = set()
+    for link in txn.links_to("contradicts", memory_id):
+        source = txn.get("revision", str(link["source_revision_id"]))
+        owner = None if source is None else txn.get("item", str(source["memory_id"]))
+        if source is None or owner is None or owner["lifecycle_state"] != "active" or (
+                owner["current_revision_id"] != source["object_id"]):
+            continue
+        corrected = MemorySnapshotV2.model_validate(source["snapshot"])
+        for entity_id, name in _replaced(txn, source):
+            if _shows(txn, target, name):
+                given.update(entry.name for entry in corrected.naming
+                             if entry.entity_id == entity_id and entry.name_kind != "former")
+    if not given:
+        return list(groups)
+    return [group for group in groups if not any(
+        occurrences(other, text) for span in group
+        if (text := _quoted(txn, span)) is not None for other in given)]
+
+
 def _refused_merges(build: _Build) -> dict[str, DispositionV1]:
     """By target, the refusal of the merges into a head no unrefused member writes."""
     written: set[str] = set()
@@ -848,6 +1154,9 @@ def _build(build: _Build) -> None:
     for member in build.members:
         if member.resolution.write is not None:
             _apply_write(build, member)
+    if build.cut:
+        for member in build.members:
+            _unname_siblings(build, member)
     merges = _refused_merges(build)
     for member in build.members:
         key = member.position.position_key

@@ -25,6 +25,12 @@ const AUTH_MODES = new Set(['bearer', 'token', 'x-api-key']);
 
 export const OFF = new Set(['0', 'off', 'false', 'no', 'none', 'disabled']);
 export const ON = new Set(['1', 'on', 'true', 'yes', 'enabled']);
+/** The relevance `always` recall asks of a hit by default (see resolveSettings). */
+const ALWAYS_MIN_SCORE = 0.3;
+// The smallest recall budget: the block's own text (its header, notice, both
+// status notes and the room it keeps) takes about 2,000 characters, so a
+// smaller budget could leave no room for a hit and turn recall off.
+export const MIN_INJECT_CHARS = 2500;
 
 export function present(value) {
   return value !== undefined && value !== null && value !== '';
@@ -51,6 +57,23 @@ export function osUser() {
   } catch {
     return null;
   }
+}
+
+/**
+ * Whether a URL host names this computer other than as the listener check
+ * (listener.mjs thisComputerHost) names it: this computer's own host name, or
+ * a loopback alias of /etc/hosts. Such a URL gets a warning to use 127.0.0.1.
+ */
+function thisComputerByName(hostname) {
+  const host = hostname.toLowerCase().replace(/\.$/, '');
+  if (['localhost.localdomain', 'ip6-localhost', 'ip6-loopback'].includes(host)) return true;
+  let own = '';
+  try {
+    own = os.hostname().toLowerCase().replace(/\.$/, '');
+  } catch {
+    return false;
+  }
+  return Boolean(own) && (host === own || host === own.split('.')[0]);
 }
 
 /**
@@ -83,8 +106,10 @@ export function resolveSettings(config = {}, env = process.env, host = {}) {
       out.problem = PLAIN_URL_PROBLEM;
     } else {
       out.url = parsed.href.replace(/\/+$/, '');
-      const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(parsed.hostname);
-      if (parsed.protocol === 'http:' && !loopback) {
+      const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(parsed.hostname) || /^(?:[a-z0-9_-]+\.)*localhost\.?$/.test(parsed.hostname);
+      if (thisComputerByName(parsed.hostname)) {
+        out.warnings.push(`QUOTEMEM_URL names this computer by the host name ${parsed.hostname}; use http://127.0.0.1${parsed.port ? `:${parsed.port}` : ''} instead, so the plugins check that the program on the port is your QuoteMem service before they send the token`);
+      } else if (parsed.protocol === 'http:' && !loopback) {
         out.warnings.push('QUOTEMEM_URL uses plain http to a non-loopback host; the token is sent unencrypted');
       }
     }
@@ -124,20 +149,19 @@ export function resolveSettings(config = {}, env = process.env, host = {}) {
   const recall = String(pick('recall', 'QUOTEMEM_RECALL') ?? 'gated').trim().toLowerCase();
   out.recall = recall === 'always' ? 'always' : OFF.has(recall) ? 'off' : 'gated';
   // The agent service answers at most 20 hits (its own default is 10); recall
-  // asks for 5, so the injected block stays small.
+  // inserts 5, so the injected block stays small.
   out.topK = integer(pick('topK', 'QUOTEMEM_TOP_K'), 5, 1, 20);
-  out.maxInjectChars = integer(pick('maxInjectChars', 'QUOTEMEM_MAX_INJECT_CHARS'), 4000, 500, 50_000);
+  out.maxInjectChars = integer(pick('maxInjectChars', 'QUOTEMEM_MAX_INJECT_CHARS'), 4000, MIN_INJECT_CHARS, 50_000);
   out.recallTimeoutMs = integer(pick('recallTimeoutMs', 'QUOTEMEM_RECALL_TIMEOUT_MS'), 3000, 100, 15_000);
   const minScore = Number.parseFloat(String(pick('recallMinScore', 'QUOTEMEM_RECALL_MIN_SCORE') ?? ''));
-  // The agent service's score is a relevance from 0 to 1, the same for the
-  // same match in every search, and the service itself returns nothing below
-  // its relevance floor: a question it cannot answer gets no hit. So gated
-  // mode adds no threshold of its own (null). Evidence parts and past
-  // memories keep only part of their relevance (0.7 to 0.8), so a threshold
-  // set here also drops them first. `always` mode searches on every message
-  // and asks for a closer match (0.5). A hit without a score passes only in
-  // gated mode.
-  out.recallMinScore = Number.isFinite(minScore) ? minScore : out.recall === 'always' ? 0.5 : null;
+  // The agent service's score is a relevance in [0, 1), not scaled to the
+  // best hit, and the service delivers no hit below 0.25:
+  // gated mode adds no threshold of its own (null). `always` mode searches
+  // on every message, coding requests included, and asks for 0.3, a step
+  // above the service's floor, so fewer hits that only share a topic go in.
+  // Any number is used as given. A hit without a score passes only in gated
+  // mode.
+  out.recallMinScore = Number.isFinite(minScore) ? minScore : out.recall === 'always' ? ALWAYS_MIN_SCORE : null;
   // `questions`: a plain first-person statement ("I prefer Rust") does not
   // trigger a search unless the message asks something; `broad` also
   // searches on such statements.

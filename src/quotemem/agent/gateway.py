@@ -20,6 +20,12 @@ the memory routes and ``/health`` with 503 and ``Retry-After``, so a plugin trea
 turn as having no memory and carries on. It always answers:
 
 - ``GET /agent/ready``: unauthenticated and content-free, 200 once serving;
+- ``GET /agent/listener`` with ``x-quotemem-challenge: <32 to 128 hex digits>``:
+  unauthenticated, and only on a loopback address to a loopback client (else 404);
+  ``{"proof": "<hex>"}``: the hex HMAC-SHA256 under the service token of
+  ``quotemem-listener-proof``, NUL, the address and port the service listens on, NUL
+  and the challenge (`listener_proof`). A client on the same computer checks it before
+  it sends the token: a program of another user that took the port cannot answer it;
 - ``GET /agent/status``: authenticated with the service token; the phase, the
   store binding and details (users, quarantined users, active Add owners, Adds in
   flight and deferred, the embedding canary state), the day's spend, provider call
@@ -96,6 +102,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import hmac
+import ipaddress
 import json
 import re
 import sys
@@ -155,6 +162,8 @@ LOGGED_ROUTES = frozenset({
 })
 """Routes logged by name; any other path is logged as ``other``."""
 _USER_ROUTES = LOGGED_ROUTES - {"/health", "/agent/status", "/memory/list"}
+LISTENER_ROUTE = "/agent/listener"
+_CHALLENGE = re.compile(r"[0-9a-f]{32,128}")
 MAX_LIST_BODY = 65_536
 _BLOCK_OPEN = '<memory untrusted="true">\n'
 _BLOCK_CLOSE = "\n</memory>"
@@ -578,6 +587,49 @@ def item_reasons(document: object) -> dict[str, int] | None:
     return None if items is None else _reasons(items)
 
 
+def plain_address(address: str) -> str:
+    """An address as the proof names it: lower case, no brackets, IPv4-mapped as IPv4.
+
+    Both forms of an IPv4-mapped address count: ``::ffff:127.0.0.1`` and ``::ffff:7f00:1``
+    (as a URL parser writes it) are ``127.0.0.1``.
+    """
+    text = address.strip("[]").lower()
+    if ":" in text:
+        try:
+            mapped = ipaddress.IPv6Address(text).ipv4_mapped
+        except ValueError:
+            mapped = None
+        if mapped is not None:
+            return str(mapped)
+    return text
+
+
+def is_loopback(address: str) -> bool:
+    """Whether ``address`` is an IP address of this computer's loopback interface."""
+    try:
+        return ipaddress.ip_address(plain_address(address)).is_loopback
+    except ValueError:
+        return False
+
+
+def listener_proof(secret: str, address: str, port: int, challenge: str) -> str:
+    """The answer of ``GET /agent/listener``: what only a holder of the token can give.
+
+    Args:
+        secret: The service token.
+        address: The address the service listens on (`plain_address`), as the client
+            connected to it.
+        port: The port the service listens on, as the client connected to it.
+        challenge: The client's challenge (hex digits).
+
+    Returns:
+        The hex HMAC-SHA256 of ``quotemem-listener-proof``, NUL, the address, NUL, the
+        port, NUL and the challenge, keyed by the token.
+    """
+    message = f"quotemem-listener-proof\0{address}\0{port}\0{challenge}".encode("ascii")
+    return hmac.new(secret.encode("ascii"), message, hashlib.sha256).hexdigest()
+
+
 async def _respond(
     send: Send, status: int, document: dict[str, Any],
     headers: list[tuple[bytes, bytes]] | None = None,
@@ -797,6 +849,27 @@ class AgentGateway:
         self.state.enter("serving")
         return self
 
+    async def _listener(self, scope: Scope, send: Send) -> None:
+        """Answer a client's challenge with ``listener_proof`` for this service's port."""
+        challenges = [value for name, value in cast(list[tuple[bytes, bytes]], scope["headers"])
+                      if name.lower() == b"x-quotemem-challenge"]
+        challenge = challenges[0].decode("latin-1") if len(challenges) == 1 else ""
+        server = cast(tuple[str, int] | None, scope.get("server"))
+        client = cast(tuple[str, int] | None, scope.get("client"))
+        # Only a client on this computer checks a listener; a service others can reach
+        # gives no proof, so no one elsewhere can test guesses of its token against one.
+        if server is None or client is None or not is_loopback(server[0]) \
+                or not is_loopback(client[0]):
+            await _respond(send, 404, {"code": "not_found", "message": "Not found"})
+            return
+        if not _CHALLENGE.fullmatch(challenge):
+            await _respond(send, 400, {"code": "invalid_request",
+                                       "message": "x-quotemem-challenge must be 32 to 128 "
+                                                  "lowercase hex digits"})
+            return
+        await _respond(send, 200, {"proof": listener_proof(
+            self.credentials.secret, plain_address(server[0]), server[1], challenge)})
+
     def user_hash(self, user_id: str) -> str:
         """The log identity of one user: 16 hex digits of a keyed hash."""
         return hmac.new(self._user_key, user_id.encode("utf-8", errors="surrogatepass"),
@@ -813,6 +886,9 @@ class AgentGateway:
             ready = self.inner is not None and self.state.phase == "serving"
             await _respond(send, 200 if ready else 503, {"ready": ready,
                                                        "phase": self.state.phase})
+            return
+        if path == LISTENER_ROUTE and method == "GET":
+            await self._listener(scope, send)
             return
         record = RequestLog(method, path if path in LOGGED_ROUTES else "other")
         started = time.monotonic()

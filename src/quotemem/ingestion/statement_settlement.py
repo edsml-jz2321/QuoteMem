@@ -27,7 +27,10 @@ what needs no review, using indexed lookups only:
    duplicate.
 
 It also raises each position's review concerns. The result is pure, so replay recomputes it
-exactly; the settlement transaction persists it.
+exactly; the settlement transaction persists it. In the ``agent`` mode it also keeps
+forgotten names out of what positions say, and the withholding transaction, right before the
+settlement transaction, withholds each name a position's quotes were cut around
+(``Settlement.cut``).
 """
 
 from __future__ import annotations
@@ -50,18 +53,26 @@ from quotemem.core.entities import (
     NewEntityChoiceV1,
     PositionKey,
     QuoteSpanV1,
+    UnresolvedChoiceV1,
 )
 from quotemem.core.errors import QuoteMemError
 from quotemem.core.extraction_records import DigestSettlementV1
 from quotemem.core.forget_match import name_forms, name_request, naming_tie
 from quotemem.core.forgotten_names import (
-    NAME_LINK,
     NEUTRAL,
     ForgottenName,
     Kind,
     bare,
+    bearer_of,
+    before_set_aside,
     cut,
+    declared_another_beside,
+    declared_beside,
+    declares_another,
+    declares_other,
     forgotten_names,
+    given_aside,
+    gives_name,
     kind_of,
     names_of,
     occurrences,
@@ -71,6 +82,7 @@ from quotemem.core.forgotten_names import (
     tie_of,
     untie,
     without_name,
+    without_set_aside,
 )
 from quotemem.core.identity import canonical_json
 from quotemem.core.proposal import Concern
@@ -134,6 +146,10 @@ class Settlement:
             transaction compares with the head.
         facts (dict[PositionKey, AdmittedFact]): The positions settled without a
             forgotten name (`_without_forgotten_names`), as their proposals state them.
+        cut (dict[PositionKey, tuple[QuoteSpanV1, ...]]): Each position whose quotes
+            settlement cut around a forgotten name, with what withholds that name
+            (`_NamePlan.withheld`), sorted. The withholding transaction withholds them before
+            review, so the name stays unreadable whatever the review decides.
     """
 
     order: tuple[PositionKey, ...]
@@ -147,6 +163,8 @@ class Settlement:
     primaries: dict[PositionKey, str | None]
     lifecycles: dict[PositionKey, MemoryLifecycle]
     facts: dict[PositionKey, AdmittedFact] = field(default_factory=dict[PositionKey, AdmittedFact])
+    cut: dict[PositionKey, tuple[QuoteSpanV1, ...]] = field(
+        default_factory=dict[PositionKey, tuple[QuoteSpanV1, ...]])
 
 
 @dataclass(frozen=True, slots=True)
@@ -253,8 +271,9 @@ def settle(units: Sequence[UnitFacts], view: AddReadView, *, owner_run_id: str,
     """
     changed: dict[PositionKey, AdmittedFact] = {}
     refused: dict[PositionKey, str] = {}
+    cut: dict[PositionKey, tuple[QuoteSpanV1, ...]] = {}
     if relearn:
-        units, changed, refused = _without_forgotten_names(units, view, owner_run_id)
+        units, changed, refused, cut = _without_forgotten_names(units, view, owner_run_id)
     positions = sorted((
         _Position((owner_run_id, unit.unit_no, fact.position), unit.unit_no, fact,
                   _sigma(fact, view))
@@ -413,15 +432,18 @@ def settle(units: Sequence[UnitFacts], view: AddReadView, *, owner_run_id: str,
         primaries=primaries,
         lifecycles=lifecycles,
         facts=changed,
+        cut=cut,
     )
 
 
 def _without_forgotten_names(
     units: Sequence[UnitFacts], view: AddReadView, owner_run_id: str,
-) -> tuple[list[UnitFacts], dict[PositionKey, AdmittedFact], dict[PositionKey, str]]:
+) -> tuple[list[UnitFacts], dict[PositionKey, AdmittedFact], dict[PositionKey, str],
+           dict[PositionKey, tuple[QuoteSpanV1, ...]]]:
     """The positions of an Add after a forget took a name, with that name kept out of what
-    they say about the one that bore it (``core/forgotten_names``), those that changed, and
-    those settlement refuses with the tombstone that forgot the name.
+    they say about the one that bore it (``core/forgotten_names``), those that changed, those
+    settlement refuses with the tombstone that forgot the name, and what withholds the name
+    for each position whose quotes were cut around it.
 
     Each name is read on its own (`_NamePlan`), position by position. The one that bore it
     may be gone (the forget erased it); its sort ("the user's cat": an animal) still tells a
@@ -435,14 +457,25 @@ def _without_forgotten_names(
     here, so every occurrence of the name the Add gives the bearer is withheld before review
     reads the sentence ("The user's pet is named bob." after "forget my cat's name"); a naming of
     someone else keeps its quote. The user's later words that give the name again keep
-    those occurrences readable across the Add. Other positions are cut around the remaining
-    occurrences they quote, and a statement showing the name says instead the bearer's tie
-    ("The user took the user's cat to the vet yesterday."), or "someone" beside another
-    bearer or nothing tying it. A position left without a quote, or one whose statement
-    cannot drop the name, is refused too: privacy before the fact. A correction is left as
-    it is."""
+    those occurrences readable across the Add. A type the extraction gave a bare name ("a
+    person") makes no one someone else: only a tie word does, in the anchor's description or
+    the sentences the position quotes ("my coworker Bob"). Nor does it make the bearer: such
+    an entity is someone unknown, minted without the name, and a statement about them says
+    "someone" ("Someone phoned the user from London last night."). So is a referent the
+    extraction left unresolved under the name, whether admission kept it as an anchor or
+    left it out (`AdmittedFact.referents`). Other positions are cut
+    around the remaining occurrences they quote, and a statement showing the name says
+    instead the bearer's tie ("The user took the user's cat to the vet yesterday."), or
+    "someone" beside another bearer or nothing tying it. A position left without a quote, or
+    one whose statement cannot drop the name, is refused too: privacy before the fact. A
+    correction is left as it is.
+
+    A position kept after a cut goes to review, which may still refuse it, leave it pending
+    or never end. So the occurrences a cut leaves out are withheld before review as a
+    refusal's are (`_NamePlan.withheld`), each with the position it was cut from, whether the
+    review then keeps it or not."""
     names = forgotten_names(
-        ((record.object_id, record.entity_id, record.statement)
+        ((record.object_id, record.entity_id, record.about_entity_ids, record.statement)
          for record in view.tombstones()),
         lambda name: (entity.entity_id for entity in view.entities_by_name(name_norm(name))))
     positions = [((owner_run_id, unit.unit_no, fact.position), unit.unit_no, fact)
@@ -450,10 +483,11 @@ def _without_forgotten_names(
     names = (*names, *_requested_names(positions, view, owner_run_id,
                                        {name.name.casefold() for name in names}))
     if not names:
-        return list(units), {}, {}
+        return list(units), {}, {}, {}
     tombstones = {record.object_id: record for record in view.tombstones()}
     changed: dict[PositionKey, AdmittedFact] = {}
     refused: dict[PositionKey, str] = {}
+    cut: dict[PositionKey, dict[SpanKey, QuoteSpanV1]] = {}
     for name in names:
         plan = _NamePlan.of(name, positions, view, owner_run_id)
         # Namings first: one refused withholds the bearer's occurrences before review, where
@@ -470,16 +504,29 @@ def _without_forgotten_names(
             if key in refused:
                 continue
             current = changed.get(key, fact)
-            found, refusing = plan.settle(key, current, tombstone, shown_as_tie=shown_as_tie)
+            found, refusing, held = plan.settle(key, current, tombstone,
+                                                shown_as_tie=shown_as_tie)
             if found is not current:
                 changed[key] = found
+            if held:
+                cut.setdefault(key, {}).update((span_key(span), span) for span in held)
             if refusing:
                 refused[key] = name.tombstone_id
                 shown_as_tie = shown_as_tie or bool(plan.spans)
     settled = [UnitFacts(unit.unit_no, tuple(
         changed.get((owner_run_id, unit.unit_no, fact.position), fact) for fact in unit.facts))
         for unit in units]
-    return settled, changed, refused
+    quoted = {key: {span.evidence_id for span in fact.spans} for key, _unit_no, fact in positions}
+
+    def bounded(key: PositionKey, spans: dict[SpanKey, QuoteSpanV1]) -> tuple[QuoteSpanV1, ...]:
+        # A withholding entry stays within as many parts as the worst settled position: past
+        # that (several names cut from one position), it keeps those in its own quoted parts.
+        found = tuple(spans[span] for span in sorted(spans))
+        if len({span.evidence_id for span in found}) <= MAX_MEMORY_SPANS:
+            return found
+        return tuple(span for span in found if span.evidence_id in quoted[key])
+
+    return settled, changed, refused, {key: bounded(key, spans) for key, spans in cut.items()}
 
 
 def name_placeholders(
@@ -491,18 +538,19 @@ def name_placeholders(
 
     ``denied`` holds each position settlement refused: its statement, its quote spans
     (what the refusal withheld) and its tombstone. A span is a name occurrence when its text
-    is, in one of its `name_forms`, the name of that tombstone (a naming of a non-user entity) or,
-    for a request that asked for a name (`_requested_names`), the name the refused naming
-    gives. Every other withheld range, of another forget or of a refused restatement, renders
-    as the marker. Pure over the view and the refused positions, so a resumed owner rebuilds
-    it from its records."""
+    is, in one of its `name_forms`, the name of that tombstone (a naming of a non-user entity,
+    `bearer_of`) or, for a request that asked for a name (`_requested_names`), the name the
+    refused naming gives. Every other withheld range, of another forget or of a refused
+    restatement, renders as the marker. Pure over the view and the refused positions, so a
+    resumed owner rebuilds it from its records."""
     tombstones = {record.object_id: record for record in view.tombstones()}
     found: dict[SpanKey, tuple[QuoteSpanV1, str]] = {}
     for statement, spans, tombstone_id in denied:
         record = None if tombstone_id is None else tombstones.get(tombstone_id)
         if record is None:
             continue
-        tied = tie_of(record.statement) if record.entity_id != USER else None
+        tied = tie_of(record.statement) if bearer_of(
+            record.entity_id, record.about_entity_ids, record.statement) is not None else None
         if tied is None and name_request(record.statement):
             tied = tie_of(statement)
         if tied is None:
@@ -555,12 +603,39 @@ def _requested_names(positions: Sequence[tuple[PositionKey, int, AdmittedFact]],
 
 Role = str
 """How an anchor stands to a forgotten name's bearer: ``bearer``, ``other`` (clearly someone
-else), ``user`` or ``unknown``."""
+else), ``user``, ``unknown`` or ``misbound`` (the bearer, where the user's words name someone
+else by the name: settlement refuses the position)."""
 
 
 def _overlaps(span: QuoteSpanV1, other: QuoteSpanV1) -> bool:
     return span.evidence_id == other.evidence_id and (
         span.byte_start < other.byte_end and other.byte_start < span.byte_end)
+
+
+def _carries(choice: EntityChoiceV1, name: ForgottenName) -> bool:
+    """Whether a new entity carries a forgotten name, in its name or its descriptor, or an
+    unresolved referent in its mention."""
+    if isinstance(choice, UnresolvedChoiceV1):
+        return choice.mention is not None and bool(occurrences(name.name, choice.mention))
+    return isinstance(choice, NewEntityChoiceV1) and (
+        (choice.name is not None and bool(occurrences(name.name, choice.name)))
+        or bool(occurrences(name.name, choice.descriptor)))
+
+
+def _quoted_sentences(fact: AdmittedFact, view: AddReadView) -> str:
+    """The sentences a position's quotes meet, in quote order, each once."""
+    found: list[str] = []
+    for span in fact.spans:
+        part = view.evidence(span.evidence_id)
+        if part is None:
+            continue
+        text = part.text
+        for low, high in sentences(text):
+            first = part.byte_start + len(text[:low].encode("utf-8"))
+            last = part.byte_start + len(text[:high].encode("utf-8"))
+            if first < span.byte_end and span.byte_start < last:
+                found.append(text[low:high])
+    return " ".join(dict.fromkeys(found))
 
 
 @dataclass(frozen=True, slots=True)
@@ -578,6 +653,7 @@ class _NamePlan:
         held: The bearer's occurrences of the name in the Add's quoted parts, by part
             (character offsets).
         spans: The same occurrences as byte spans, in the order of the offsets in ``held``.
+        said: Each position's quoted sentences.
     """
 
     name: ForgottenName
@@ -589,7 +665,8 @@ class _NamePlan:
     others: bool
     held: dict[str, list[tuple[int, int]]]
     spans: tuple[QuoteSpanV1, ...]
-    role: Callable[[EntityChoiceV1, int], Role]
+    role: Callable[[EntityChoiceV1, int, str], Role]
+    said: dict[PositionKey, str]
 
     @staticmethod
     def of(name: ForgottenName, positions: Sequence[tuple[PositionKey, int, AdmittedFact]],
@@ -597,28 +674,57 @@ class _NamePlan:
         bearer = view.entity(name.entity_id)
         kind = kind_of(name.tie, "" if bearer is None else bearer.entity_type)
 
-        def role(choice: EntityChoiceV1, unit_no: int) -> Role:
+        def role(choice: EntityChoiceV1, unit_no: int, said: str) -> Role:
             resolved = anchor_entity(choice, unit_no, owner_run_id, view)
             if resolved == USER:
                 return "user"
             if resolved == name.entity_id:
-                return "bearer"
+                # The user's words put another tie beside the name ("My friend Anna came
+                # over." after the forget of a sister's name Anna): the name is that one's,
+                # and an anchor of the bearer misreads whom the sentence means.
+                return "misbound" if declared_another_beside(said, name, kind) else "bearer"
             if isinstance(choice, NewEntityChoiceV1):
+                # A new entity of another sort is someone else when a tie word declares it,
+                # in its description ("the user's coworker") or beside the name in the user's
+                # words ("my coworker Bob"). The type, or a bare noun, the extraction gave a
+                # bare name ("Bob phoned me": a person) declares no one, nor does it make the
+                # bearer: whom the name means is unknown, so the name stays withheld and the
+                # statement says "someone".
                 if other_kind(kind, choice.entity_type, choice.descriptor):
+                    return "other" if declares_other(kind, choice.descriptor) or (
+                        declared_beside(said, name, kind)) else "unknown"
+                # Of the bearer's own sort: another tie word ("the user's friend", "my friend
+                # Anna") declares someone else; a person named only by the name ("Anna called
+                # me", "A person is named Anna.") may be anyone of that name, so the name stays
+                # withheld and the statement says "someone". An animal named by it is the
+                # bearer ("I took bob to the vet").
+                if declares_another(kind, choice.descriptor) or declared_another_beside(
+                        said, name, kind):
                     return "other"
+                if kind.shown(choice.descriptor):
+                    return "bearer"
                 named = choice.name is not None and bool(occurrences(name.name, choice.name))
-                return "bearer" if named or kind.shown(choice.descriptor) else "unknown"
+                return "bearer" if named and not kind.person else "unknown"
             record = None if resolved is None else view.entity(resolved)
             return "other" if record is not None and other_kind(
                 kind, record.entity_type, "") else "unknown"
 
-        roles = {key: tuple(role(choice, unit_no) for choice in fact.anchors)
+        said = {key: _quoted_sentences(fact, view) for key, _unit_no, fact in positions}
+        roles = {key: tuple(role(choice, unit_no, said[key]) for choice in fact.anchors)
                  for key, unit_no, fact in positions}
         about = frozenset(key for key, _unit_no, fact in positions
                           if "bearer" in roles[key] or kind.shown(fact.statement))
+        # Positions with an entity of unknown sort minted under the name ("A person is named
+        # Bob."), or a referent the extraction left unresolved under it, as an anchor or one
+        # admission left out ("Bob called the user." anchored on the user and an unresolved
+        # "Bob"): its occurrences are withheld as the bearer's, a Han name's too.
+        carrying = frozenset(key for key, _unit_no, fact in positions if any(
+            role == "unknown" and _carries(choice, name)
+            for choice, role in zip(fact.anchors, roles[key], strict=True)) or any(
+            occurrences(name.name, referent) for referent in fact.referents))
         other_only = {key for key, _unit_no, _fact in positions if key not in about and any(
-            found == "other" for found in roles[key]) and all(
-            found in ("other", "user") for found in roles[key])}
+            found in ("other", "misbound") for found in roles[key]) and all(
+            found in ("other", "misbound", "user") for found in roles[key])}
         held: dict[str, list[tuple[int, int]]] = {}
         spans: list[QuoteSpanV1] = []
         for evidence_id in sorted({span.evidence_id for _key, _unit_no, fact in positions
@@ -644,7 +750,7 @@ class _NamePlan:
                 if not located:
                     continue
                 mine = kind.shown(text[low:high]) or any(
-                    quoted(span, about) for _start, _end, span in located)
+                    quoted(span, about | carrying) for _start, _end, span in located)
                 if not mine and not name.han:
                     mine = not all(quoted(span, other_only) for _start, _end, span in located)
                 if mine:
@@ -652,7 +758,7 @@ class _NamePlan:
                         (start, end) for start, end, _span in located)
                     spans.extend(span for _start, _end, span in located)
         return _NamePlan(name, kind, view, owner_run_id, roles, about, any(
-            "other" in found for found in roles.values()), held, tuple(spans), role)
+            "other" in found for found in roles.values()), held, tuple(spans), role, said)
 
     def without_retaught(
         self, namings: Iterable[AdmittedFact], tombstone: TombstoneRecord,
@@ -679,32 +785,55 @@ class _NamePlan:
         found = self.roles[key]
         if len(found) == len(fact.anchors):
             return found
-        return tuple(self.role(choice, key[1]) for choice in fact.anchors)
+        return tuple(self.role(choice, key[1], self.said[key]) for choice in fact.anchors)
+
+    def withheld(self, hits: Sequence[QuoteSpanV1]) -> tuple[QuoteSpanV1, ...]:
+        """What withholds the name for a position whose quotes met ``hits`` of its
+        occurrences: every occurrence the Add gives the bearer when they stay within the
+        span bound, else ``hits``. A refusal withholds them as its quotes (`_refused`); a cut
+        withholds them beside the position it keeps (`settle`)."""
+        return self.spans if len(self.spans) <= MAX_MEMORY_SPANS else tuple(hits)
 
     def settle(self, key: PositionKey, fact: AdmittedFact, tombstone: TombstoneRecord, *,
-               shown_as_tie: bool = False) -> tuple[AdmittedFact, bool]:
-        """One position without the name, and whether settlement refuses it. Its anchors
-        declaring the bearer by the name are the bearer (`_rebound`). With ``shown_as_tie``
-        a refused naming withholds the bearer's occurrences before review, where the judge
-        reads them as the bearer's tie, so a position keeps the tie for the name."""
-        found, refusing = self._settle(key, fact, tombstone, shown_as_tie)
+               shown_as_tie: bool = False,
+               ) -> tuple[AdmittedFact, bool, tuple[QuoteSpanV1, ...]]:
+        """One position without the name, whether settlement refuses it, and, when its
+        quotes were cut around the name, what withholds the name before review (`withheld`),
+        whatever the review then decides. Its anchors declaring the bearer by the name are
+        the bearer (`_rebound`). With ``shown_as_tie`` a refused naming withholds the bearer's
+        occurrences before review, where the judge reads them as the bearer's tie, so a
+        position keeps the tie for the name."""
+        found, refusing, held = self._settle(key, fact, tombstone, shown_as_tie)
         if refusing:
-            return found, True
+            return found, True, ()
         anchors = self._rebound(key, found)
-        return (found if anchors == found.anchors else replace(found, anchors=anchors)), False
+        if anchors != found.anchors:
+            found = replace(found, anchors=anchors)
+        return found, False, held
 
     def _rebound(self, key: PositionKey, fact: AdmittedFact) -> tuple[EntityChoiceV1, ...]:
         """A position's anchors with every new entity that declares the bearer by the name
         (in its name or its descriptor, `_NamePlan.of`'s ``bearer`` role) made the bearer
         itself, or, when the forget erased it, kept without the name: no entity is minted
-        under a forgotten name or a descriptor showing it."""
+        under a forgotten name or a descriptor showing it, and no unresolved referent keeps
+        it as its mention."""
         name = self.name
         bearer = self.view.entity(name.entity_id)
         anchors: list[EntityChoiceV1] = []
         for choice, role in zip(fact.anchors, self._roles(key, fact), strict=True):
-            if role == "bearer" and isinstance(choice, NewEntityChoiceV1) and (
-                    (choice.name is not None and occurrences(name.name, choice.name))
-                    or occurrences(name.name, choice.descriptor)):
+            if isinstance(choice, UnresolvedChoiceV1) and _carries(choice, name):
+                # Someone the name may mean, still unresolved: the review reads no mention.
+                choice = choice.model_copy(update={"mention": None})
+            elif role == "unknown" and isinstance(choice, NewEntityChoiceV1) and _carries(
+                    choice, name):
+                # Someone the name may mean, of unknown sort: minted without the name, as
+                # "someone" when nothing else describes them.
+                named = choice.name is not None and bool(occurrences(name.name, choice.name))
+                choice = choice.model_copy(update={
+                    "name": None if named else choice.name,
+                    "descriptor": without_name(choice.descriptor, name, NEUTRAL)})
+            elif role == "bearer" and isinstance(choice, NewEntityChoiceV1) and _carries(
+                    choice, name):
                 if bearer is not None:
                     choice = ExistingChoiceV1(kind="existing", entity_id=name.entity_id,
                                               via="catalog")
@@ -717,21 +846,48 @@ class _NamePlan:
         return tuple(anchors)
 
     def _settle(self, key: PositionKey, fact: AdmittedFact, tombstone: TombstoneRecord,
-                shown_as_tie: bool) -> tuple[AdmittedFact, bool]:
+                shown_as_tie: bool) -> tuple[AdmittedFact, bool, tuple[QuoteSpanV1, ...]]:
         name = self.name
-        if fact.corrects_text is not None:
-            return fact, False
+        aside = without_set_aside(fact.statement, name)
+        if aside is not None:
+            # "The user's cat is named Max, not Bob." after the forget took Bob: the user's words
+            # set the forgotten name aside as they give another. The naming of the other is
+            # kept without it, the "not Bob" cut from its quotes (`_cut`).
+            # A naming annotation keeps the given name ("Max" of "Max, not Bob"), and a
+            # correction's cue that shows the forgotten name is no cue: no memory holds it.
+            fact = replace(
+                fact, statement=aside, statement_digest=statement_digest(aside),
+                naming=tuple(replace(entry, name=given) for entry in fact.naming
+                             if (given := given_aside(entry.name, name)) is not None),
+                corrects_text=None if fact.corrects_text is None or occurrences(
+                    name.name, fact.corrects_text) else fact.corrects_text)
         hits = [span for span in self.spans if any(_overlaps(span, own) for own in fact.spans)]
         shown = shows(fact.statement, name)
+        if fact.corrects_text is not None and not hits and not shown:
+            # A correction that shows no forgotten name is the judge's to read.
+            return fact, False, ()
+        if "misbound" in self._roles(key, fact) or (
+                self.kind.shown(fact.statement)
+                and declared_another_beside(self.said[key], name, self.kind)):
+            # "The user's sister came over for dinner." of "My friend Anna came over for
+            # dinner.": a false fact about the bearer, whichever entity it anchors.
+            return self._refused(key, fact, ())
         if name.name.casefold() in names_of(fact.statement,
                                              (naming.name for naming in fact.naming)):
             if self._relearned(fact, tombstone) or (key not in self.about and not hits):
-                return fact, False
-            return self._refused(key, fact, hits)
+                return fact, False, ()
+            if name.name.casefold() in names_of(fact.statement):
+                return self._refused(key, fact, hits)
+            # Only a naming annotation gives the name to an event ("Bob knocked my coffee
+            # over again." annotated "Bob" on the one who did it): that annotation goes, and
+            # the fact is kept as any other mention of the name is, without it.
+            fact = replace(fact, naming=tuple(
+                entry for entry in fact.naming if entry.name.casefold() != name.name.casefold()))
         if not hits and not shown:
-            return fact, False
+            return fact, False, ()
         groups = tuple(group for group in (tuple(dict.fromkeys(
-            piece for span in group for piece in self._cut(span))) for group in fact.groups)
+            piece for span in group for piece in self._cut(span, not shown)))
+            for group in fact.groups)
             if group)
         if not groups or len({span_key(span) for group in groups for span in group}) > (
                 MAX_MEMORY_SPANS):
@@ -748,6 +904,10 @@ class _NamePlan:
             # bearer, which nothing the judge reads ties it to.
             kept = [index for index, role in enumerate(roles) if role != "bearer"]
             if roles[0] == "bearer" or any(entry.anchor_index not in kept for entry in naming):
+                return self._refused(key, fact, hits)
+            if not (self.kind.person or self.kind.animal):
+                # "someone" stands for a person or an animal only: a place or an organisation
+                # left nameless ("The user still works at someone.") is a false statement.
                 return self._refused(key, fact, hits)
             reworded = untie(statement, name, self.kind)
             if reworded is None:
@@ -767,17 +927,23 @@ class _NamePlan:
                     and isinstance(choice, NewEntityChoiceV1)
                     and choice.descriptor.casefold().startswith("the user's ")
                     and (described := bare(choice.descriptor, name.name))), name.tie)
+            if tie == NEUTRAL and not (self.kind.person or self.kind.animal):
+                # "someone" stands for a person or an animal only (see `untied`).
+                return self._refused(key, fact, hits)
             reworded = reword(statement, name, tie, read_as_tie=read_as_tie)
             if reworded is None:
                 return self._refused(key, fact, hits)
             statement = reworded
         elif not hits:
-            return fact, False
-        return replace(
+            return fact, False, ()
+        kept = replace(
             fact, statement=statement, statement_digest=statement_digest(statement),
             anchors=anchors, naming=naming, groups=groups, keywords=tuple(
                 keyword for keyword in fact.keywords if not occurrences(name.name, keyword)
-                and not (untied and self.kind.shown(keyword)))), False
+                and not (untied and self.kind.shown(keyword))))
+        # Quotes cut around the name (``hits``) keep the fact; the name is withheld before
+        # review, as a refusal withholds it, so no review outcome leaves it readable.
+        return kept, False, self.withheld(hits) if hits else ()
 
     def _text(self, span: QuoteSpanV1) -> str:
         part = self.view.evidence(span.evidence_id)
@@ -788,43 +954,62 @@ class _NamePlan:
         return data[span.byte_start - part.byte_start:span.byte_end - part.byte_start].decode(
             "utf-8")
 
-    def _cut(self, span: QuoteSpanV1) -> list[QuoteSpanV1]:
+    def _cut(self, span: QuoteSpanV1, aside: bool = False) -> list[QuoteSpanV1]:
+        """A quote span's pieces around the name's held occurrences. With ``aside`` (the
+        statement no longer shows the name), a piece right before one loses the words that
+        set it aside: "my cat is called Max" of "my cat is called Max, not Bob"."""
         part = self.view.evidence(span.evidence_id)
         if part is None:
             raise QuoteMemError("binding_mismatch",
                                 "An admitted span cites Evidence outside the scope")
-        return cut(span, part.text, part.byte_start, self.held.get(span.evidence_id, []))[0]
+        pieces = cut(span, part.text, part.byte_start, self.held.get(span.evidence_id, []))[0]
+        if not aside:
+            return pieces
+        data = part.text.encode("utf-8")
+        kept: list[QuoteSpanV1] = []
+        for piece in pieces:
+            low, high = piece.byte_start - part.byte_start, piece.byte_end - part.byte_start
+            if any(held.evidence_id == piece.evidence_id and piece.byte_end <= held.byte_start
+                   and not data[high:held.byte_start - part.byte_start].strip()
+                   for held in self.spans):
+                before = before_set_aside(data[low:high].decode("utf-8"))
+                if not before.strip():
+                    continue
+                piece = QuoteSpanV1(evidence_id=piece.evidence_id, byte_start=piece.byte_start,
+                                    byte_end=piece.byte_start + len(before.encode("utf-8")))
+            kept.append(piece)
+        return kept
 
     def _relearned(self, fact: AdmittedFact, tombstone: TombstoneRecord) -> bool:
-        """The user's own later words give the name again: they restate the
-        forgotten naming and give a name (`NAME_LINK`); a sentence merely mentioning the name
-        may sit near the naming's vector, and it relearns nothing. After a request that only
-        asked for the name (`_requested_names`), the user's dated words giving a name after it
-        teach it again."""
+        """The user's own later words give the name again: they restate the forgotten naming
+        and give the name (`gives_name`); a sentence merely mentioning the name ("Anna called
+        me yesterday.") may sit near the naming's vector, and it relearns nothing. After a
+        request that only asked for the name (`_requested_names`), the user's dated words
+        giving a name after it teach it again."""
         told = [group_told(((self.view.evidence(span.evidence_id), span.byte_start,
                              span.byte_end) for span in group), asserts)
                 for group in fact.groups]
         if name_request(tombstone.statement):
             return any(group is not None and after(group, tombstone.created_at)
-                       and NAME_LINK.search(group.text) for group in told)
+                       and gives_name(group.text, self.name.name) for group in told)
         return relearned(told, Forgotten(
             tombstone.statement, tombstone.created_at, tombstone.embedding,
             tombstone.embedding_space), fact.statement) and any(
-            group is not None and NAME_LINK.search(group.text) for group in told)
+            group is not None and gives_name(group.text, self.name.name) for group in told)
 
     def _refused(self, key: PositionKey, fact: AdmittedFact, hits: Sequence[QuoteSpanV1],
-                 ) -> tuple[AdmittedFact, bool]:
+                 ) -> tuple[AdmittedFact, bool, tuple[QuoteSpanV1, ...]]:
         """A position settlement refuses, quoting the bearer's occurrences of the name, so its
-        refusal withholds them and nothing else: all of the Add's within the span bound, else
-        its own; one quoting none keeps its quotes. One whose primary has no entity yet (a
-        declaration) is refused about the bearer."""
-        group = self.spans if len(self.spans) <= MAX_MEMORY_SPANS else tuple(hits)
+        refusal withholds them and nothing else (`withheld`): all of the Add's within the
+        span bound, else its own; one quoting none keeps its quotes. One whose primary has no
+        entity yet (a declaration) is refused about the bearer."""
+        group = self.withheld(hits)
         groups = (tuple(group),) if group else fact.groups
         anchors = self._rebound(key, fact)
         if anchor_entity(anchors[0], key[1], self.owner_run_id, self.view) is None:
             anchors = (ExistingChoiceV1(kind="existing", entity_id=self.name.entity_id,
                                         via="catalog"), *anchors[1:])
-        return replace(fact, groups=groups, anchors=anchors), True
+        return replace(fact, groups=groups, anchors=anchors), True, ()
 
 
 def _concerns(

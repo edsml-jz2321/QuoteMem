@@ -20,6 +20,12 @@ const CORE_URL = pathToFileURL(path.join(CORE, 'index.mjs')).href;
 const core = await import(CORE_URL);
 const { DIRECT_START_FILE, DiskQueue, HookMemory, readJson, runIdleWaiter } = core;
 const windows = process.platform === 'win32';
+// Every hook here is its own Node process, and on Windows each start of the
+// flusher goes through PowerShell: a turn takes about ten times longer there
+// than on Linux. The idle times, waits and limits are three times longer on
+// Windows, so that a turn still ends well within a chat's idle time.
+const SLOW = windows ? 3 : 1;
+const idle = (ms) => String(ms * SLOW);
 const quiet = { warn() {}, warnOnce() {}, debug() {} };
 
 const root = tempDir('qm-core-idle-');
@@ -35,8 +41,8 @@ after(async () => {
   }
   await Promise.all([...servers].map((s) => s.close()));
 });
-async function serve(handlers, port) {
-  const server = await stubServer(handlers, port);
+async function serve(handlers, port, options = {}) {
+  const server = await stubServer(handlers, port, options);
   servers.add(server);
   return server;
 }
@@ -135,24 +141,24 @@ const exits = (log) => log.split('\n').filter((line) => line.includes('flusher e
 // after the lock is released).
 async function exited(hooks, pid, count = 1) {
   const gone = () => (pid ? !alive(pid) : exits(hooks.log()).length >= count);
-  await waitFor(() => !fs.existsSync(hooks.queue.idleLockFile) && gone(), 8000, 'the waiting flusher to exit');
+  await waitFor(() => !fs.existsSync(hooks.queue.idleLockFile) && gone(), 8000 * SLOW, 'the waiting flusher to exit');
 }
 
 test('idle: one flusher wakes after the idle time and saves exactly the pending turns, once, then exits', async () => {
   const server = await serve({ '/memory/add': stored });
-  const hooks = setup(server, { QUOTEMEM_IDLE_FLUSH_MS: '1200' });
+  const hooks = setup(server, { QUOTEMEM_IDLE_FLUSH_MS: idle(1200) });
   await hooks.turn('A', 1, 'My kite is orange.');
   const last = await hooks.turn('A', 2, 'My bike is blue.');
   const pid = hooks.lock()?.pid;
   assert.ok(Number.isInteger(pid) && alive(pid), 'a flusher waits');
   assert.equal(server.of('/memory/add').length, 0, 'nothing is saved before the idle time');
-  await waitFor(() => server.of('/memory/add').length === 1, 6000, 'the idle save');
+  await waitFor(() => server.of('/memory/add').length === 1, 6000 * SLOW, 'the idle save');
   const [add] = server.of('/memory/add');
-  assert.ok(add.at - last >= 1200, `saved after the idle time (${add.at - last} ms)`);
+  assert.ok(add.at - last >= 1200 * SLOW, `saved after the idle time (${add.at - last} ms)`);
   assert.deepEqual(users(add), ['My kite is orange.', 'My bike is blue.']);
   assert.equal(add.body.messages.length, 4, 'the two turns with their replies');
   await exited(hooks, pid);
-  await sleep(1300);
+  await sleep(1300 * SLOW);
   assert.equal(server.of('/memory/add').length, 1, 'nothing is sent twice');
   assert.equal(hooks.queue.entries().length, 0);
   assert.match(hooks.log(), /flusher exit: .*no idle chat left/);
@@ -161,15 +167,20 @@ test('idle: one flusher wakes after the idle time and saves exactly the pending 
 
 test('idle: a new turn while the flusher waits moves the time; the same flusher saves both', async () => {
   const server = await serve({ '/memory/add': stored });
-  const hooks = setup(server, { QUOTEMEM_IDLE_FLUSH_MS: '1500' });
+  const hooks = setup(server, { QUOTEMEM_IDLE_FLUSH_MS: idle(1500) });
   await hooks.turn('A', 1, 'My kite is orange.');
-  const pid = hooks.lock()?.pid;
-  await sleep(900);
+  const { pid, nonce } = hooks.lock() ?? {};
+  await sleep(900 * SLOW);
   const last = await hooks.turn('A', 2, 'My bike is blue.');
-  assert.equal(hooks.lock()?.pid, pid, 'the flusher that waited still waits; no second one');
-  await waitFor(() => server.of('/memory/add').length === 1, 6000, 'the idle save');
+  if (windows) {
+    // The same lock: on Windows its pid moves from the cmd.exe that starts the flusher to the flusher.
+    assert.equal(hooks.lock()?.nonce, nonce, 'the flusher that waited still waits; no second one');
+  } else {
+    assert.equal(hooks.lock()?.pid, pid, 'the flusher that waited still waits; no second one');
+  }
+  await waitFor(() => server.of('/memory/add').length === 1, 6000 * SLOW, 'the idle save');
   const [add] = server.of('/memory/add');
-  assert.ok(add.at - last >= 1500, `the idle time counts from the last turn (${add.at - last} ms)`);
+  assert.ok(add.at - last >= 1500 * SLOW, `the idle time counts from the last turn (${add.at - last} ms)`);
   assert.deepEqual(users(add), ['My kite is orange.', 'My bike is blue.']);
   await exited(hooks, pid);
   assert.equal(exits(hooks.log()).length, 1);
@@ -177,45 +188,45 @@ test('idle: a new turn while the flusher waits moves the time; the same flusher 
 
 test('idle: three turns before the time go as a batch; the fourth is saved at the idle time; nothing twice', async () => {
   const server = await serve({ '/memory/add': stored });
-  const hooks = setup(server, { QUOTEMEM_IDLE_FLUSH_MS: '1500' });
+  const hooks = setup(server, { QUOTEMEM_IDLE_FLUSH_MS: idle(1500) });
   for (const n of [1, 2, 3]) await hooks.turn('A', n, `Fact number ${n}.`);
-  await waitFor(() => server.of('/memory/add').length === 1, 6000, 'the batch of three');
+  await waitFor(() => server.of('/memory/add').length === 1, 6000 * SLOW, 'the batch of three');
   assert.deepEqual(users(server.of('/memory/add')[0]), ['Fact number 1.', 'Fact number 2.', 'Fact number 3.']);
   await hooks.turn('A', 4, 'Fact number 4.');
-  await waitFor(() => server.of('/memory/add').length === 2, 6000, 'the idle save');
+  await waitFor(() => server.of('/memory/add').length === 2, 6000 * SLOW, 'the idle save');
   assert.deepEqual(users(server.of('/memory/add')[1]), ['Fact number 4.']);
   await exited(hooks, null);
-  await sleep(500);
+  await sleep(500 * SLOW);
   assert.equal(server.of('/memory/add').length, 2, 'nothing is sent twice');
 });
 
 test('idle: three turns and no more: the batch rule sends them, and the waiting flusher exits with nothing to save', async () => {
   const server = await serve({ '/memory/add': stored });
-  const hooks = setup(server, { QUOTEMEM_IDLE_FLUSH_MS: '1500' });
+  const hooks = setup(server, { QUOTEMEM_IDLE_FLUSH_MS: idle(1500) });
   await hooks.turn('A', 1, 'Fact number 1.');
   const pid = hooks.lock()?.pid;
   assert.ok(pid, 'a flusher waits after the first turn');
   for (const n of [2, 3]) await hooks.turn('A', n, `Fact number ${n}.`);
-  await waitFor(() => server.of('/memory/add').length === 1, 6000, 'the batch of three');
+  await waitFor(() => server.of('/memory/add').length === 1, 6000 * SLOW, 'the batch of three');
   await exited(hooks, pid);
-  await sleep(1000);
+  await sleep(1000 * SLOW);
   assert.equal(server.of('/memory/add').length, 1);
   assert.deepEqual(users(server.of('/memory/add')[0]), ['Fact number 1.', 'Fact number 2.', 'Fact number 3.']);
 });
 
 test('idle: two chats with different idle times are saved each at its own time by one flusher', async () => {
   const server = await serve({ '/memory/add': stored });
-  const hooks = setup(server, { QUOTEMEM_IDLE_FLUSH_MS: '1500' });
+  const hooks = setup(server, { QUOTEMEM_IDLE_FLUSH_MS: idle(1500) });
   const aLast = await hooks.turn('A', 1, 'Chat A says the kite is orange.');
   const pid = hooks.lock()?.pid;
-  await sleep(1000);
+  await sleep(1000 * SLOW);
   const bLast = await hooks.turn('B', 1, 'Chat B says the bike is blue.');
-  await waitFor(() => server.of('/memory/add').length === 2, 8000, 'both chats');
+  await waitFor(() => server.of('/memory/add').length === 2, 8000 * SLOW, 'both chats');
   const [first, second] = server.of('/memory/add');
   assert.deepEqual(users(first), ['Chat A says the kite is orange.']);
   assert.deepEqual(users(second), ['Chat B says the bike is blue.']);
-  assert.ok(first.at - aLast >= 1500 && first.at < bLast + 1500, `chat A at its own time (${first.at - aLast} ms)`);
-  assert.ok(second.at - bLast >= 1500, `chat B at its own time (${second.at - bLast} ms)`);
+  assert.ok(first.at - aLast >= 1500 * SLOW && first.at < bLast + 1500 * SLOW, `chat A at its own time (${first.at - aLast} ms)`);
+  assert.ok(second.at - bLast >= 1500 * SLOW, `chat B at its own time (${second.at - bLast} ms)`);
   await exited(hooks, pid);
   assert.equal(exits(hooks.log()).length, 1, 'one flusher saved both');
 });
@@ -223,7 +234,7 @@ test('idle: two chats with different idle times are saved each at its own time b
 test('idle: the waiting flusher saves only its own user\'s chats of its own service', async () => {
   const server = await serve({ '/memory/add': stored });
   const elsewhere = await serve({ '/memory/add': stored });
-  const hooks = setup(server, { QUOTEMEM_IDLE_FLUSH_MS: '1200' });
+  const hooks = setup(server, { QUOTEMEM_IDLE_FLUSH_MS: idle(1200) });
   // In the same state folder, before: a chat of another user and one of the
   // same user on another service, both pending, both with the idle time off
   // in their own hooks (so no flusher of theirs waits).
@@ -234,7 +245,7 @@ test('idle: the waiting flusher saves only its own user\'s chats of its own serv
   await hooks.turn('A', 1, 'My kite is orange.');
   const pid = hooks.lock()?.pid;
   assert.ok(Number.isInteger(pid), 'a flusher waits for this user');
-  await waitFor(() => server.of('/memory/add').length === 1, 6000, 'the idle save');
+  await waitFor(() => server.of('/memory/add').length === 1, 6000 * SLOW, 'the idle save');
   await exited(hooks, pid);
   const [add] = server.of('/memory/add');
   assert.deepEqual(users(add), ['My kite is orange.']);
@@ -250,10 +261,13 @@ test('idle: the waiting flusher saves only its own user\'s chats of its own serv
 
 test('idle: one waiting flusher serves the owners of its credential, each with its own settings; another credential gets its own', async () => {
   const server = await serve({ '/memory/add': stored });
-  const hooks = setup(server, { QUOTEMEM_IDLE_FLUSH_MS: '1200' });
+  // A token of its own is another service's on this computer: the service a token's
+  // holder proves itself to (the listener check).
+  const own = await serve({ '/memory/add': stored }, 0, { token: 'another-token-2' });
+  const hooks = setup(server, { QUOTEMEM_IDLE_FLUSH_MS: idle(1200) });
   // Same token, another user, who keeps no assistant text; then another user with a token of its own.
   const plain = { QUOTEMEM_USER_ID: 'plain', QUOTEMEM_CAPTURE_ASSISTANT: 'none' };
-  const keyed = { QUOTEMEM_USER_ID: 'keyed', QUOTEMEM_TOKEN: 'another-token-2' };
+  const keyed = { QUOTEMEM_USER_ID: 'keyed', QUOTEMEM_TOKEN: 'another-token-2', QUOTEMEM_URL: own.url };
   await hooks.turn('A', 1, 'My kite is orange.');
   const pid = hooks.lock()?.pid;
   assert.ok(Number.isInteger(pid), 'a flusher waits');
@@ -262,8 +276,8 @@ test('idle: one waiting flusher serves the owners of its credential, each with i
     await hooks.call('reply', { session: env.QUOTEMEM_USER_ID, turn: 'p1', text: `Noted, ${env.QUOTEMEM_USER_ID}.` }, env);
   }
   assert.equal(idleLocks(hooks.stateDir).length, 2, 'one waiting flusher per credential');
-  await waitFor(() => server.of('/memory/add').length === 3, 8000, 'every idle save');
-  const byUser = Object.fromEntries(server.of('/memory/add').map((r) => [r.body.user_id, r]));
+  await waitFor(() => server.of('/memory/add').length === 2 && own.of('/memory/add').length === 1, 8000 * SLOW, 'every idle save');
+  const byUser = Object.fromEntries([...server.of('/memory/add'), ...own.of('/memory/add')].map((r) => [r.body.user_id, r]));
   assert.equal(byUser.quei.headers.authorization, `Bearer ${TOKEN}`);
   assert.equal(byUser.plain.headers.authorization, `Bearer ${TOKEN}`);
   assert.equal(byUser.keyed.headers.authorization, 'Bearer another-token-2', 'its own token, from its own flusher');
@@ -284,7 +298,7 @@ test('idle: one waiting flusher serves the owners of its credential, each with i
 
 test('idle: an owner registered again is not unregistered as idle for a week', async () => {
   const server = await serve({ '/memory/add': stored });
-  const hooks = setup(server, { QUOTEMEM_IDLE_FLUSH_MS: '1200' });
+  const hooks = setup(server, { QUOTEMEM_IDLE_FLUSH_MS: idle(1200) });
   await hooks.call('prompt', { session: 'W', turn: 'p1', text: 'My kite is orange.' });
   const file = path.join(hooks.queue.ownerDir, 'owner.json');
   const weekAgo = new Date(Date.now() - 8 * 86_400_000);
@@ -292,46 +306,46 @@ test('idle: an owner registered again is not unregistered as idle for a week', a
   // The same registration again (nothing changed): it still marks the owner in use.
   await hooks.call('reply', { session: 'W', turn: 'p1', text: 'Noted.' });
   assert.ok(Date.now() - fs.statSync(file).mtimeMs < 60_000, 'touched by its hook');
-  await waitFor(() => server.of('/memory/add').length === 1, 8000, 'the idle save');
+  await waitFor(() => server.of('/memory/add').length === 1, 8000 * SLOW, 'the idle save');
   assert.ok(fs.existsSync(file));
 });
 
 test('idle: a chat with a turn in flight keeps that turn; its closed turns go as sweep sends them; the turn goes after its reply', async () => {
   const server = await serve({ '/memory/add': stored });
-  const hooks = setup(server, { QUOTEMEM_IDLE_FLUSH_MS: '1000' });
+  const hooks = setup(server, { QUOTEMEM_IDLE_FLUSH_MS: idle(1000) });
   await hooks.turn('A', 1, 'My kite is orange.');
   // A long agent turn: its prompt, no reply yet.
   await hooks.call('prompt', { session: 'A', turn: 'p2', text: 'Plan my trip to Lisbon.' });
-  await waitFor(() => server.of('/memory/add').length === 1, 6000, 'the closed turn');
+  await waitFor(() => server.of('/memory/add').length === 1, 6000 * SLOW, 'the closed turn');
   assert.deepEqual(users(server.of('/memory/add')[0]), ['My kite is orange.']);
   await exited(hooks, null);
-  await sleep(500);
+  await sleep(500 * SLOW);
   assert.equal(server.of('/memory/add').length, 1, 'the turn in flight is left alone');
   await hooks.call('reply', { session: 'A', turn: 'p2', text: 'Here is a plan.' });
-  await waitFor(() => server.of('/memory/add').length === 2, 6000, 'the turn after its reply');
+  await waitFor(() => server.of('/memory/add').length === 2, 6000 * SLOW, 'the turn after its reply');
   assert.deepEqual(users(server.of('/memory/add')[1]), ['Plan my trip to Lisbon.']);
 });
 
 test('idle: the host app closed (its hook process killed) does not stop the waiting flusher', async () => {
   const server = await serve({ '/memory/add': stored });
-  const hooks = setup(server, { QUOTEMEM_IDLE_FLUSH_MS: '1200' });
+  const hooks = setup(server, { QUOTEMEM_IDLE_FLUSH_MS: idle(1200) });
   await hooks.call('prompt', { session: 'A', turn: 'p1', text: 'My kite is orange.' });
   // The last hook stays up (an app's process tree), then is killed.
   const child = spawn(process.execPath, [HOOK, 'reply', JSON.stringify({ session: 'A', turn: 'p1', text: 'Noted.' })], { env: { ...hooks.env, TEST_HANG: '1' }, stdio: 'ignore' });
-  await waitFor(() => Number.isInteger(hooks.lock()?.pid) && hooks.lock().pid !== child.pid, 8000, 'the flusher to take its lock');
+  await waitFor(() => Number.isInteger(hooks.lock()?.pid) && hooks.lock().pid !== child.pid, 8000 * SLOW, 'the flusher to take its lock');
   child.kill('SIGKILL');
   await new Promise((resolve) => child.once('exit', resolve));
-  await waitFor(() => server.of('/memory/add').length === 1, 6000, 'the idle save');
+  await waitFor(() => server.of('/memory/add').length === 1, 6000 * SLOW, 'the idle save');
   assert.deepEqual(users(server.of('/memory/add')[0]), ['My kite is orange.']);
 });
 
 test('idle: hooks at once in five chats start one waiting flusher', async () => {
   const server = await serve({ '/memory/add': stored });
-  const hooks = setup(server, { QUOTEMEM_IDLE_FLUSH_MS: '1500' });
+  const hooks = setup(server, { QUOTEMEM_IDLE_FLUSH_MS: idle(1500) });
   const chats = ['A', 'B', 'C', 'D', 'E'];
   await Promise.all(chats.map((s) => hooks.call('prompt', { session: s, turn: 'p1', text: `Chat ${s} fact.` })));
   await Promise.all(chats.map((s) => hooks.call('reply', { session: s, turn: 'p1', text: 'Noted.' })));
-  await waitFor(() => server.of('/memory/add').length === 5, 8000, 'every chat');
+  await waitFor(() => server.of('/memory/add').length === 5, 8000 * SLOW, 'every chat');
   await exited(hooks, null);
   assert.deepEqual(server.of('/memory/add').map((r) => users(r)[0]).sort(), chats.map((s) => `Chat ${s} fact.`));
   assert.equal(exits(hooks.log()).length, 1, 'one flusher started');
@@ -343,7 +357,7 @@ test('idle: with QUOTEMEM_IDLE_FLUSH_MS off, or capture off, no flusher waits', 
     const hooks = setup(server, env);
     await hooks.turn('A', 1, 'My kite is orange.');
     assert.equal(fs.existsSync(hooks.queue.idleLockFile), false, JSON.stringify(env));
-    await sleep(1200);
+    await sleep(1200 * SLOW);
     assert.equal(exits(hooks.log()).length, 0, `no flusher started: ${JSON.stringify(env)}`);
   }
   assert.equal(server.of('/memory/add').length, 0);
@@ -361,9 +375,9 @@ test('idle: a service that is down: the turns stay queued and are retried as bef
   // Busy for the first two tries, then stored: the flusher retries.
   let calls = 0;
   const flaky = await serve({ '/memory/add': () => { calls += 1; return calls <= 2 ? { status: 503, headers: { 'retry-after': '0' }, body: { code: 'service_unhealthy' } } : stored(); } });
-  const hooks = setup(flaky, { QUOTEMEM_IDLE_FLUSH_MS: '1000' });
+  const hooks = setup(flaky, { QUOTEMEM_IDLE_FLUSH_MS: idle(1000) });
   await hooks.turn('A', 1, 'My kite is orange.');
-  await waitFor(() => flaky.of('/memory/add').length === 3, 8000, 'the retries');
+  await waitFor(() => flaky.of('/memory/add').length === 3, 8000 * SLOW, 'the retries');
   assert.equal(new Set(flaky.of('/memory/add').map((r) => r.headers['idempotency-key'] ?? JSON.stringify(r.body))).size, 1, 'one batch, tried again');
   await exited(hooks, null);
   assert.equal(hooks.queue.entries().length, 0);
@@ -373,9 +387,9 @@ test('idle: a service that is down: the turns stay queued and are retried as bef
   await down.close();
   servers.delete(down);
   // Its next try is a minute away: the flusher leaves it to a later hook.
-  const offline = setup(down, { QUOTEMEM_IDLE_FLUSH_MS: '1000', QUOTEMEM_CAPTURE_RETRY_BASE_MS: '60000', QUOTEMEM_FLUSHER_MAX_WAIT_MS: '0' });
+  const offline = setup(down, { QUOTEMEM_IDLE_FLUSH_MS: idle(1000), QUOTEMEM_CAPTURE_RETRY_BASE_MS: '60000', QUOTEMEM_FLUSHER_MAX_WAIT_MS: '0' });
   await offline.turn('B', 1, 'My bike is blue.');
-  await waitFor(() => offline.queue.entries().length === 1, 6000, 'the batch queued');
+  await waitFor(() => offline.queue.entries().length === 1, 6000 * SLOW, 'the batch queued');
   await exited(offline, null);
   assert.equal(offline.queue.entries().length, 1, 'the batch waits in the queue');
   // The service is back; a later hook's flusher sends it once its retry is due.
@@ -383,7 +397,7 @@ test('idle: a service that is down: the turns stay queued and are retried as bef
   const job = readJson(offline.queue.entries()[0].file);
   fs.writeFileSync(offline.queue.entries()[0].file, JSON.stringify({ ...job, nextAt: 0 }));
   await offline.call('prompt', { session: 'C', turn: 'p1', text: 'Hello.' });
-  await waitFor(() => back.of('/memory/add').length === 1, 8000, 'the batch after the service is back');
+  await waitFor(() => back.of('/memory/add').length === 1, 8000 * SLOW, 'the batch after the service is back');
   assert.deepEqual(users(back.of('/memory/add')[0]), ['My bike is blue.']);
 });
 
@@ -394,16 +408,16 @@ test('idle: a forget kept while a chat\'s turn was in flight runs again after th
     '/memory/forget/prepare': (body) => ({ body: plan(body) }),
     '/memory/forget/confirm': () => ({ body: { schema_version: 1, status: 'verified', request_digest: 'x', outcomes: [{ memory_id: '01JX0000000000000000000F0', outcome: 'verified' }], scope_state: 'ready' } }),
   });
-  const hooks = setup(server, { QUOTEMEM_IDLE_FLUSH_MS: '1200' });
+  const hooks = setup(server, { QUOTEMEM_IDLE_FLUSH_MS: idle(1200) });
   // Chat B states the fact; its turn is still running when chat A forgets it.
   await hooks.call('prompt', { session: 'B', turn: 'p1', text: 'My locker code is HERON.' });
   await hooks.call('prompt', { session: 'A', turn: 'p1', text: 'Please forget my locker code.' });
-  await waitFor(() => server.of('/memory/forget/confirm').length === 1, 8000, 'the forget');
+  await waitFor(() => server.of('/memory/forget/confirm').length === 1, 8000 * SLOW, 'the forget');
   await hooks.call('reply', { session: 'B', turn: 'p1', text: 'Noted.' });
   await hooks.call('reply', { session: 'A', turn: 'p1', text: 'Done.' });
-  await waitFor(() => server.of('/memory/add').some((r) => JSON.stringify(r.body).includes('HERON')), 8000, 'chat B saved at the idle time');
+  await waitFor(() => server.of('/memory/add').some((r) => JSON.stringify(r.body).includes('HERON')), 8000 * SLOW, 'chat B saved at the idle time');
   const add = server.of('/memory/add').find((r) => JSON.stringify(r.body).includes('HERON'));
-  await waitFor(() => server.of('/memory/forget/prepare').some((r) => r.at >= add.at), 8000, 'the kept forget again');
+  await waitFor(() => server.of('/memory/forget/prepare').some((r) => r.at >= add.at), 8000 * SLOW, 'the kept forget again');
   const again = server.of('/memory/forget/prepare').filter((r) => r.at >= add.at);
   assert.ok(again.every((r) => r.body.statement === 'my locker code'));
   await exited(hooks, null);
@@ -411,30 +425,30 @@ test('idle: a forget kept while a chat\'s turn was in flight runs again after th
 
 test('idle: a flusher killed while it waited leaves a stale lock; the next hook starts a new one that saves every turn', async () => {
   const server = await serve({ '/memory/add': stored });
-  const hooks = setup(server, { QUOTEMEM_IDLE_FLUSH_MS: '1200' });
+  const hooks = setup(server, { QUOTEMEM_IDLE_FLUSH_MS: idle(1200) });
   await hooks.turn('A', 1, 'My kite is orange.');
   const pid = hooks.lock()?.pid;
   assert.ok(pid);
   kill(pid);
-  await waitFor(() => !alive(pid), 5000, 'the flusher to die');
+  await waitFor(() => !alive(pid), 5000 * SLOW, 'the flusher to die');
   assert.ok(fs.existsSync(hooks.queue.idleLockFile), 'its lock stays');
   await hooks.turn('A', 2, 'My bike is blue.');
   const next = hooks.lock()?.pid;
   assert.ok(next && next !== pid, 'a new flusher took the lock');
-  await waitFor(() => server.of('/memory/add').length === 1, 6000, 'the idle save');
+  await waitFor(() => server.of('/memory/add').length === 1, 6000 * SLOW, 'the idle save');
   assert.deepEqual(users(server.of('/memory/add')[0]), ['My kite is orange.', 'My bike is blue.']);
   await exited(hooks, next);
 });
 
 test('idle: a flusher lives a bounded time past the idle time, then hands a chat still in use to a new one', async () => {
   const server = await serve({ '/memory/add': stored });
-  const hooks = setup(server, { QUOTEMEM_IDLE_FLUSH_MS: '1200', QUOTEMEM_TEST_IDLE_LIFE_MS: '200' });
+  const hooks = setup(server, { QUOTEMEM_IDLE_FLUSH_MS: idle(1200), QUOTEMEM_TEST_IDLE_LIFE_MS: idle(200) });
   await hooks.turn('A', 1, 'My kite is orange.');
   const pid = hooks.lock()?.pid;
-  await sleep(700);
+  await sleep(700 * SLOW);
   await hooks.turn('A', 2, 'My bike is blue.');
-  await waitFor(() => !alive(pid), 6000, 'the first flusher to end its life');
-  await waitFor(() => server.of('/memory/add').length === 1, 6000, 'the idle save by the next one');
+  await waitFor(() => !alive(pid), 6000 * SLOW, 'the first flusher to end its life');
+  await waitFor(() => server.of('/memory/add').length === 1, 6000 * SLOW, 'the idle save by the next one');
   assert.deepEqual(users(server.of('/memory/add')[0]), ['My kite is orange.', 'My bike is blue.']);
   await exited(hooks, null, 2);
   assert.match(hooks.log(), /flusher exit: .*handed over/);
@@ -443,20 +457,20 @@ test('idle: a flusher lives a bounded time past the idle time, then hands a chat
 
 test('idle: the token is in no argument and no log line; a piped caller sees the hook end while the flusher waits', async () => {
   const server = await serve({ '/memory/add': stored });
-  const hooks = setup(server, { QUOTEMEM_IDLE_FLUSH_MS: '1500' });
+  const hooks = setup(server, { QUOTEMEM_IDLE_FLUSH_MS: idle(1500) });
   await hooks.call('prompt', { session: 'A', turn: 'p1', text: 'My kite is orange.' });
   const t0 = Date.now();
   await hooks.call('reply', { session: 'A', turn: 'p1', text: 'Noted.' });
   const ms = Date.now() - t0;
   const pid = hooks.lock()?.pid;
   assert.ok(pid && alive(pid), 'the flusher waits');
-  assert.ok(ms < 1500, `the hook's pipes closed before the idle time (${ms} ms)`);
+  assert.ok(ms < 1500 * SLOW, `the hook's pipes closed before the idle time (${ms} ms)`);
   if (!windows) {
     const args = execFileSync('ps', ['-o', 'args=', '-p', String(pid)], { encoding: 'utf8' });
     assert.match(args, /flusher\.mjs/);
     assert.ok(!args.includes(TOKEN), 'no token in its arguments');
   }
-  await waitFor(() => server.of('/memory/add').length === 1, 6000, 'the idle save');
+  await waitFor(() => server.of('/memory/add').length === 1, 6000 * SLOW, 'the idle save');
   assert.equal(server.of('/memory/add')[0].headers.authorization, `Bearer ${TOKEN}`);
   await exited(hooks, pid);
   const files = fs.readdirSync(hooks.stateDir, { recursive: true }).map((name) => path.join(hooks.stateDir, String(name))).filter((file) => fs.statSync(file).isFile());

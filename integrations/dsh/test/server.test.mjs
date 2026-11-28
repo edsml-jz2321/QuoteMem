@@ -26,7 +26,7 @@ function startServer(env) {
 /** The server with `home` as its HOME and working folder (default: a home with no QuoteMem files). */
 function startServerIn(home, env) {
   const child = spawn(process.execPath, [SERVER], {
-    env: { PATH: process.env.PATH, HOME: home ?? EMPTY_HOME, ...(home ? { TMPDIR: home } : {}), ...env },
+    env: { PATH: process.env.PATH, HOME: home ?? EMPTY_HOME, USERPROFILE: home ?? EMPTY_HOME, ...(home ? { TMPDIR: home } : {}), ...env },
     cwd: home,
     stdio: ['pipe', 'pipe', 'pipe'],
   });
@@ -76,6 +76,8 @@ test('service down: the model gets a short note, no address and no start command
 test('auth: QUOTEMEM_TOKEN, then QUOTEMEM_HTTP_AUTH_SECRET; QUOTEMEM_HTTP_AUTH_MODE picks the header', async () => {
   const server = await stubServer({ '/memory/search': () => ({ body: { data: [] } }) });
   const searchWith = async (env) => {
+    // The service on this computer proves the token it holds: the one this call uses.
+    server.setToken(env.QUOTEMEM_TOKEN || env.QUOTEMEM_HTTP_AUTH_SECRET || TOKEN);
     const mcp = startServer({ QUOTEMEM_URL: server.url, ...env });
     mcp.send({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 't', version: '1' } } });
     await mcp.reply(1);
@@ -95,7 +97,7 @@ test('auth: QUOTEMEM_TOKEN, then QUOTEMEM_HTTP_AUTH_SECRET; QUOTEMEM_HTTP_AUTH_M
   const oldMode = await searchWith({ QUOTEMEM_TOKEN: TOKEN, QUOTEMEM_AUTH_MODE: 'x-api-key' });
   assert.equal(oldMode.sent[0].headers.authorization, `Bearer ${TOKEN}`, 'the old QUOTEMEM_AUTH_MODE is not read');
   const old = await searchWith({ QUOTEMEM_SECRET: 'old-secret-3' });
-  assert.equal(old.sent.length, 0, 'no token: nothing is sent');
+  assert.equal(old.sent.length, 0, 'no token: no search is sent');
   assert.equal(old.result.isError, true);
   assert.match(old.err, /No token and no memory service set up: run `npx quotemem setup` once/);
   const badMode = await searchWith({ QUOTEMEM_TOKEN: TOKEN, QUOTEMEM_HTTP_AUTH_MODE: 'basic' });
@@ -120,7 +122,9 @@ test('token from a file: QUOTEMEM_TOKEN_FILE, else the local service\'s own <dat
   write('xdg/quotemem/token', 'service-xdg-token\n');
   write('data/token', 'service-dir-token\n');
   write('.quotemem/token', 'named-file-token\n');
-  const searchWith = async (env) => {
+  const searchWith = async (env, holds) => {
+    // The service on this computer proves the token it holds: the one this call should send.
+    server.setToken(holds);
     const mcp = startServer({ HOME: home, USERPROFILE: home, QUOTEMEM_URL: server.url, ...env });
     t.after(() => mcp.stop());
     mcp.send({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 't', version: '1' } } });
@@ -132,19 +136,19 @@ test('token from a file: QUOTEMEM_TOKEN_FILE, else the local service\'s own <dat
     return { result, sent: server.of('/memory/search').slice(before), all: `${mcp.out()}${mcp.err()}` };
   };
   // No token in the environment at all: the service's own token file.
-  const local = await searchWith({});
+  const local = await searchWith({}, 'service-default-token');
   assert.equal(local.sent[0]?.headers.authorization, 'Bearer service-default-token');
-  const xdg = await searchWith({ XDG_DATA_HOME: path.join(home, 'xdg') });
+  const xdg = await searchWith({ XDG_DATA_HOME: path.join(home, 'xdg') }, 'service-xdg-token');
   assert.equal(xdg.sent[0]?.headers.authorization, 'Bearer service-xdg-token');
-  const dir = await searchWith({ QUOTEMEM_DATA_DIR: '~/data', XDG_DATA_HOME: path.join(home, 'xdg') });
+  const dir = await searchWith({ QUOTEMEM_DATA_DIR: '~/data', XDG_DATA_HOME: path.join(home, 'xdg') }, 'service-dir-token');
   assert.equal(dir.sent[0]?.headers.authorization, 'Bearer service-dir-token');
   // A named file wins over the service's file; QUOTEMEM_TOKEN still wins over both.
-  const named = await searchWith({ QUOTEMEM_TOKEN_FILE: '~/.quotemem/token' });
+  const named = await searchWith({ QUOTEMEM_TOKEN_FILE: '~/.quotemem/token' }, 'named-file-token');
   assert.equal(named.sent[0]?.headers.authorization, 'Bearer named-file-token');
-  const direct = await searchWith({ QUOTEMEM_TOKEN: TOKEN, QUOTEMEM_TOKEN_FILE: '~/.quotemem/token' });
+  const direct = await searchWith({ QUOTEMEM_TOKEN: TOKEN, QUOTEMEM_TOKEN_FILE: '~/.quotemem/token' }, TOKEN);
   assert.equal(direct.sent[0]?.headers.authorization, `Bearer ${TOKEN}`);
   // A named file that cannot be read: nothing is sent, and the service's file is not used instead.
-  const missing = await searchWith({ QUOTEMEM_TOKEN_FILE: '~/no-such-file' });
+  const missing = await searchWith({ QUOTEMEM_TOKEN_FILE: '~/no-such-file' }, TOKEN);
   assert.equal(missing.sent.length, 0);
   assert.match(missing.all, /QUOTEMEM_TOKEN_FILE cannot be read/);
   for (const run of [local, xdg, dir, named, direct, missing]) {
@@ -417,6 +421,61 @@ test('health: the agent service\'s background completions and spend cap are show
   assert.equal(older.adds, undefined);
   assert.equal(older.next, undefined);
   await server.close();
+});
+
+test('health: the listener check decides it, as for every other tool; a refused program is never "ok"', async (t) => {
+  const UNAVAILABLE = 'Long-term memory is temporarily unavailable. Continue without it, and do not mention this unless the user asks about memory.';
+  const server = await stubServer({ '/health': () => ({ body: { status: 'ok' } }), '/memory/search': () => ({ body: { results: [] } }) });
+  t.after(() => server.close());
+  const tools = async () => {
+    const mcp = startServer({ QUOTEMEM_URL: server.url, QUOTEMEM_TOKEN: TOKEN, QUOTEMEM_AUTOSTART: '0' });
+    mcp.send({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 't', version: '1' } } });
+    await mcp.reply(1);
+    mcp.send({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'quotemem_health', arguments: {} } });
+    const health = (await mcp.reply(2)).result;
+    mcp.send({ jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'quotemem_search', arguments: { query: 'where do I live' } } });
+    const search = (await mcp.reply(3)).result;
+    await mcp.stop();
+    assert.ok(!(mcp.out() + mcp.err()).includes(TOKEN));
+    return { health, value: JSON.parse(health.content[0].text), search: search.content[0].text, err: mcp.err() };
+  };
+  // The user's own service passes: ok.
+  assert.equal((await tools()).value.status, 'ok');
+  assert.equal(server.of('/health').length, 1);
+  server.requests.length = 0;
+
+  // A service from before the check (0.3.2 answers the check route with 422),
+  // started by hand: memory is off, with the same words as the other tools.
+  server.handlers['/agent/listener'] = () => ({ status: 422, body: { code: 'invalid_request' } });
+  const older = await tools();
+  assert.equal(older.health.isError, false);
+  assert.equal(older.value.status, 'memory_off');
+  assert.match(older.value.next, /^Long-term memory is off: the program on the memory service's port was not started by the agents/);
+  assert.equal(older.value.next, older.search);
+  assert.match(older.err, /no token and no memory data were sent to .*does not answer the check \(422\)/);
+  assert.deepEqual([...new Set(server.requests.map((r) => r.route))], ['/agent/listener'], 'nothing but the check');
+  server.requests.length = 0;
+
+  // Another program that answers the check without this user's token.
+  delete server.handlers['/agent/listener'];
+  server.setToken('not-the-token-'.padEnd(43, 'x'));
+  const foreign = await tools();
+  assert.equal(foreign.value.status, 'memory_off');
+  assert.match(foreign.value.next, /^Long-term memory is off: another program holds the memory service's port/);
+  assert.match(foreign.value.next, /`npx quotemem doctor`/);
+  assert.equal(foreign.search, foreign.value.next, 'search says the port is held, not "temporarily unavailable"');
+  assert.ok(!foreign.value.next.includes(String(server.port)));
+  assert.deepEqual(server.requests, [], 'nothing was sent');
+  server.setToken(TOKEN);
+
+  // The user's own service that does not answer the check (frozen): unavailable.
+  server.handlers['/agent/listener'] = () => new Promise(() => {});
+  const stalled = await tools();
+  assert.equal(stalled.value.status, 'unavailable');
+  assert.equal(stalled.value.next, UNAVAILABLE);
+  assert.equal(stalled.search, UNAVAILABLE);
+  assert.ok(!/another program/i.test(stalled.value.next));
+  assert.deepEqual([...new Set(server.requests.map((r) => r.route))], ['/agent/listener'], 'nothing but the check');
 });
 
 async function initialized(env) {
@@ -712,7 +771,8 @@ test('forget through the tools next to an adapter: the statement is kept for the
       assert.equal(kept.length, 1);
       assert.ok(kept[0].statement.startsWith('my locker code') && !kept[0].statement.includes('hunter22'), 'redacted');
       assert.ok(Math.abs(kept[0].at - Date.now()) < 60_000);
-      assert.equal(fs.statSync(forgotten(home)).mode & 0o777, 0o600);
+      // Windows keeps no POSIX mode; the file sits in the user's own profile there.
+      if (process.platform !== 'win32') assert.equal(fs.statSync(forgotten(home)).mode & 0o777, 0o600);
     } else {
       assert.equal(fs.existsSync(forgotten(home)), false);
     }
@@ -779,7 +839,7 @@ test('forget prepare shows what else the confirmation forgets or may leave unrea
     assert.deepEqual(result.may_become_unreadable, ['The user\'s club meets on Sundays.']);
     assert.deepEqual(result.other_candidates.map((c) => c.statement), ['The user likes sports.'], 'a memory forgotten with it is not offered as kept');
     for (const id of [REPLACER, PAST, KEPT]) assert.ok(!JSON.stringify([result.also_forgotten, result.may_become_unreadable]).includes(id), 'statements only');
-    assert.match(result.next, auto === '1' ? /tell the user briefly what went, also_forgotten \(forgotten with it\) and may_become_unreadable/ : /^Show to_forget \(and sentences_to_forget\), also_forgotten \(forgotten with it\) and may_become_unreadable \(kept, but they may stop being readable until the user says them again\) to the user\. Only after the user agrees/);
+    assert.match(result.next, auto === '1' ? /tell the user briefly what went, also_forgotten \(forgotten with it\) and may_become_unreadable/ : /^Show to_forget \(and sentences_to_forget\), also_forgotten \(forgotten with it\) and may_become_unreadable \(kept, but they may stop being readable\) to the user\. Only after the user agrees/);
     mcp.send({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'quotemem_forget_confirm', arguments: { token: result.token } } });
     const confirmed = JSON.parse((await mcp.reply(2)).result.content[0].text);
     assert.equal(confirmed.status, 'verified');
@@ -872,4 +932,51 @@ test('quotemem_add: a user message is the user\'s own words, no message carries 
   ]);
   assert.ok(results.every((result) => typeof result.request_id === 'string' && typeof result.session_id === 'string'));
   await server.close();
+});
+
+test('a server copied without the adapter core sends nothing to a service on this computer: it cannot check who listens', async () => {
+  // A program on the port that is not the user's service (a 422, as another program answers).
+  const squat = await stubServer({});
+  squat.setToken('not-the-token-'.padEnd(43, 'x'));
+  const alone = tempDir('qm-server-nocore-');
+  fs.copyFileSync(SERVER, path.join(alone, 'server.mjs'));
+  const port = new URL(squat.url).port;
+  for (const host of ['127.0.0.1', 'localhost', 'localhost.', '[::ffff:127.0.0.1]']) {
+    const child = spawn(process.execPath, [path.join(alone, 'server.mjs')], {
+      env: { PATH: process.env.PATH, HOME: EMPTY_HOME, USERPROFILE: EMPTY_HOME, QUOTEMEM_URL: `http://${host}:${port}`, QUOTEMEM_TOKEN: TOKEN, QUOTEMEM_USER_ID: 'quei' },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    let out = '';
+    let err = '';
+    child.stdout.on('data', (d) => { out += d; });
+    child.stderr.on('data', (d) => { err += d; });
+    const send = (message) => child.stdin.write(`${JSON.stringify(message)}\n`);
+    const reply = async (id) => {
+      await waitFor(() => out.split('\n').some((line) => line.includes(`"id":${id},`)), 5000, `reply ${id}`);
+      return JSON.parse(out.split('\n').find((line) => line.includes(`"id":${id},`)));
+    };
+    let search;
+    try {
+      send({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 't', version: '1' } } });
+      await reply(1);
+      send({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'quotemem_search', arguments: { query: 'what is my PIN' } } });
+      search = (await reply(2)).result;
+    } finally {
+      const exited = new Promise((resolve) => child.once('exit', resolve));
+      child.stdin.end();
+      await exited;
+    }
+    assert.equal(search.isError, true, host);
+    // Without the core, settings it cannot read are 'not set up'; nothing is sent either way.
+    if (host === '127.0.0.1' || host === 'localhost') {
+      assert.equal(search.content[0].text, 'Long-term memory is temporarily unavailable. Continue without it, and do not mention this unless the user asks about memory.', host);
+      assert.match(err, /adapter core next to this server could not be loaded/, host);
+    } else {
+      assert.match(search.content[0].text, /^Long-term memory is (temporarily unavailable|not set up correctly)\./, `${host}: ${search.content[0].text}`);
+    }
+    assert.ok(!(out + err).includes(TOKEN));
+  }
+  // Not even a listener check: the requests a stub records are all but those.
+  assert.deepEqual(squat.requests.map((r) => r.route), []);
+  await squat.close();
 });

@@ -9,7 +9,9 @@ that the startup probe makes, so the test needs no network and no API key. It ch
   body) answer;
 - a request without the token is refused;
 - an asynchronous `/memory/add` is accepted with 202;
-- the service drains and exits on SIGINT.
+- the service drains and exits on SIGINT. On Windows, where a console program cannot
+  be sent a Ctrl+C on its own, it is stopped with Ctrl+Break in its own process group,
+  and the check is that it stops.
 
 Usage: python .github/ci/server_smoke.py   (run inside the project environment)
 """
@@ -38,6 +40,9 @@ CHAT_MODEL = "stub-chat"
 EMBED_MODEL = "stub-embed"
 START_TIMEOUT = 180.0
 STOP_TIMEOUT = 90.0
+WINDOWS = os.name == "nt"
+# How Windows ends a console program that a Ctrl+Break stops (STATUS_CONTROL_C_EXIT).
+WINDOWS_BREAK_EXIT = 0xC000013A
 
 
 def _vector(text: str, dimensions: int) -> list[float]:
@@ -166,6 +171,7 @@ def main() -> None:
         server = subprocess.Popen(
             [quotemem, "serve", "--data-dir", str(data_dir), "--port", "0"],
             env=environment, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if WINDOWS else 0,
         )
         lines: list[str] = []
         port: int | None = None
@@ -224,19 +230,21 @@ def main() -> None:
                    and document.get("status") == "pending",
                    "an asynchronous /memory/add answers 202")
         finally:
+            stop = "Ctrl+Break" if WINDOWS else "SIGINT"
+            stopped = {0, WINDOWS_BREAK_EXIT} if WINDOWS else {0, -signal.SIGINT, 130}
             if server.poll() is None:
-                server.send_signal(signal.SIGINT)
+                server.send_signal(signal.CTRL_BREAK_EVENT if WINDOWS else signal.SIGINT)
             try:
                 code = server.wait(timeout=STOP_TIMEOUT)
             except subprocess.TimeoutExpired:
                 server.kill()
                 code = server.wait()
                 print("\n".join(lines[-40:]), file=sys.stderr)
-                raise SystemExit("SMOKE FAIL: the service did not stop after SIGINT") from None
+                raise SystemExit(f"SMOKE FAIL: the service did not stop after {stop}") from None
             reader.join(timeout=5)
-            if code not in {0, -signal.SIGINT, 130}:
+            if code not in stopped:
                 print("\n".join(lines[-40:]), file=sys.stderr)
-            _check(code in {0, -signal.SIGINT, 130}, f"the service stops on SIGINT (exit {code})")
+            _check(code in stopped, f"the service stops on {stop} (exit {code})")
     finally:
         stub.shutdown()
         shutil.rmtree(root, ignore_errors=True)

@@ -453,6 +453,11 @@ class AdmittedFact:
         concerns (frozenset[Concern]): Admission's concerns.
         duplicate_of (int | None): The earlier position an in-reply duplicate
             merges into (``duplicate_in_reply``).
+        referents (tuple[str, ...]): What the secondary anchors admission left out
+            declared, in anchor order: an unresolved referent's mention, or a masked new
+            entity's name. "Anna" of "Anna called the user." anchored on the user and an
+            unresolved "Anna". Settlement reads a forgotten name in them
+            (``statement_settlement``). Never stored.
     """
 
     position: int
@@ -473,6 +478,7 @@ class AdmittedFact:
     trust_tier: TrustTier
     concerns: frozenset[Concern]
     duplicate_of: int | None
+    referents: tuple[str, ...]
 
     @property
     def spans(self) -> tuple[QuoteSpanV1, ...]:
@@ -1171,6 +1177,20 @@ def _speaker_candidates(
 class _Anchors:
     choices: tuple[EntityChoiceV1, ...]
     handles: tuple[str | None, ...]
+    referents: tuple[str, ...] = ()
+
+
+def _referent(handle: str, declarations: _Declarations) -> str | None:
+    """What a secondary anchor that admission leaves out declared: an unresolved referent's
+    mention, or a masked new entity's name or description, as `_degraded` reads them for a
+    primary."""
+    found = declarations.unresolved.get(handle) or declarations.masked_unresolved.get(handle)
+    if found is not None:
+        return found.mention
+    declaration = declarations.masked_new.get(handle)
+    if declaration is None:
+        return None
+    return _mention(declaration.name) or _mention(declaration.descriptor)
 
 
 def _anchors(
@@ -1195,6 +1215,7 @@ def _anchors(
     proven = _self_proven(groups)
     choices: list[EntityChoiceV1] = []
     handles: list[str | None] = []
+    referents: list[str] = []
     for slot, (index, handle) in enumerate(slots):
         primary = slot == 0
         rule: AnchorRule | None = None
@@ -1217,6 +1238,8 @@ def _anchors(
             choice = _choice(entry)
         if rule is not None and not primary:
             notes.note_anchor(position, index, rule)
+            if (referent := _referent(handle, declarations)) is not None:
+                referents.append(referent)
             continue
         if rule is not None:
             notes.note_anchor(position, index, rule)
@@ -1229,7 +1252,7 @@ def _anchors(
     if conflict is not None and choices[0].kind != "unresolved":
         notes.note_anchor(position, slots[0][0], "anchor_conflict")
         choices[0], handles[0] = conflict, None
-    return _Anchors(tuple(choices), tuple(handles))
+    return _Anchors(tuple(choices), tuple(handles), tuple(dict.fromkeys(referents)))
 
 
 def _first_person_self(anchors: _Anchors, groups: Sequence[_Group]) -> _Anchors:
@@ -1247,7 +1270,8 @@ def _first_person_self(anchors: _Anchors, groups: Sequence[_Group]) -> _Anchors:
         return anchors
     if any(isinstance(choice, UserChoiceV1) for choice in anchors.choices[1:]):
         return anchors
-    return _Anchors((UserChoiceV1(kind="user"), *anchors.choices[1:]), anchors.handles)
+    return _Anchors((UserChoiceV1(kind="user"), *anchors.choices[1:]), anchors.handles,
+                    anchors.referents)
 
 
 def _degraded(
@@ -1824,6 +1848,7 @@ def admit(
             trust_tier=min((part.trust_tier for part in cited), key=_TRUST.__getitem__),
             concerns=frozenset(concerns),
             duplicate_of=None,
+            referents=anchors.referents,
         ))
     fresh = {part.object_id for source in context.sources if source.fresh
              for part in source.run.parts}

@@ -37,13 +37,14 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { SESSION_KEEP_MS, cutBatch, newCaptureState, ownerKey, recordTurn, sha16, timeOf } from './capture.mjs';
-import { setupNote } from './autostart.mjs';
+import { replaceOlder, setupNote } from './autostart.mjs';
 import { publicSettings, resolveSettings } from './config.mjs';
 import { DiskQueue, IDLE_LOCK_STALE_MS, runFlusher } from './diskqueue.mjs';
-import { SETUP_HEADER, chatForgetNote, forgetNote, plainForgetDone, unavailableNote } from './format.mjs';
+import { chatForgetNote, forgetNote, plainForgetDone, setupHeader, unavailableNote } from './format.mjs';
 import { detectForgetRequests, forgetBody, forgottenOf, noteForgotten } from './forget.mjs';
 import { isMemoryRelated } from './gate.mjs';
 import { errKind } from './http.mjs';
+import { checkListener, onThisComputer } from './listener.mjs';
 import { adoptLock, readJson, releaseLock, touchLock, tryLock, withLock, writeFileAtomic } from './lock.mjs';
 import { homeDir, settleLaunches } from './proc.mjs';
 import { RecallBreaker, newRecallMemo, recallQuery, recallTurn, rememberIds, searchRecall } from './recall.mjs';
@@ -112,6 +113,13 @@ const FORGET_POLL_MS = 100;
 // What a prompt hook needs beside its wait and its recall: start-up, the
 // session files and the answer.
 const PROMPT_MARGIN_MS = 2000;
+// The longest a session's first prompt waits for the listener check that
+// tells the user memory is off (listenerNote). A service on this computer
+// answers it in milliseconds; a busy or paused one is not waited for.
+export const LISTENER_NOTE_MS = 300;
+// The setup states of a listener that answered the check without proving
+// the token (http.mjs listenerRefusal): the user is told why memory is off.
+const LISTENER_STATES = new Set(['listener', 'older', 'older-hand', 'restarting']);
 
 /**
  * The longest a prompt may wait for a queued forget within a hook time
@@ -407,8 +415,8 @@ export class HookMemory {
 
   /**
    * The jobs, with every forget asked since some batch's user messages were
-   * said (forgottenOf) after the last such batch: words saved after a
-   * forget never bring the fact back. The forget waits until the batches
+   * said (forgottenOf) after the last such batch: words said before a
+   * forget and saved after it get that forget too. The forget waits until the batches
    * before it are stored (not `inChat`); a message without a time counts as
    * said before.
    */
@@ -615,7 +623,17 @@ export class HookMemory {
       // taken from its recall deadline, which keeps at least 1 s (or all of
       // a shorter deadline).
       const limit = this.settings.recallTimeoutMs;
-      const recalled = await this.recall(sessionId, raw, skip, waited > 0 ? Math.max(Math.min(1000, limit), limit - waited) : null);
+      const { searched, listener, ...answer } = await this.recall(sessionId, raw, skip, waited > 0 ? Math.max(Math.min(1000, limit), limit - waited) : null);
+      let recalled = answer;
+      // The first prompt of a session that recalled nothing: a service that
+      // gets no token (it does not prove it holds it) is told at once, whatever
+      // was asked, so the user knows memory is off and why. A search that
+      // went out already checked the listener (`listener`: its setup state);
+      // else one check is made (listenerNote).
+      if (first && recalled.kind === null) {
+        const note = searched ? (listener ? await this.setupNoteOnce(sessionId, listener) : null) : await this.listenerNote(sessionId);
+        if (note) recalled = { context: note, kind: 'setup' };
+      }
       this.flush();
       if (!earlier) return recalled;
       return { ...recalled, context: recalled.context ? `${earlier}\n${recalled.context}` : earlier, kind: recalled.kind ?? 'forget' };
@@ -801,7 +819,10 @@ export class HookMemory {
         const setup = await this.setupNoteOnce(sessionId, report.autostart);
         return { context: setup ? `${unavailableNote()}\n${setup}` : unavailableNote(), kind: 'unavailable' };
       }
-      return { context: null, kind: null };
+      // `searched`: the breaker was asked, and any search went through the
+      // listener check; `listener`: the setup state of a listener that
+      // answered it without proving the token.
+      return { context: null, kind: null, searched: true, listener: LISTENER_STATES.has(report.autostart) ? report.autostart : null };
     }
     try {
       await this.update(sessionId, (state) => { rememberIds(state.recall, block.ids); });
@@ -809,6 +830,32 @@ export class HookMemory {
       // a lost dedupe entry only allows a repeat later
     }
     return { context: block.text, kind: 'recall', ids: block.ids };
+  }
+
+  // The setup note when the program on the service's port does not prove
+  // the token (an older service, or another program), once per session; null
+  // otherwise. One token-free check within LISTENER_NOTE_MS; nothing is
+  // sent. None while recall's breaker is open (the service failed lately);
+  // a check that is not answered in time counts as a timed-out search, so a
+  // stalled service soon costs new sessions nothing.
+  async listenerNote(sessionId) {
+    if (!onThisComputer(this.settings.url)) return null;
+    try {
+      const breaker = RecallBreaker.from(readJson(this.breakerFile));
+      if (breaker.open) return null;
+      const settings = { ...this.settings };
+      if (!settings.token && settings.localService) settings.token = serviceToken(process.env, settings.localService);
+      const verdict = await checkListener(settings, { timeoutMs: Math.min(LISTENER_NOTE_MS, this.settings.recallTimeoutMs) });
+      if (verdict.kind === 'no-answer') {
+        breaker.fail('timeout');
+        try { writeFileAtomic(this.breakerFile, JSON.stringify(breaker)); } catch { /* best effort */ }
+      }
+      if (verdict.ok || verdict.refused || (verdict.kind !== 'older' && verdict.kind !== 'foreign')) return null;
+      const state = verdict.kind === 'older' ? replaceOlder(this.settings, { log: this.settings.autostartLog }).state : 'listener';
+      return await this.setupNoteOnce(sessionId, state);
+    } catch {
+      return null;
+    }
   }
 
   // The setup note for an autostart state, at most once per session.
@@ -821,7 +868,7 @@ export class HookMemory {
         session.setupNoted = true;
         return true;
       });
-      return first ? `${SETUP_HEADER} This note is from the memory plugin, not from the user. Tell the user once, briefly: ${text}` : null;
+      return first ? `${setupHeader(state)} This note is from the memory plugin, not from the user. Tell the user once, briefly: ${text}` : null;
     } catch {
       return null;
     }

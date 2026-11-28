@@ -28,9 +28,9 @@ const REPO = 'edsml-jz2321/QuoteMem';
 const OWN_MARK = 'quotemem-hook';
 
 const q = (text) => `"${String(text).replace(/(["\\$`])/g, '\\$1')}"`;
-// A path in a hook command. On Windows it is written as given, in quotes: a
-// backslash there is a path separator, not an escape, and a file name
-// cannot hold a quote. Elsewhere it is quoted for a POSIX shell.
+// A path in a hook command or a printed command. On Windows it is written as
+// given, in quotes: a backslash there is a path separator, not an escape, and
+// a file name cannot hold a quote. Elsewhere it is quoted for a POSIX shell.
 const commandPath = (text) => (process.platform === 'win32' ? `"${String(text)}"` : q(text));
 
 /** A shell command that runs the hook runner for one agent and event. */
@@ -222,7 +222,7 @@ const TOOLS = {
           'later, the prompt hook adds recall and forget notes to each turn. On earlier versions',
           'recall is the digest plus the MCP tools, which the rule tells the model to use.',
           'In each project, copy the rule:',
-          `  mkdir -p .cursor/rules && cp ${q(integration('cursor', 'rules', 'quotemem.mdc'))} .cursor/rules/`,
+          `  mkdir -p .cursor/rules && cp ${commandPath(integration('cursor', 'rules', 'quotemem.mdc'))} .cursor/rules/`,
           ...shellOnlyWarning(),
         ],
         files: [
@@ -239,7 +239,7 @@ const TOOLS = {
       return {
         lines: [
           'Gemini CLI copies an extension folder. Run:',
-          `  gemini extensions install ${q(integration('gemini-cli'))}`,
+          `  gemini extensions install ${commandPath(integration('gemini-cli'))}`,
           'Gemini asks for the URL, token and user id; empty answers fall back to ~/.quotemem/env.',
           'Nothing is written by this command.',
         ],
@@ -356,7 +356,7 @@ const TOOLS = {
       return {
         lines: [
           'OpenClaw installs a plugin folder. Run:',
-          `  openclaw plugins install ${q(integration('openclaw'))}`,
+          `  openclaw plugins install ${commandPath(integration('openclaw'))}`,
           '  openclaw plugins inspect quotemem --runtime --json   # check that it loaded',
           'Nothing is written by this command.',
         ],

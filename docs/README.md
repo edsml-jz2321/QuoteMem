@@ -4,8 +4,8 @@ QuoteMem is an auditable long-term memory service for conversational agents.
 Each memory is a short statement tied to the exact words it came from. When a
 fact changes, the old version is kept and marked as replaced. A user can ask the
 agent to forget something: the memories the request matches are taken out of
-reads and are not learned again later, except from the user's own later, dated
-statement of it in the `agent` Add mode.
+reads, the words the forget removes are withheld, and later Adds are checked
+against a tombstone of the fact.
 
 ## What it does
 
@@ -15,10 +15,11 @@ statement of it in the `agent` Add mode.
 - **Versioned supersession.** An update or correction writes a new version and
   closes the old one. History stays readable through `/memory/history`.
 - **Forgetting with tombstones.** Forgetting is a two-step prepare/confirm
-  call. A forgotten fact leaves a tombstone that the review step checks, so
-  a later restatement of it is not stored again. In the `agent` Add mode one
-  thing brings it back: the user's own later, dated statement of it
-  (see [Forgetting](forgetting.md)).
+  call. A forgotten fact leaves a tombstone that every later Add is checked
+  against: a restatement with the same words is refused, and a close one goes
+  to review beside the forgotten statement. In the `agent` Add mode the
+  user's own later, dated statement of it, when it shows no name a forget
+  took, is judged as a new fact (see [Forgetting](forgetting.md)).
 - **Recorded review decisions.** Before a new memory is written, a review step
   compares it with the existing memories it may update. Each decision is
   stored with a record of the neighbours it was made against (their ids and

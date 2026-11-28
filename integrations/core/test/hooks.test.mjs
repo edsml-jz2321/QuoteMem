@@ -77,6 +77,11 @@ function setup(server, env = {}) {
 // which the wait gets back (at most 1 s), plus the hook process's own start.
 const FORGET_RETURN_MS = core.resolveSettings({}, { QUOTEMEM_URL: 'http://127.0.0.1:9', QUOTEMEM_TOKEN: TOKEN }).forgetTimeoutMs + 1000 + 700;
 
+// The forget outcomes kept in `dir`. An outcome is written to a `.tmp` file and renamed into
+// place, so a listing taken meanwhile can name a file that is gone when it is read.
+const outcomes = (dir) => (fs.existsSync(dir) ? fs.readdirSync(dir).filter((name) => name.endsWith('.json')) : []);
+const outcomeTexts = (dir) => outcomes(dir).map((name) => fs.readFileSync(path.join(dir, name), 'utf8'));
+
 const verified = (n = 1) => ({ body: { schema_version: 1, status: 'verified', request_digest: 'x', outcomes: Array.from({ length: n }, (_, i) => ({ memory_id: `01JX0000000000000000000F${i}`, outcome: 'verified' })), scope_state: 'ready' } });
 
 test('capture: every 3 user turns, sent by the background flusher, nothing waits', async () => {
@@ -152,6 +157,8 @@ test('recall: gated, deduplicated across processes, breaker kept across processe
   assert.match(first.context, /&gt; "User lives in Lisbon"/);
   assert.ok(!first.context.includes('01JX0000000000000000000002'), 'below the threshold QUOTEMEM_RECALL_MIN_SCORE sets');
   assert.deepEqual(Object.keys(server.of('/memory/search')[0].body).sort(), ['query', 'top_k', 'user_id']);
+  assert.equal(server.of('/memory/search')[0].body.top_k, 20, 'one search for the service\'s largest list');
+  assert.match(first.context, /<memory-hit id="01JX0000000000000000000001" rank="1" score="0.90"/);
   const again = await hooks.call('prompt', { session: 'R', turn: 'a2', text: 'Do you remember where I live?' });
   assert.equal(again.context, null, 'injected a turn ago: not again');
   assert.equal(server.of('/memory/search').length, 2);
@@ -189,6 +196,17 @@ test('recall: gated, deduplicated across processes, breaker kept across processe
   const broad = setup({ url: downUrl }, { QUOTEMEM_RECALL_GATE: 'broad' });
   const said = await broad.call('prompt', { session: 'D2', turn: 'c1', text: 'I prefer Rust for new services.' });
   assert.equal(said.context, null);
+});
+
+test('recall: an empty answer inserts nothing, in gated and in always mode', async () => {
+  const server = await serve({ '/memory/search': () => ({ body: { data: [] } }) });
+  for (const mode of ['gated', 'always']) {
+    const hooks = setup(server, { QUOTEMEM_RECALL: mode });
+    const result = await hooks.call('prompt', { session: `E-${mode}`, turn: 'e1', text: 'What is my blood type?' });
+    assert.equal(result.context, null, `${mode}: no block and no note`);
+    assert.equal(result.kind, null);
+  }
+  assert.equal(server.of('/memory/search').length, 2);
 });
 
 test('forget: pending turns stored first, then prepare and confirm, then one note', async () => {
@@ -376,7 +394,7 @@ test('forget: other sessions are saved first, and a late outcome is reported on 
   assert.match(add.body.session_id, /:other$/);
   assert.ok(add.at < server.of('/memory/forget/prepare')[0].at, 'the other session was stored before the forget');
   const resultsDir = hooks.queue().resultsDir;
-  await waitFor(() => fs.existsSync(resultsDir) && fs.readdirSync(resultsDir).length === 1, 8000, 'the outcome');
+  await waitFor(() => outcomes(resultsDir).length === 1, 8000, 'the outcome');
   // The forget found nothing: the next turn tells the model, once.
   const next = await hooks.call('prompt', { session: 'main', turn: 'f2', text: 'Thanks. Now write a haiku.' });
   assert.match(next.context, /An earlier request of the user to forget something has finished now\. No stored memory matched it/);
@@ -405,7 +423,7 @@ test('forget: a request in one language forgets the memory stored in another, by
   assert.doesNotMatch(result.context, /closest/);
   // The note was given: the result on disk keeps no memory text.
   const results = hooks.queue().resultsDir;
-  const kept = fs.readdirSync(results).map((name) => fs.readFileSync(path.join(results, name), 'utf8')).join('\n');
+  const kept = outcomeTexts(results).join('\n');
   assert.doesNotMatch(kept, /Japanese|日语/);
   assert.match(kept, /"status":"forgotten"/);
 });
@@ -427,21 +445,21 @@ test('forget: a late outcome is reported to the next prompt of any session, even
   assert.doesNotMatch(running, /Rua Augusta/, 'the list of running forgets keeps no word of the request');
   await hooks.call('end', { session: 'A' });
   const results = hooks.queue().resultsDir;
-  await waitFor(() => fs.existsSync(results) && fs.readdirSync(results).length === 1, 8000, 'the outcome');
-  const before = fs.readFileSync(path.join(results, fs.readdirSync(results)[0]), 'utf8');
+  await waitFor(() => outcomes(results).length === 1, 8000, 'the outcome');
+  const [before] = outcomeTexts(results);
   assert.doesNotMatch(before, /Rua Augusta/, 'an outcome that came after its turn\'s note keeps no memory text');
   // Session A is gone; the next prompt of session B gets the note, once.
   const other = await hooks.call('prompt', { session: 'B', turn: 'b1', text: 'Write a haiku about rain.' });
   assert.match(other.context, /An earlier request of the user to forget something has finished now\. No stored memory matched it .*so nothing was forgotten\. .*they can ask again in other words/);
   assert.doesNotMatch(other.context, /Rua Augusta|12 Rua/, 'another session gets back no word of the request nor of the closest memories');
-  assert.doesNotMatch(fs.readFileSync(path.join(results, fs.readdirSync(results)[0]), 'utf8'), /Rua Augusta/, 'read: no memory text kept');
+  assert.doesNotMatch(outcomeTexts(results).join('\n'), /Rua Augusta/, 'read: no memory text kept');
   assert.equal((await hooks.call('prompt', { session: 'A', turn: 'a2', text: 'And another haiku.' })).context, null, 'reported once');
 
   // A late success is reported too.
   status = 'ready';
   const second = await hooks.call('prompt', { session: 'C', turn: 'c1', text: 'Please forget that my dentist is Dr. Sato.' });
   assert.match(second.context, /being forgotten in the background/);
-  await waitFor(() => fs.readdirSync(results).length === 2, 8000, 'the second outcome');
+  await waitFor(() => outcomes(results).length === 2, 8000, 'the second outcome');
   prepareDelay = 0;
   const later = await hooks.call('prompt', { session: 'C', turn: 'c2', text: 'Thanks. Now write a limerick.' });
   assert.match(later.context, /something has finished now\. Done: 1 stored memory was forgotten\. It was reported as still in progress before/);
@@ -548,7 +566,7 @@ test('forget: an outcome that failed, or took other memories with it, is still t
   assert.equal(hooks.queue().result(related).dependents, 1);
   const extra = await hooks.call('prompt', { session: 'B', turn: 'b2', text: 'Write a limerick.' });
   assert.match(extra.context, /finished now\. Done: 2 stored memories were forgotten \(1 of them because it relied only on what the user asked to forget\)/);
-  assert.match(extra.context, /Tell the user that a related memory went with it/);
+  assert.match(extra.context, /Tell the user that a related memory was affected/);
   assert.doesNotMatch(extra.context, /cat/);
   assert.equal((await hooks.call('prompt', { session: 'A', turn: 'a4', text: 'Another limerick.' })).context, null, 'reported once');
 });

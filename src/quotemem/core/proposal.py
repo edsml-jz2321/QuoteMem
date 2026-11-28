@@ -122,6 +122,13 @@ class RevisedVersionV1(StrictModel):
     revision_id: Annotated[ULID, snapshot_locator("revision")]
 
 
+class CutSpanV1(QuoteSpanV1):
+    """Bytes of a forgotten name settlement cut a position's quotes around: a locator in the
+    position's scope that its proposal only withholds, never reads or retains."""
+
+    evidence_id: Annotated[ULID, snapshot_locator("evidence")]
+
+
 class EmbeddingUseV1(StrictModel):
     """One entry of an owner's ``StatementEmbeddingV1`` batch: ``entries[index]`` of ``ref``."""
 
@@ -179,6 +186,11 @@ class ProposalV2(StrictModel):
     cue_embedding: EmbeddingUseV1 | None
     embedding_space: LocalId
     pipeline_version: LocalId
+    cut: Annotated[list[CutSpanV1], Field(exclude_if=lambda value: not value)] = []
+    """What withholds the forgotten names settlement cut this position's quotes around
+    (``statement_settlement.Settlement.cut``), sorted and unique. The owner's withholding
+    transaction withholds it before review, whatever the review then decides. Empty, and
+    left out of the body, for a position that met no forgotten name."""
 
     @model_validator(mode="after")
     def check_proposal(self) -> Self:
@@ -188,6 +200,9 @@ class ProposalV2(StrictModel):
             self.statement_digest != statement_digest(self.statement)
         ):
             raise ValueError("A proposal stores its canonical statement and that one's digest")
+        cut = [(span.evidence_id, span.byte_start, span.byte_end) for span in self.cut]
+        if cut != sorted(set(cut)):
+            raise ValueError("The spans a proposal withholds are sorted and unique")
         if any(choice.kind == "unresolved" for choice in self.anchors[1:]):
             raise ValueError("Only the primary anchor may be unresolved")
         self._check_naming()

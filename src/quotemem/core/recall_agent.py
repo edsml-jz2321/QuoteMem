@@ -10,18 +10,22 @@ byte as before.
    cosine with the query above `DENSE_FLOOR` (scaled by `DENSE_SCALE`), joined with the
    share of the query's rarer words it holds (`coverage`, weighted `LEXICAL_WEIGHT`, taken
    over at least the weight of a word the scope never holds, so a query of common words
-   alone moves little). It rises with both and depends on nothing but the query, the text
-   and the scope's word frequencies: not on the other candidates or ``top_k``, so the same
-   score means the same match in every Search of a scope. A memory's cosine is the better
-   of its statement's and that of a user part it mostly quotes (`QUOTE_SHARE` of it,
-   `QUOTE_COVER`), so a Chinese question finds the English statement of a fact the user
-   told in Chinese, and the reverse. Nothing below `RELEVANCE_FLOOR`, or below
-   `RELATIVE_SHARE` of the best candidate's relevance, is delivered (`delivery_floor`), so
-   a question the store knows nothing about answers no hit; a near topic can still pass
-   ("What's my dog's name?" may find the cat). A user part counts `EVIDENCE_FACTOR` of its
+   alone moves little). A question asking for a name (`asks_name`) is fully covered by a
+   memory giving a name that holds every other word it asks: "What is the name of the
+   user's cat?" finds "The user's cat is named Max." before "The user has a cat.", which
+   lies nearer it in meaning. It rises with both and depends on nothing but the query, the text
+   and the scope's word frequencies, not on the other candidates or ``top_k``. A memory's
+   cosine is the better of its statement's and that of a user part it mostly quotes
+   (`QUOTE_SHARE` of it, `QUOTE_COVER`), so a Chinese question finds the English statement
+   of a fact the user told in Chinese, and the reverse. Nothing below `RELEVANCE_FLOOR`, or below
+   `RELATIVE_SHARE` of the best candidate's relevance, stays a candidate (`delivery_floor`), so
+   a question the store knows nothing about usually answers no hit; a near topic can still
+   pass ("What's my dog's name?" may find the cat). A user part counts `EVIDENCE_FACTOR` of its
    relevance, an assistant part `ASSISTANT_FACTOR`, a ``past`` memory `PAST_FACTOR`, and
    every score is times
-   `freshness` (at most `RECENCY_WEIGHT` less for the scope's oldest support).
+   `freshness` (at most `RECENCY_WEIGHT` less for the scope's oldest support). No hit is
+   delivered with a score below `RELEVANCE_FLOOR`, including one that joins another hit
+   (rules 3 and 6) at that hit's score.
 2. **A question is no fact.** A user part that only asks or instructs (`fact_free`: no
    sentence states a fact, as "Where do I live? One sentence, no tools.") is not
    delivered, unless the query asks what the user asked (`asks_own`). "Now I live in
@@ -30,10 +34,11 @@ byte as before.
    part is ``current``, they come at its score with their statuses (and what replaces
    them), and a part whose memories are all ``past`` is not delivered; otherwise a memory
    quoting it comes when it is relevant itself (`RELEVANCE_FLOOR`).
-4. **Nothing forgotten comes back.** A hit is dropped when it quotes or holds a sentence the
-   user asked to forget in chat (``forget_marks:{s}``), when it records or makes a forget
-   request (`Requests`), or when the forget shadow matches it (`forget_shadowed`): a name
-   of a forgotten fact, two of its topic keywords, or a memory lying next to it. The
+4. **A forget's marks and shadow drop hits.** A hit is dropped when it quotes or holds a
+   sentence the user asked to forget in chat (``forget_marks:{s}``), when it records or
+   makes a forget request (`Requests`), or when the forget shadow matches it
+   (`forget_shadowed`): a name of a forgotten fact, two of its topic keywords, or a memory
+   lying next to it. The
    shadow comes from three places: the forgotten versions' names and keywords, recorded at
    the forget as keyed digests (``forget_shadow:{s}``, `ForgetShadowTerms`); the marked
    sentences; and what the scope's forget requests asked to forget.
@@ -54,12 +59,15 @@ from __future__ import annotations
 
 import bisect
 import functools
+import math
 import re
 from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from decimal import ROUND_HALF_EVEN, Decimal
 from types import MappingProxyType
 from typing import Final, Literal
+
+import numpy as np
 
 from quotemem.core.recall_corpora import sparse_terms
 from quotemem.core.statement import own_token, token_seq
@@ -91,8 +99,8 @@ type Status = Literal["current", "past", "possibly_outdated"]
   quotes) questions nothing else. Only a state memory can be outdated this way; an event
   cannot.
 
-The status depends on the store at the read pin and the query time only, never on the
-other hits of a Search or on ``top_k``.
+The status depends on the store at the read pin and the query time only (an ``as_of``
+read's instant), never on the other hits of a Search or on ``top_k``.
 """
 
 EVIDENCE_FACTOR: Final = Decimal("0.8")
@@ -486,6 +494,31 @@ def fact_free(text: str) -> bool:
     return bool(said) and not any(states_fact(piece) for piece in said)
 
 
+_ASKS_NAME: Final = re.compile(
+    r"\b(?:name|names|named|called)\b|名字|叫什么|叫啥|名叫|称呼", re.IGNORECASE)
+"""Words a question asks for a name with ("What is my cat's name?", "What is my cat
+called?", "我的猫叫什么？")."""
+
+
+_HAN_NAME_QUESTION: Final = re.compile(
+    r"叫什么名字|什么名字|叫什么|叫啥|名字是什么|名字叫|名字|名叫|称呼|是什么|什么|用户|我们|我的|我|的|吗|呢|"
+    r"[\s?？。.,，!！]")
+"""The words of a Chinese question asking for a name that say nothing about whom it asks of
+("用户的", "叫什么名字", "？")."""
+
+
+def asks_name(query: str) -> bool:
+    """Whether a query asks for a name (`_ASKS_NAME`): a memory giving one that holds every
+    other word it asks covers it fully (`coverage`)."""
+    return _ASKS_NAME.search(query) is not None
+
+
+def name_question_rest(query: str) -> str:
+    """A Chinese name question without its asking, user and possessive words
+    (`_HAN_NAME_QUESTION`): "猫" of "用户的猫叫什么名字？"."""
+    return _HAN_NAME_QUESTION.sub("", query)
+
+
 def asks_own(query: str) -> bool:
     """Whether a query asks what the user asked ("What did I ask you yesterday?"), so a
     question part may answer it (`fact_free`)."""
@@ -837,6 +870,13 @@ def _jaccard(first: frozenset[str], second: frozenset[str]) -> float:
     return len(first & second) / len(union) if union else 0.0
 
 
+def _least_shared(jaccard: float, size: int) -> int:
+    """The fewest of a set's ``size`` terms another set shares when their Jaccard is at least
+    ``jaccard`` (in (0, 1]): the intersection is at least ``jaccard`` of the union, hence of
+    ``size``. The tolerance absorbs the rounding of ``jaccard * size`` at a whole number."""
+    return max(1, math.ceil(jaccard * size - 1e-9))
+
+
 @functools.lru_cache(maxsize=1 << 16)
 def _statement_terms(text: str) -> frozenset[str]:
     """`content_terms` of a statement, memoized: every Search reads the scope's statements."""
@@ -910,16 +950,9 @@ def standing(
     return StandingReader(memories, parts, cosines).read(asked)
 
 
-def _same_state_prefix(terms: frozenset[str], rank: Mapping[str, tuple[int, str]]) -> list[str]:
-    """The prefix of ``terms`` (rarest first by ``rank``) two term sets reaching
-    `SAME_STATE_JACCARD` always share a term of.
-
-    Jaccard t means an overlap of at least ``t * max(|A|, |B|)`` terms. Then the rarest
-    common term lies within the first ``|X| - floor(t * |X|) + 1`` terms of either set,
-    since every other common term follows it; ``floor`` only lengthens the prefix.
-    """
-    ordered = sorted(terms, key=rank.__getitem__)
-    return ordered[:len(ordered) - int(SAME_STATE_JACCARD * len(ordered)) + 1]
+def _places_of(places: Mapping[str, int], keys: Iterable[str]) -> list[int]:
+    """The places of the ``keys`` that ``places`` holds, ascending."""
+    return sorted(place for key in keys if (place := places.get(key)) is not None)
 
 
 def _by_evidence(
@@ -931,6 +964,78 @@ def _by_evidence(
     return found
 
 
+class _AnchorIndex:
+    """The live state memories of one anchor that end nothing, indexed by content term.
+
+    Built whole before a reader uses it.
+
+    Attributes:
+        cued: The places of the members carrying a change cue, ascending.
+        places: Each member's place by its key.
+    """
+
+    __slots__ = ("_order", "_ranks", "_sizes", "_specific", "_supports", "cued", "places")
+
+    def __init__(self, members: Sequence[AgentHit]) -> None:
+        terms = [_statement_terms(member.text) for member in members]
+        order = sorted(range(len(members)), key=lambda place: members[place].support)
+        ranks: dict[str, list[int]] = {}
+        for rank, place in enumerate(order):
+            for term in terms[place]:
+                ranks.setdefault(term, []).append(rank)
+        self._order = np.array(order, dtype=np.int64)
+        """Each member's place by its rank in ascending support."""
+        self._supports = [members[place].support for place in order]
+        self._ranks = {term: np.array(held, dtype=np.int64) for term, held in ranks.items()}
+        """The ranks of the members holding each term, ascending."""
+        self._sizes = np.array([len(terms[place]) for place in order], dtype=np.int64)
+        self._specific = frozenset(term for term in ranks if term not in GENERIC)
+        self.cued = [place for place, member in enumerate(members) if member.cue]
+        self.places = {member.key: place for place, member in enumerate(members)}
+
+    def restating(self, words: frozenset[str], support: int,
+                  every: bool) -> tuple[set[int], list[int]]:
+        """The newer members a memory's content terms meet, by Jaccard.
+
+        Each member newer than ``support`` is compared with ``words`` by the content-term
+        Jaccard (`_jaccard`: shared terms over the union, the same float), counted for all
+        newer members at once; a member sharing only `GENERIC` terms counts none unless
+        ``every``.
+
+        Args:
+            words: The memory's content terms.
+            support: The memory's support; only newer members are compared.
+            every: Whether a member sharing only generic terms is compared too.
+
+        Returns:
+            The places of the members reaching `SAME_STATE_JACCARD`, and, ascending, of
+            those below `NEAR_SAME_JACCARD`.
+        """
+        start = bisect.bisect_right(self._supports, support)
+        newer = len(self._supports) - start
+        if not words or not newer:
+            return set(), []
+        held = [ranks[np.searchsorted(ranks, start):] - start
+                for term in words if (ranks := self._ranks.get(term)) is not None]
+        if not held:
+            return set(), []
+        shared = np.bincount(np.concatenate(held), minlength=newer)
+        jaccard = shared / (len(words) + self._sizes[start:] - shared)
+        reached = jaccard >= SAME_STATE_JACCARD
+        if not every:
+            specific = [ranks[np.searchsorted(ranks, start):] - start
+                        for term in words & self._specific
+                        if (ranks := self._ranks.get(term)) is not None]
+            if not specific:
+                return set(), []
+            reached &= np.bincount(np.concatenate(specific), minlength=newer) > 0
+        found = np.flatnonzero(reached)
+        places = self._order[found + start].tolist()
+        below = (jaccard[found] < NEAR_SAME_JACCARD).tolist()
+        return set(places), sorted(place for place, near in zip(places, below, strict=True)
+                                   if near)
+
+
 class StandingReader:
     """The scope's links and change cues, read once per Search, for `standing`.
 
@@ -938,12 +1043,12 @@ class StandingReader:
     the memories asked about, so a Search that asks twice (for what it selected, then for
     what joined) pays the scope once.
 
-    A listing asks about every memory of the scope. It passes ``reach``: for an asked
-    memory, the keys whose cosine with it may reach `CORRECTION_COSINE` (every other is
-    below). Then a memory is compared only with those keys and with the memories of its
-    anchor whose rarest-first term prefix meets its own (`_same_state_prefix`; a pair
-    sharing none of those terms stays below `SAME_STATE_JACCARD`), in the scope's own
-    order, so every status and replacer is the one read without ``reach``.
+    The restatements of a memory are counted for every newer memory of its anchor at once
+    (`_AnchorIndex.restating`). A listing, and the interactive ranking, pass ``reach``: for
+    an asked memory, the keys whose cosine with it may reach `CORRECTION_COSINE` (every
+    other is below). Then the cued texts a memory is compared with by vector are only
+    those keys, in the scope's own order, so every status and replacer is the one read
+    without ``reach``.
     """
 
     def __init__(self, memories: Sequence[AgentHit], parts: Sequence[AgentHit],
@@ -954,7 +1059,7 @@ class StandingReader:
         self._cosines = cosines
         self._reach = reach
         self._places: dict[int, dict[str, int]] = {}
-        self._prefixes: dict[str, tuple[dict[str, tuple[int, str]], dict[str, set[str]]]] = {}
+        self._anchors: dict[str, _AnchorIndex] = {}
         self._states_keys = {memory.key for memory in memories if memory.state}
         self._support = {memory.key: memory.support for memory in memories}
         self._endings: dict[str, list[str]] = {}
@@ -977,13 +1082,13 @@ class StandingReader:
                     self._by_anchor.setdefault(memory.anchor, []).append(memory)
             for target in sorted(memory.contradicts):
                 self._conflicts.setdefault(target, []).append(memory.key)
-        self._terms: dict[str, dict[str, set[str]]] = {}
         self._sorted: dict[int, tuple[list[int], list[int]]] = {}
         index = _by_evidence(settled)
         self._cued = [part for part in parts if part.cue and (
             part.span is None or not any(
                 low < part.span[2] and part.span[1] < high
                 for low, high in index.get(part.span[0], ())))]
+        self._cued_places = {part.key: place for place, part in enumerate(self._cued)}
 
     def read(self, asked: Sequence[AgentHit]) -> Standing:
         """The status and replacers of each asked memory (`standing`)."""
@@ -1040,68 +1145,42 @@ class StandingReader:
         found = sorted({places[key] for key in keys if key in places})
         return [members[place] for place in found]
 
-    def _prefix_sharing(self, anchor: str, words: frozenset[str]) -> set[str]:
-        """The memories of ``anchor`` whose rarest-first term prefix meets that of ``words``."""
-        found = self._prefixes.get(anchor)
-        if found is None:
-            members = self._by_anchor.get(anchor, ())
-            counts: dict[str, int] = {}
-            for member in members:
-                for term in _statement_terms(member.text):
-                    counts[term] = counts.get(term, 0) + 1
-            rank = {term: (count, term) for term, count in counts.items()}
-            index: dict[str, set[str]] = {}
-            for member in members:
-                for term in _same_state_prefix(_statement_terms(member.text), rank):
-                    index.setdefault(term, set()).add(member.key)
-            found = self._prefixes[anchor] = (rank, index)
-        rank, index = found
-        ranked = {term: rank.get(term, (0, term)) for term in words}
-        return {key for term in _same_state_prefix(words, ranked)
-                for key in index.get(term, ())}
+    def _anchor(self, anchor: str, members: Sequence[AgentHit]) -> _AnchorIndex:
+        index = self._anchors.get(anchor)
+        if index is None:
+            index = self._anchors[anchor] = _AnchorIndex(members)
+        return index
 
     def _outdating(self, memory: AgentHit) -> list[str]:
-        """What questions a live state memory: newer conflicts, restatements and cues."""
+        """What questions a live state memory: newer conflicts, restatements and cues.
+
+        A newer member of the anchor restates the memory from a content-term Jaccard of
+        `SAME_STATE_JACCARD` up to `NEAR_SAME_JACCARD` (`_AnchorIndex.restating`); a member
+        sharing no specific term (only `GENERIC` ones, "user") counts no Jaccard unless
+        generic terms make up `SAME_STATE_JACCARD` of the memory's own. Every other newer
+        member with a change cue, and every newer cued user part the memory does not quote,
+        questions it within `CORRECTION_COSINE`.
+        """
         found = [key for key in self._conflicts.get(memory.key, ())
                  if self._support.get(key, 0) > memory.support]
         words = _statement_terms(memory.text)
         anchored: Sequence[AgentHit] = self._by_anchor.get(memory.anchor, ())
-        index = self._terms.get(memory.anchor)
-        if index is None:
-            index = self._terms[memory.anchor] = {}
-            for other in anchored:
-                for term in _statement_terms(other.text) - GENERIC:
-                    index.setdefault(term, set()).add(other.key)
-        # A memory sharing no specific term with this one shares at most its generic ones
-        # ("user"); when those are under half of its terms, the Jaccard stays below
-        # `SAME_STATE_JACCARD` and need not be computed.
-        generic = len(words & GENERIC)
-        every = bool(words) and generic >= SAME_STATE_JACCARD * len(words)
-        sharing = {key for term in words - GENERIC for key in index.get(term, ())}
         reach = None if self._reach is None else self._reach(memory)
-        # Without ``reach`` every newer memory of the anchor is read. With it, one below
-        # `SAME_STATE_JACCARD` can only join ``near``, and only within ``reach``.
-        if reach is None:
-            newer = self._newer(anchored, memory.support, self._sorted)
-            cued = self._newer(self._cued, memory.support, self._sorted)
-        else:
-            newer = [other for other in self._within(
-                anchored, self._prefix_sharing(memory.anchor, words) | set(reach))
-                if other.support > memory.support]
-            cued = [part for part in self._within(self._cued, reach)
-                    if part.support > memory.support]
         near: list[AgentHit] = []
-        for other in newer:
-            if other.key == memory.key:
-                continue
-            overlap = (_jaccard(words, _statement_terms(other.text))
-                       if every or other.key in sharing else 0.0)
-            if overlap >= NEAR_SAME_JACCARD:
-                continue
-            if overlap >= SAME_STATE_JACCARD:
-                found.append(other.key)
-            elif other.cue:
-                near.append(other)
+        if anchored:
+            index = self._anchor(memory.anchor, anchored)
+            every = bool(words) and len(words & GENERIC) >= SAME_STATE_JACCARD * len(words)
+            compared, restating = index.restating(words, memory.support, every)
+            found.extend(anchored[place].key for place in restating)
+            # With ``reach``, a cued member outside it is below `CORRECTION_COSINE`.
+            places = index.cued if reach is None else [
+                place for place in _places_of(index.places, reach) if anchored[place].cue]
+            near.extend(anchored[place] for place in places if place not in compared
+                        and anchored[place].key != memory.key
+                        and anchored[place].support > memory.support)
+        cued = self._newer(self._cued, memory.support, self._sorted) if reach is None else [
+            self._cued[place] for place in _places_of(self._cued_places, reach)
+            if self._cued[place].support > memory.support]
         own = _by_evidence(memory.quotes)
         near.extend(part for part in cued if (
             part.span is None or part.span[0] not in own or not any(
@@ -1195,6 +1274,9 @@ def recency_order(
 
     Returns:
         The ordered hits.
+
+    Raises:
+        ValueError: When two hits share a key.
     """
     ranked = sorted(hits, key=lambda hit: -hit.final)
     order = [hit for hit in ranked if hit.kind == "memory"] + [
@@ -1206,15 +1288,30 @@ def recency_order(
     movers = [hit for hit in order if hit.kind == "memory" and hit.key in replaced] + [
         hit for hit in order if hit.kind == "evidence" and hit.key in replaced]
     shown = {hit.key for hit in order if hit.kind == "memory"}
+    # Each hit's place, kept up to date as hits move up.
+    where = {hit.key: place for place, hit in enumerate(order)}
+    if len(where) != len(order):
+        raise ValueError("recency_order needs hits of distinct keys")
+    answered: dict[str, bool] = {}
+
+    def unanswered(key: str) -> bool:
+        """Whether no delivered memory replaces the memory ``key``."""
+        found = answered.get(key)
+        if found is None:
+            found = answered[key] = not any(other in shown for other in replacers.get(key, ()))
+        return found
+
     for hit in movers:
-        index = next(place for place, other in enumerate(order) if other.key == hit.key)
-        above = [place for place, other in enumerate(order[:index])
-                 if other.key in replaced[hit.key] and (hit.kind == "memory" or not any(
-                     key in shown for key in replacers.get(other.key, ())))]
+        index = where[hit.key]
+        above = [place for key in replaced[hit.key] if (place := where.get(key)) is not None
+                 and place < index and (hit.kind == "memory" or unanswered(key))]
         if above:
+            first = min(above)
             moved = order.pop(index)
-            target = order[above[0]]
-            order.insert(above[0], replace(moved, final=max(moved.final, target.final)))
+            target = order[first]
+            order.insert(first, replace(moved, final=max(moved.final, target.final)))
+            for place in range(first, index + 1):
+                where[order[place].key] = place
     return order
 
 
@@ -1247,13 +1344,20 @@ def _normalized(text: str) -> str:
     return " ".join(text.split()).casefold()
 
 
+@functools.lru_cache(maxsize=1 << 16)
+def _echo_terms(text: str) -> frozenset[str]:
+    """The `sparse_terms` of a part's text, memoized: `collapse` compares each part with
+    every kept one."""
+    return frozenset(sparse_terms(text))
+
+
 def _echoes(hit: AgentHit, kept: Sequence[AgentHit]) -> bool:
     """An Evidence part repeating a kept part: most of its terms, or a quoted user part."""
-    terms = frozenset(sparse_terms(hit.text))
+    terms = _echo_terms(hit.text)
     for other in kept:
         if other.kind != "evidence":
             continue
-        if _jaccard(terms, frozenset(sparse_terms(other.text))) >= ECHO_JACCARD:
+        if _jaccard(terms, _echo_terms(other.text)) >= ECHO_JACCARD:
             return True
         if hit.role == "assistant" and other.role == "user":
             quoted = _normalized(" ".join(_QUOTED_LINE.findall(hit.text)))
@@ -1286,31 +1390,50 @@ def collapse(ranked: Sequence[AgentHit], count: int) -> list[AgentHit]:
     Returns:
         The delivered hits, in order.
     """
-    words = {hit.key: content_terms(hit.text) - GENERIC for hit in ranked}
     memories = [hit for hit in ranked if hit.kind == "memory"]
-    newest: set[str] = set()
+    words = {hit.key: _statement_terms(hit.text) - GENERIC for hit in memories}
+    # The near-same check compares only memories of one anchor and kind holding one of a
+    # memory's rarest terms: a Jaccard of `NEAR_SAME_JACCARD` shares ``_least_shared`` of its
+    # terms, so one of any ``n - _least_shared + 1`` of its ``n`` terms (prefix filtering).
+    postings: dict[tuple[str, bool], dict[str, list[AgentHit]]] = {}
     for hit in memories:
-        if not any(other.key != hit.key and other.anchor == hit.anchor
-                   and other.state == hit.state and other.support > hit.support
-                   and _jaccard(words[other.key], words[hit.key]) >= NEAR_SAME_JACCARD
-                   for other in memories):
-            newest.add(hit.key)
-    statements: list[AgentHit] = []
-    for hit in memories:
-        if hit.key not in newest:
-            continue
-        if any(all(overlaps(quote, other.quotes) for quote in hit.quotes) and hit.quotes
-               and words[hit.key] <= words[other.key] for other in statements):
-            continue
-        statements.append(hit)
-    stated = {hit.key for hit in statements}
+        group = postings.setdefault((hit.anchor, hit.state), {})
+        for term in words[hit.key]:
+            group.setdefault(term, []).append(hit)
+
+    def newest(hit: AgentHit) -> bool:
+        """The near-same check: no newer memory of its anchor and kind is the same as it."""
+        terms = words[hit.key]
+        group = postings[(hit.anchor, hit.state)]
+        rarest = sorted(terms, key=lambda term: (len(group.get(term, ())), term))
+        return not any(other.key != hit.key and other.support > hit.support
+                       and _jaccard(words[other.key], terms) >= NEAR_SAME_JACCARD
+                       for term in rarest[:len(terms) - _least_shared(NEAR_SAME_JACCARD,
+                                                                       len(terms)) + 1]
+                       for other in group.get(term, ()))
+
+    # The restatement check compares a memory only with the statements above it quoting the
+    # part of its first quote: one overlapping every quote of it overlaps that one. A memory
+    # is read when the delivery reaches it, after every memory ranked above it.
+    quoting: dict[str, list[AgentHit]] = {}
+
+    def stated(hit: AgentHit) -> bool:
+        if not newest(hit) or hit.quotes and any(
+                all(overlaps(quote, other.quotes) for quote in hit.quotes)
+                and words[hit.key] <= words[other.key]
+                for other in quoting.get(hit.quotes[0][0], ())):
+            return False
+        for evidence_id in dict.fromkeys(quote[0] for quote in hit.quotes):
+            quoting.setdefault(evidence_id, []).append(hit)
+        return True
+
     quoted: list[tuple[str, int, int]] = []
     kept: list[AgentHit] = []
     for hit in ranked:
         if len(kept) == count:
             break
         if hit.kind == "memory":
-            if hit.key in stated:
+            if stated(hit):
                 kept.append(hit)
                 quoted.extend(hit.quotes)
             continue

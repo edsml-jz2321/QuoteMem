@@ -15,6 +15,7 @@ probe, where a check that only counted the mismatch would still say ok.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from typing import Any, cast
 
@@ -38,12 +39,45 @@ _PROBE_SCHEMA = {
 
 @dataclass(frozen=True)
 class ProbeResult:
-    """One probe's outcome; ``code`` and ``hint`` are content-free."""
+    """One probe's outcome; ``code``, ``provider_code`` and ``hint`` are content-free.
+
+    ``provider_code`` is the provider's own error code of a refused call (Model
+    Studio's ``Arrearage`` or ``invalid_api_key``), when its reply names one.
+    """
 
     ok: bool
     role: Role | None = None
     code: str | None = None
     hint: str | None = None
+    provider_code: str | None = None
+
+
+_PROVIDER_CODE = re.compile(r"[A-Za-z][A-Za-z0-9_.-]{0,63}")
+"""A provider error code the report shows: one plain identifier, never free text."""
+
+
+def _provider_code(response: httpx.Response) -> str | None:
+    """The ``error.code`` (or top-level ``code``) of a failed reply, when it is an identifier."""
+    try:
+        body = response.json()
+    except ValueError:
+        return None
+    if not isinstance(body, dict):
+        return None
+    document = cast(dict[str, Any], body)
+    error = document.get("error")
+    if isinstance(error, dict):
+        document = cast(dict[str, Any], error)
+    code = document.get("code")
+    return code if isinstance(code, str) and _PROVIDER_CODE.fullmatch(code) else None
+
+
+def _refused(role: Role, response: httpx.Response, structured: str) -> ProbeResult:
+    provider_code = _provider_code(response)
+    code, hint = _status_hint(role, response.status_code, structured)
+    if provider_code == "Arrearage":
+        hint = f"The {role} provider's account is overdue (Arrearage); top it up"
+    return ProbeResult(False, role, code, hint, provider_code)
 
 
 def _status_hint(role: Role, status: int, structured: str) -> tuple[str, str]:
@@ -91,8 +125,7 @@ def probe_embedding(client: httpx.Client, routes: ProviderRoutes) -> ProbeResult
         return ProbeResult(False, "embedding", type(error).__name__,
                            "The embedding provider is unreachable; check QUOTEMEM_EMBED_BASE_URL")
     if not response.is_success:
-        code, hint = _status_hint("embedding", response.status_code, "")
-        return ProbeResult(False, "embedding", code, hint)
+        return _refused("embedding", response, "")
     try:
         raw = cast(dict[str, Any], response.json())
         vector = cast(list[Any], cast(list[Any], raw["data"])[0]["embedding"])
@@ -130,8 +163,7 @@ def probe_chat(client: httpx.Client, routes: ProviderRoutes) -> ProbeResult:
         return ProbeResult(False, "chat", type(error).__name__,
                            "The chat provider is unreachable; check QUOTEMEM_CHAT_BASE_URL")
     if not response.is_success:
-        code, hint = _status_hint("chat", response.status_code, structured)
-        return ProbeResult(False, "chat", code, hint)
+        return _refused("chat", response, structured)
     try:
         raw = cast(dict[str, Any], response.json())
         content = cast(str, cast(list[Any], raw["choices"])[0]["message"]["content"])

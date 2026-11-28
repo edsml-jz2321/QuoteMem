@@ -22,23 +22,27 @@ answer, so a Search there must be fast and small. The default ``bench`` profile
   delivery queue, the Writer) answers 429 ``delivery_busy`` instead of hanging.
 
 - the agent ranking (``core/recall.recall_interactive``, rules in ``core/recall_agent``):
-  nothing forgotten or withheld is delivered (marked sentences, forget requests and
-  what the forget shadow names), a Chinese query reaches English statements, statements
+  what a forget took or withheld is left out, and so is a hit that quotes a marked
+  sentence, records a forget request or matches the forget shadow (a forgotten name, two
+  of its topic keywords or a vector near the forgotten statement; the user's own later
+  statement lifts the terms it states, ``core/relearn.py``), a Chinese query reaches
+  English statements, statements
   precede Evidence, assistant parts only answer what the assistant said, a user turn that
   only asks or instructs is no hit, replacements go directly above what they replace, and
   near-duplicates collapse.
 
 Each hit's ``score`` is a relevance in [0, 1) (``core/recall_agent.relevance``): the hit's
-cosine with the query and the share of the query's words it holds, the same for the same
-match in every Search, whatever else the store holds and whatever ``top_k`` asks. Nothing
-below ``RELEVANCE_FLOOR`` (0.25), or below ``RELATIVE_SHARE`` (0.6) of the best match's
-relevance, is delivered, so a question the store knows nothing about answers no hit (a
-near topic can still pass: a question about a dog may find the cat); an Evidence part
+cosine with the query and the share of the query's words it holds, not scaled to the best
+match and the same whatever ``top_k`` asks. Nothing below ``RELEVANCE_FLOOR`` (0.25), or
+below ``RELATIVE_SHARE`` (0.6) of the best match's relevance, stays a candidate, so a
+question the store knows nothing about usually answers no hit (a near topic can still
+pass: a question about a dog may find the cat); an Evidence part
 keeps 0.8 of its relevance (an assistant part 0.7), a ``past`` memory 0.8, and the oldest
 support 0.95. The memories a matching user turn states come with it, and a turn whose
 memories have all been replaced is not delivered: its memories are, with their statuses.
-Scores never increase down the list. The hits of a smaller ``top_k`` are the first hits of
-a larger one.
+No hit is delivered with a score below ``RELEVANCE_FLOOR``, including a memory that comes
+with another hit at that hit's score. Scores never increase down the list. The hits of a
+smaller ``top_k`` are the first hits of a larger one.
 
 Each memory hit carries a ``Status:`` line read from the whole store
 (``core/recall_agent.Status``): ``current`` (nothing in the store ends or questions it; a
@@ -47,8 +51,15 @@ corrected or retracted by the Add judge, or a state whose validity ended) or
 ``possibly_outdated`` (a later memory or user message conflicts with it, but nothing
 replaced it).
 
+An ``as_of`` read (``{"mode": "world" | "knowledge", "at": <epoch ms>}``) ranks the same
+way, with each memory's status read at that instant. A ``world`` read shows what held at
+the instant by the store's dates: the memories valid then, and as hits only the message
+parts said by then. A
+``knowledge`` read shows the memories as the store had recorded them by the instant (the
+version recorded by then of each one it still held), and no message part.
+
 Authorization, the delivery recheck and the ``recall`` row are those of the bench
-profile; an ``as_of`` read keeps the bench ranking.
+profile.
 """
 
 from __future__ import annotations
@@ -235,7 +246,7 @@ def render_compact(
         query: The Search query, read only for the deterministic notes.
         marks: The scope's marked sentences (``forget_marks:{s}``).
         lexical_only: Whether the ranking used the keyword routes only.
-        statuses: Each ranked memory's status; None (an ``as_of`` read) shows none.
+        statuses: Each ranked memory's status; None (a bench ranking) shows none.
 
     Returns:
         The compact hits, in rank order.

@@ -32,8 +32,9 @@ A workspace whose rule is ``explicit-request-v2`` (the ``agent`` Add mode) forge
 completely (``service/forget_statement.py``): the record of the request and
 the request sentence go with the fact, the sentences restating it are withheld rather than
 marked, and every Add, with requests or not, is checked for memories and sentences restating
-a forgotten fact, so an assistant reply recounting it in a later session is forgotten again;
-what the user states again in their own words after the forget is learned again.
+a forgotten fact, so an assistant reply recounting it in a later session is judged against it too;
+what the user states again in their own words after the forget, showing no forgotten name,
+is not refused by its tombstone and goes to review as a new fact.
 A request the plugin's forget by statement already handled is read only for what changed since.
 Its requests also take the Chinese forms the ``agent`` plugins' users write
 (``forget_requests``'s ``complete``).

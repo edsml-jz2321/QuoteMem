@@ -1,8 +1,8 @@
 """Records of an Add owner's transactions: journals, publish plans and inputs.
 
 Every transaction of an Add owner writes one create-once
-`CommitJournalV1` (``write_set:commit_journal``): each settlement chunk and
-each rejection chunk of a round, and each formal component. Its
+`CommitJournalV1` (``write_set:commit_journal``): each withholding chunk, each
+settlement chunk and each rejection chunk of a round, and each formal component. Its
 `journal_key` binds the owner, the round, the transaction kind and its
 positions, so a replay finds the journal before it reads any row and a crash
 resumes at the first position no journal covers. The journal names the rows
@@ -16,7 +16,9 @@ the transaction and fixes what the transaction writes: the members' resolution
 digests and the heads it compares. Settlement hands its positions to
 the chunked settlement transaction as `SettledPositionV1` records; a
 duplicate of a representative that goes to review travels with that
-representative as a `DuplicatePositionV1`.
+representative as a `DuplicatePositionV1`. Before it, the withholding transaction
+withholds the forgotten names settlement cut positions around (`CutPositionV1`,
+``agent`` mode only), so no later outcome of a position leaves one readable.
 
 Every record is content-free: positions, codes, ids and digests, never a
 statement, quote or name.
@@ -35,8 +37,9 @@ from quotemem.core.review_rounds import RoundNo
 from quotemem.core.statement import HexDigest
 from quotemem.store.metadata import OpaqueIdSpec, StrictModel
 
-CommitTxn = Literal["settlement", "rejection", "component"]
-"""The transaction kinds of an Add owner: settlement and rejection chunks, components."""
+CommitTxn = Literal["withholding", "settlement", "rejection", "component"]
+"""The transaction kinds of an Add owner: withholding, settlement and rejection chunks,
+components."""
 JOURNAL_PURPOSE: Final = "commit-journal-v1"
 """The binding purpose of `journal_key`."""
 JournalKind = Literal["item", "revision", "link", "candidate", "evidence", "entity", "entity_name"]
@@ -90,9 +93,10 @@ def journal_key(
         The journal's key, also its registry marker key.
 
     Raises:
-        ValueError: For a settlement chunk outside round 1, or invalid positions.
+        ValueError: For a withholding or settlement chunk outside round 1, or invalid
+            positions.
     """
-    if txn == "settlement" and round_no != 1:
+    if txn in ("withholding", "settlement") and round_no != 1:
         raise ValueError("Settlement chunks are journaled in round 1")
     bound = [list(position) for position in key_positions(txn, positions)]
     return ContentBindingDigest(bind(JOURNAL_PURPOSE, [owner_run_id, round_no, txn, bound]))
@@ -154,7 +158,7 @@ class CommitJournalV1(StrictModel):
             raise ValueError("A journal names each position once")
         if not _sorted_rows(self.written) or not _sorted_rows(self.deleted):
             raise ValueError("Journal rows are sorted by kind and id and unique")
-        if self.txn == "settlement" and self.round != 1:
+        if self.txn in ("withholding", "settlement") and self.round != 1:
             raise ValueError("Settlement chunks are journaled in round 1")
         return self
 
@@ -291,6 +295,31 @@ class SettledPositionV1(StrictModel):
                              "lacks a resolved entity")
         if any(span.evidence_id not in self.evidence_ids for span in self.withheld):
             raise ValueError("A withheld span lies in the position's own Evidence")
+        return self
+
+
+class CutPositionV1(StrictModel):
+    """What the withholding transaction withholds for one position settlement cut around a
+    forgotten name (``statement_settlement.Settlement.cut``, its ``ProposalV2.cut``).
+
+    The position is withheld from whatever the review then decides: kept, refused, left
+    pending, expired or never reviewed, the name stays unreadable. Every position settlement
+    cut has one, settled or reviewed, so the transaction journals each position once.
+
+    Attributes:
+        position_key: The position.
+        spans: The bytes withheld as ``restated_forgotten``, sorted and unique.
+    """
+
+    position_key: PositionKey
+    spans: Annotated[list[QuoteSpanV1], Field(min_length=1)]
+
+    @model_validator(mode="after")
+    def complete(self) -> Self:
+        """Keep the spans sorted and unique."""
+        keys = [(span.evidence_id, span.byte_start, span.byte_end) for span in self.spans]
+        if keys != sorted(set(keys)):
+            raise ValueError("The withheld spans are sorted and unique")
         return self
 
 

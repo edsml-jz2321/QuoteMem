@@ -143,14 +143,16 @@ def unit_array(unit: UnitVector) -> UnitArray:
     Returns:
         numpy.ndarray: The same float64 values, not writeable.
     """
-    packed = (
-        isinstance(unit, memoryview) and isinstance(unit.obj, bytes)
-        and unit.format == "d" and unit.ndim == 1 and unit.c_contiguous
-    )
-    array = (np.frombuffer(unit, dtype=np.float64) if packed and isinstance(unit, memoryview)
-             else np.array(unit, dtype=np.float64))
+    array = (np.frombuffer(unit, dtype=np.float64) if _packed(unit) and isinstance(
+        unit, memoryview) else np.array(unit, dtype=np.float64))
     array.flags.writeable = False
     return array
+
+
+def _packed(unit: UnitVector) -> bool:
+    """Whether a vector is immutable packed float64 storage (`unit_vector`'s own)."""
+    return (isinstance(unit, memoryview) and isinstance(unit.obj, bytes)
+            and unit.format == "d" and unit.ndim == 1 and unit.c_contiguous)
 
 
 class UnitRows:
@@ -175,6 +177,10 @@ class UnitRows:
     ) -> None:
         """Stack the rows, or their already converted ``arrays`` in the same order.
 
+        Packed rows (`unit_vector`'s float64 buffers) are stacked by joining their bytes:
+        the same values, without the per-row copy of a stack, which took over a second for
+        the 15,000 parts of a long user.
+
         Args:
             rows (Sequence[UnitVector]): The unit vectors.
             arrays (Sequence[numpy.ndarray] | None): ``unit_array`` of each row,
@@ -185,12 +191,32 @@ class UnitRows:
             raise ValueError("Each row needs its array")
         self._matrix: UnitArray | None = None
         dimensions = {len(row) for row in self.rows}
-        if len(dimensions) == 1 and next(iter(dimensions)) <= _FAST_DIMENSIONS:
-            self._matrix = (np.array(self.rows, dtype=np.float64) if arrays is None
-                            else np.stack(arrays))
+        if len(dimensions) == 1 and (dimension := next(iter(dimensions))) <= _FAST_DIMENSIONS:
+            if all(_packed(row) for row in self.rows):
+                self._matrix = np.frombuffer(
+                    b"".join(cast(Sequence[memoryview], self.rows)), dtype=np.float64,
+                ).reshape(len(self.rows), dimension)
+            else:
+                self._matrix = (np.array(self.rows, dtype=np.float64) if arrays is None
+                                else np.stack(arrays))
 
     def __len__(self) -> int:
         return len(self.rows)
+
+    def tail(self, start: int) -> UnitRows:
+        """The rows from ``start`` on, as their own `UnitRows`; the stacked matrix is shared
+        (a view), so nothing is copied and every score is the same exact value.
+
+        Args:
+            start (int): The first row kept.
+
+        Returns:
+            UnitRows: The later rows.
+        """
+        tail = UnitRows.__new__(UnitRows)
+        tail.rows = self.rows[start:]
+        tail._matrix = None if self._matrix is None else self._matrix[start:]
+        return tail
 
     def cosines(self, query: UnitVector) -> list[float]:
         """Return the cosine of ``query`` with every row, in row order (`cosine`'s values).
@@ -251,7 +277,8 @@ class UnitRows:
         ``_REACH_MARGIN`` below ``threshold`` or above is rounded (`cosine`'s check,
         summed exactly near a boundary): the rounded score of a product further below
         is below ``threshold``. A listing of a long user compares every cued text with
-        every state memory, and almost none of those pairs reach the threshold.
+        every state memory, and almost none of those pairs reach the threshold; a Search
+        asks about a few memories, many of whose rows may.
 
         Args:
             queries (Sequence[UnitVector]): Unit vectors of the rows' space.
@@ -269,12 +296,15 @@ class UnitRows:
                      if score >= threshold} for query in queries]
         reached: list[dict[int, float]] = []
         for row, query in zip(products, queries, strict=True):
-            scores: dict[int, float] = {}
-            for index in np.flatnonzero(~(row < threshold - _REACH_MARGIN)).tolist():
-                score = self._score(row.item(index), query, index)
-                if score >= threshold:
-                    scores[index] = score
-            reached.append(scores)
+            near = np.flatnonzero(~(row < threshold - _REACH_MARGIN))
+            # The near products are rounded together (`_settled`, as `cosines` rounds them);
+            # only one close to a rounding boundary is checked alone.
+            rounded, unsettled = _settled(row[near])
+            places = near.tolist()
+            for index in unsettled:
+                rounded[index] = self._score(row.item(places[index]), query, places[index])
+            reached.append({place: score for place, score in zip(places, rounded, strict=True)
+                            if score >= threshold})
         return reached
 
     def _products(self, queries: Sequence[UnitVector]) -> UnitArray | None:

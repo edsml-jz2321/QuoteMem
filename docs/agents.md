@@ -17,8 +17,9 @@ Quick start (to run a clone instead, follow "From a clone" below):
 
    It asks which models the service calls, saves the settings to
    `~/.quotemem/service.env` (mode 600), and checks them with
-   `quotemem check`. Keys are typed without echo and never put on a command
-   line. Three choices are offered:
+   `quotemem check`. When the input is a terminal, a key shows one `*` per
+   character as you type it. A key is never put on a command line. Three
+   choices are offered:
 
    | Preset | Models | Trade-off |
    |---|---|---|
@@ -47,7 +48,12 @@ Quick start (to run a clone instead, follow "From a clone" below):
 
    Both presets take a Model Studio API key from
    [bailian.console.aliyun.com](https://bailian.console.aliyun.com) (China
-   region), and bill your own Model Studio account at its usual prices. To
+   region), and bill your own Model Studio account at its usual prices. Both
+   models, DeepSeek included, are called through Model Studio, so a DeepSeek
+   platform key or an international Model Studio key is refused there. The
+   check ends with `Key works.`, or with the model that failed, the
+   provider's error code (such as `401` or `Arrearage`, an overdue account)
+   and a hint; the settings are saved either way. To
    switch later, run `npx quotemem setup` again (`--preset fast` skips the
    question), or edit a line of `~/.quotemem/service.env`: each
    `QUOTEMEM_*` value there overrides the preset, for example
@@ -77,10 +83,21 @@ ever started, and only for a service URL on this computer (`QUOTEMEM_URL`
 unset, or `localhost`, `127.0.0.1` or `[::1]`).
 
 **Two people signed in at once** on one computer (fast user switching,
-remote desktop, a shared server) cannot both use port 8765: the second
-person's plugins reach the first person's service, which refuses their
-token, so they get no memory. `npx quotemem doctor`, `npx quotemem status`
-and the plugins' log say so, and name a port of that person's own
+remote desktop, a shared server) cannot both use port 8765. So before the
+plugins, the MCP server and the `quotemem` commands send the token to a
+service on this computer, they check who listens on its port. The service
+must answer a fresh challenge at `GET /agent/listener` that only the
+token's holder can answer, for the address and port it listens on. The
+check carries no token and no content. Only a service that answers it gets
+the token and the request, at the address the check reached: `localhost`
+and `0.0.0.0` mean 127.0.0.1, `[::]` means ::1. When nothing listens,
+nothing is sent. Without a token (a service set up but never started), no
+content goes to a program on the port either.
+
+So another person's service, or any other program that took the port
+first, gets no token and no content; the second person gets no memory.
+`npx quotemem doctor`, `npx quotemem status` and the plugins' log say so. Doctor and
+status also read who owns the port, and name a port of that person's own
 (20000–25999, from the user name and home folder). Put it in that person's
 `~/.quotemem/env` (`QUOTEMEM_URL=http://127.0.0.1:<port>`) and in the
 environment their Claude Code, Codex and DSH start in, and their plugins start
@@ -88,9 +105,38 @@ their own service there. Claude Code can also take the URL in its plugin's URL
 option.
 The first person keeps 8765.
 
+**After an upgrade from 0.3.2 or older**, a service that is still running
+cannot answer the check, so it gets no token and no content either. If the
+plugins started it, they stop it and start the current release by
+themselves; memory is back once the new service has started, usually
+within a minute or two (the first
+start of a new release can take a few minutes, while uvx downloads it). A
+memory question meanwhile gets a short note that the service is restarting.
+If you started it yourself (`quotemem serve` in a terminal or a service
+manager), stop it there and start the current release, for example with
+`uvx quotemem@latest serve`; `npx quotemem stop` stops only a service the
+plugins started. Until then, the first prompt of each conversation gets a
+note that memory is off and why, whatever it asks. What the agents capture
+meanwhile stays queued on this computer for up to a week, and is sent once
+the service proves itself.
+
 **If several people use the computer at once**, give yourself a port of your
-own as above, start the service before you open your tools, and use QuoteMem
-there only with people you trust.
+own as above, and start the service before you open your tools. The check
+covers URLs whose host is `localhost` (also `localhost.` and names under it,
+such as `app.localhost`), an address that starts with `127.`, `[::1]`,
+`0.0.0.0` or `[::]`: use one of them, such as 127.0.0.1, for a service on this
+computer (the plugins warn about a host name of this computer). Every request
+that carries the token is checked again, and goes on the connection the check
+went on, so a program that takes the port after the service stops, even
+between the check and the request, gets neither the token nor the request.
+The proof is keyed by the token: if you choose a token yourself, make it
+long and random, as the service's own is.
+
+A service reached through a forward to another port (`ssh -L 9000:127.0.0.1:8765`,
+or a local proxy) proves itself for the port it listens on, not the one
+the plugins connect to, so the plugins refuse it: forward to the same port
+number (`ssh -L 8765:127.0.0.1:8765`). A gateway on this computer that puts
+keys of its own in front of the service is refused too.
 
 No token needs to be copied: the service creates one in `<data-dir>/token` on
 its first start, and every plugin reads it from there. The data folder is
@@ -223,9 +269,10 @@ stored. When depends on whether the agent reports a chat's end:
 
 Otherwise a chat's last turns go out when it ends, or before a forget. A
 chat's last turns are saved once it has been idle for 5 minutes
-(`QUOTEMEM_IDLE_FLUSH_MS`), with no further prompt. (On Windows, where
-PowerShell cannot start background processes, they are saved at the next
-prompt or session start instead.) The MCP tools stay available for explicit requests: search, history,
+(`QUOTEMEM_IDLE_FLUSH_MS`), with no further prompt. (On Windows, PowerShell
+starts this background sender. When it cannot, the plugins start it directly,
+and the turns are saved at the next prompt or session start;
+`quotemem doctor` says which.) The MCP tools stay available for explicit requests: search, history,
 provenance (the quoted evidence behind a memory), a list of what is
 remembered (`quotemem_memories`) and a two-step forget.
 When the service cannot be reached, the turns wait on disk and go out on a

@@ -133,7 +133,7 @@ same memory. The behaviour settings may also come from the plugin options:
 | `QUOTEMEM_RECALL` | `recall` | `gated` | `gated`, `always` or `off` |
 | `QUOTEMEM_RECALL_GATE` | `recallGate` | `questions` | `questions` ignores plain statements such as "I prefer Rust"; `broad` searches on them too |
 | `QUOTEMEM_RECALL_TIMEOUT_MS` | `recallTimeoutMs` | `3000` | Search deadline |
-| `QUOTEMEM_TOP_K`, `QUOTEMEM_MAX_INJECT_CHARS`, `QUOTEMEM_RECALL_MIN_SCORE` | `topK`, `maxInjectChars`, `recallMinScore` | `5`, `4000`, none (`0.5` with `always`) | Recall limits |
+| `QUOTEMEM_TOP_K`, `QUOTEMEM_MAX_INJECT_CHARS`, `QUOTEMEM_RECALL_MIN_SCORE` | `topK`, `maxInjectChars`, `recallMinScore` | `5`, `4000`, none (`0.3` with `always`) | Recall limits |
 | `QUOTEMEM_FORGET` | `forget` | `auto` | `auto` (silent forget) or `off` (the explicit tools only) |
 | `QUOTEMEM_FORGET_TIMEOUT_MS` | `forgetTimeoutMs` | `1800` | How long a forget turn waits for the outcome (200 to 2500) |
 | `QUOTEMEM_INCLUDE_SUBAGENTS` | `includeSubagents` | off | Also recall and capture in subagent sessions |

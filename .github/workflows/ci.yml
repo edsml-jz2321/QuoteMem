@@ -122,3 +122,61 @@ jobs:
 
       - name: Package check (pack, install the tarball, run every bin)
         run: npm run check
+
+  plugins-windows:
+    name: Agent plugins on Windows (Node ${{ matrix.node }})
+    runs-on: windows-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ["20", "24"]
+    steps:
+      # Keep the files' LF line endings: the checks compare copies byte for byte.
+      - name: Keep line endings
+        run: git config --global core.autocrlf false
+
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ matrix.node }}
+          package-manager-cache: false
+
+      - name: Tests
+        run: npm test
+
+      - name: Package check (pack, install the tarball, run every bin)
+        run: npm run check
+
+  server-windows:
+    name: Server smoke on Windows (Python 3.12)
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Keep line endings
+        run: git config --global core.autocrlf false
+
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up uv and Python 3.12
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.11.21"
+          python-version: "3.12"
+          enable-cache: false
+
+      - name: Install from pyproject.toml
+        run: |
+          uv venv .venv
+          uv pip install --constraints .github/ci/constraints.txt .
+
+      - name: Server smoke (stub provider, no network)
+        run: uv run --no-sync python .github/ci/server_smoke.py

@@ -78,9 +78,9 @@ export const Config = Schema
   ? Schema.object({
     recall: Schema.union(['gated', 'always', ...OFF_VALUES()]).description('Automatic recall mode (QUOTEMEM_RECALL).'),
     recallGate: Schema.union(['questions', 'broad']).description('What the gated mode searches on: questions about the past or the user, or also plain statements about the user (QUOTEMEM_RECALL_GATE).'),
-    topK: Schema.natural().description('Hits requested and injected at most (QUOTEMEM_TOP_K).'),
-    maxInjectChars: Schema.natural().description('Character budget of the injected block (QUOTEMEM_MAX_INJECT_CHARS).'),
-    recallMinScore: Schema.number().description('Relevance threshold (QUOTEMEM_RECALL_MIN_SCORE).'),
+    topK: Schema.natural().description('Hits injected at most (QUOTEMEM_TOP_K); the search asks for 20.'),
+    maxInjectChars: Schema.natural().description('Character budget of the injected block, 2500 to 50000; a smaller value is raised to 2500 (QUOTEMEM_MAX_INJECT_CHARS).'),
+    recallMinScore: Schema.number().description('Relevance from 0 to 1 a recalled hit needs; none by default, 0.3 with always (QUOTEMEM_RECALL_MIN_SCORE).'),
     recallTimeoutMs: Schema.natural().description('Recall deadline in ms (QUOTEMEM_RECALL_TIMEOUT_MS).'),
     recallRepeatTurns: Schema.natural().description('User turns before an injected memory may be injected again (QUOTEMEM_RECALL_REPEAT_TURNS).'),
     searchOptions: Schema.array(Schema.string()).description('Search options sent to /memory/search (QUOTEMEM_SEARCH_OPTIONS).'),

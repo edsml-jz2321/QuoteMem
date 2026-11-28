@@ -3,7 +3,7 @@
 # Continue has no hooks that run on each message, so memory is saved and
 # searched by the model through the tools, as the rule asks.
 name: QuoteMem
-version: 0.3.2
+version: 0.3.3
 schema: v1
 mcpServers:
   - name: quotemem

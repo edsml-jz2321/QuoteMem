@@ -1,6 +1,6 @@
 [project]
 name = "quotemem"
-version = "0.3.2"
+version = "0.3.3"
 description = "QuoteMem: auditable agent memory with quoted evidence, versioned supersession and forgetting"
 readme = "README.md"
 license = "MIT"

@@ -47,13 +47,17 @@ export function isOurs(command) {
 }
 
 // A double-quoted shell word: `"`, `\`, `$` and backticks are escaped, so
-// /bin/sh never expands a path.
-const quote = (text) => `"${String(text).replace(/(["\\$`])/g, '\\$1')}"`;
+// /bin/sh never expands a path. On Windows a path is written as given, in
+// quotes: a backslash there is a path separator, not an escape, and a file
+// name cannot hold a quote.
+const quote = (text, platform) => (platform === 'win32'
+  ? `"${String(text)}"`
+  : `"${String(text).replace(/(["\\$`])/g, '\\$1')}"`);
 const tomlString = (text) => JSON.stringify(text);
 
 /** The hook command line for one event. */
-export function hookCommand(node, event) {
-  return `${quote(node)} ${quote(HOOK_PATH)} ${event}`;
+export function hookCommand(node, event, platform = process.platform) {
+  return `${quote(node, platform)} ${quote(HOOK_PATH, platform)} ${event}`;
 }
 
 /** hooks.json with our handlers replaced (or removed with `remove`). */

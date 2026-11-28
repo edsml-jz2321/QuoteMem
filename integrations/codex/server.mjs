@@ -40,8 +40,8 @@ import { createInterface } from 'node:readline';
 async function loadCore() {
   for (const dir of ['./core/', '../core/']) {
     try {
-      const [autostart, token, forget, hooks] = await Promise.all(['autostart.mjs', 'token.mjs', 'forget.mjs', 'hooks.mjs'].map((name) => import(new URL(dir + name, import.meta.url).href)));
-      return { autostart, token, forget, hooks };
+      const [autostart, token, forget, hooks, http] = await Promise.all(['autostart.mjs', 'token.mjs', 'forget.mjs', 'hooks.mjs', 'http.mjs'].map((name) => import(new URL(dir + name, import.meta.url).href)));
+      return { autostart, token, forget, hooks, http };
     } catch {
       // not here
     }
@@ -51,7 +51,7 @@ async function loadCore() {
 const core = await loadCore();
 
 const SERVER_NAME = 'quotemem';
-const SERVER_VERSION = '0.3.2';
+const SERVER_VERSION = '0.3.3';
 const PROTOCOL_VERSIONS = ['2025-06-18', '2025-03-26', '2024-11-05'];
 
 const MAX_ID_CHARS = 1024;
@@ -246,6 +246,26 @@ const STARTING = 'Long-term memory is starting on this computer. Continue withou
 const NOT_SET_UP = 'Long-term memory is not set up correctly. Continue without it; '
   + 'the user can run `npx quotemem doctor` to check the setup.';
 
+// The program on the port of the service on this computer does not answer the
+// listener check, and the plugins cannot replace it: OLDER when they started
+// it (service.lock records it; `npx quotemem stop` stops it), OLDER_HAND when
+// the user started it another way (or it is another program).
+const OLDER = 'Long-term memory is off: the memory service the agents started does not show it holds the token, '
+  + 'so the agents send it nothing. Continue without it. If it is the user\'s own service from an older release, '
+  + 'restarting it once with `npx quotemem stop` brings memory back (the agents then start the current release, '
+  + 'unless automatic start is off); otherwise `npx quotemem doctor` shows who holds the port.';
+const OLDER_HAND = 'Long-term memory is off: the program on the memory service\'s port was not started by the agents and does not '
+  + 'show it holds the token, so the agents send it nothing. Continue without it. If it is a service the user started '
+  + 'from an older release, the user stops it (in its terminal or service manager; `npx quotemem stop` cannot) and starts '
+  + 'the current release, for example with `uvx quotemem@latest serve`; otherwise `npx quotemem doctor` shows who holds '
+  + 'the port.';
+
+// Another program (another user's QuoteMem, or a service with another token)
+// answers the listener check without this user's token.
+const LISTENER = 'Long-term memory is off: another program holds the memory service\'s port and does not show it '
+  + 'holds the token, so the agents send it nothing. Continue without it; `npx quotemem doctor` shows what holds '
+  + 'the port (two people signed in at once need a port each).';
+
 // quotemem_health, when nothing answers and the service is not starting.
 const NOT_RUNNING = 'The memory service is not running. The user can run `npx quotemem doctor` to check the setup '
   + '(`npx quotemem setup` once makes the service start by itself whenever an agent needs it).';
@@ -270,9 +290,37 @@ function unreachable(error) {
   return failure;
 }
 
+// Whether a URL's host may be this computer, read without the core (whose
+// listener check decides it otherwise): a `localhost` name, a 127.x
+// address, ::1, 0.0.0.0, [::] or an IPv4-mapped address.
+function maybeThisComputer(url) {
+  try {
+    const host = new URL(url).hostname.replace(/^\[|\]$/g, '').toLowerCase();
+    return /^(?:[a-z0-9_-]+\.)*localhost\.?$/.test(host) || /^127\.\d+\.\d+\.\d+$/.test(host)
+      || ['::1', '::', '0.0.0.0'].includes(host) || host.startsWith('::ffff:');
+  } catch {
+    return true;
+  }
+}
+
+// A request on `connection` (core/listener.mjs requestOn), read as fetch's answer.
+async function requestChecked(connection, url, init) {
+  const answer = await core.http.requestOn(connection, url, init);
+  const text = answer.body.toString('utf8');
+  return {
+    ok: answer.status >= 200 && answer.status < 300,
+    status: answer.status,
+    headers: { get: (name) => [answer.headers[name.toLowerCase()]].flat()[0] ?? null },
+    text: async () => text,
+  };
+}
+
 // Sends one request; retries 429/503 with the same body, honouring Retry-After,
 // within the tool's time budget. Never includes the token in an error.
-async function call(method, path, body, signal, { auth = true } = {}) {
+// `check`: check the listener even for a request without the token or a body
+// (quotemem_health). A refusal by the check carries the verdict's `listener`
+// kind (or 'no-core').
+async function call(method, path, body, signal, { auth = true, check = false } = {}) {
   if (settings.urlProblem || (auth && settings.tokenProblem)) {
     const failure = new ToolError(NOT_SET_UP);
     failure.code = 'not_set_up';
@@ -286,18 +334,50 @@ async function call(method, path, body, signal, { auth = true } = {}) {
     const timeout = AbortSignal.timeout(remaining);
     const headers = { accept: 'application/json', ...(auth ? authHeaders() : {}) };
     if (payload !== undefined) headers['content-type'] = 'application/json';
+    // A service on this computer gets a request only once the program on
+    // its port proved it holds the token (core/listener.mjs), at the address
+    // the check reached (`localhost` is 127.0.0.1), on the connection the
+    // check went on. Without a token only the check goes there, and it
+    // carries no token; without the core that checks, nothing goes there.
+    let base = settings.url;
+    const checked = auth || payload !== undefined || check;
+    if (checked && !core?.http && maybeThisComputer(settings.url)) {
+      log(`nothing was sent to ${settings.displayUrl}: the adapter core next to this server could not be loaded, so the program on that port cannot be checked; reinstall the plugin or the npm package.`);
+      const failure = new ToolError(UNAVAILABLE);
+      failure.code = 'unreachable';
+      failure.listener = 'no-core';
+      throw failure;
+    }
+    const connection = checked && core?.http?.onThisComputer(settings.url) ? core.http.listenerConnection(settings.url) : null;
     let response;
     try {
-      response = await fetch(`${settings.url}${path}`, {
-        method,
-        headers,
-        body: payload,
-        signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
-      });
-    } catch (error) {
-      if (signal?.aborted) throw new ToolError('The request was cancelled.');
-      if (timeout.aborted) throw new ToolError(`Long-term memory did not answer within ${Math.round(settings.timeoutMs / 1000)} s. Continue without it.`);
-      throw unreachable(error);
+      if (connection) {
+        const verdict = await core.http.checkListener(settings, { signal: signal ? AbortSignal.any([signal, timeout]) : timeout, connection });
+        // Nothing listens: no request is sent (it may start the service).
+        if (verdict.refused) throw unreachable(verdict.refused);
+        if (!verdict.ok) {
+          // An older service these plugins started is replaced by the current release.
+          const replaced = verdict.kind !== 'older' ? null
+            : settings.localService ? core.autostart.replaceOlder(settings, { log: { warnOnce: (_key, message) => log(message), debug: () => {} } }).state : 'older-hand';
+          log(`no token and no memory data were sent to ${settings.displayUrl}: the program on its port is not shown to be this user's QuoteMem service: ${verdict.why}${replaced === 'restarting' ? '; it is the service the plugins started, so it is replaced by the current release' : ''}. Run \`npx quotemem doctor\`.`);
+          const failure = new ToolError(replaced === 'restarting' ? STARTING : replaced === 'older' ? OLDER
+            : replaced === 'older-hand' ? OLDER_HAND : verdict.kind === 'foreign' ? LISTENER : UNAVAILABLE);
+          failure.code = 'unreachable';
+          failure.listener = verdict.kind;
+          throw failure;
+        }
+        base = verdict.url;
+      }
+      const init = { method, headers, body: payload, signal: signal ? AbortSignal.any([signal, timeout]) : timeout };
+      try {
+        response = connection ? await requestChecked(connection, `${base}${path}`, init) : await fetch(`${base}${path}`, init);
+      } catch (error) {
+        if (signal?.aborted) throw new ToolError('The request was cancelled.');
+        if (timeout.aborted) throw new ToolError(`Long-term memory did not answer within ${Math.round(settings.timeoutMs / 1000)} s. Continue without it.`);
+        throw unreachable(error);
+      }
+    } finally {
+      connection?.close();
     }
     const text = await response.text();
     let data = null;
@@ -667,7 +747,7 @@ const TOOLS = [
         ? ' A memory marked bundled also holds other details and is forgotten whole: say so, and what else it holds.'
         : '';
       const others = alsoForgotten.words.length + alsoForgotten.unnamed + unreadable.words.length + unreadable.unnamed > 0;
-      const shown = others ? ', also_forgotten (forgotten with it) and may_become_unreadable (kept, but they may stop being readable until the user says them again)' : '';
+      const shown = others ? ', also_forgotten (forgotten with it) and may_become_unreadable (kept, but they may stop being readable)' : '';
       return {
         status: result.status,
         token,
@@ -680,7 +760,7 @@ const TOOLS = [
         ...(unreadable.unnamed ? { may_become_unreadable_unnamed: unreadable.unnamed } : {}),
         other_candidates: summary.filter((c) => !c.target && !keptIds.has(c.memory_id) && !affectedIds.has(c.memory_id)),
         ...(keptNow.length ? { kept: keptNow } : {}),
-        retention_notice: 'A forgotten memory becomes unreadable. An unreadable tombstone is kept: the assistant\'s words, this forget request and earlier messages never bring the fact back; '
+        retention_notice: 'A forgotten memory becomes unreadable. An unreadable tombstone is kept, and every later Add is checked against it, the assistant\'s words and this forget request included, and so are earlier messages sent again; '
           + 'if the user later states it again themselves, it may be stored again.',
         next: (settings.autoCapture
           ? `If to_forget (and sentences_to_forget) is what the user asked to forget, call quotemem_forget_confirm with this token before it expires; their request is their agreement.${others ? ` Then tell the user briefly what went${shown}.` : ''}`
@@ -726,8 +806,10 @@ const TOOLS = [
       // `verified` is forgotten by this call: a memory, or (no memory id)
       // that many of the user's sentences; so is a target of a resent plan
       // found gone (above). Otherwise `forgotten_earlier` was gone already;
-      // `changed` was kept.
+      // `changed` was kept; `left_readable` says the service's own check
+      // found part of what it forgot still readable.
       const counts = { memories_forgotten: 0, sentences_forgotten: 0, already_gone: 0, changed: 0 };
+      let leftReadable = false;
       const whole = [];
       for (const item of outcomes) {
         const key = item.memory_id ?? 'sentences';
@@ -742,6 +824,8 @@ const TOOLS = [
           counts.already_gone += 1;
         } else if (item.outcome === 'changed') {
           counts.changed += 1;
+        } else if (item.outcome === 'left_readable') {
+          leftReadable = true;
         }
       }
       // Memories outside the plan that this confirmation changed all the same
@@ -750,7 +834,11 @@ const TOOLS = [
       for (const a of Array.isArray(result.affected) ? result.affected : []) if (a?.effect in changedElsewhere) changedElsewhere[a.effect] += 1;
       const forgotten = counts.memories_forgotten + counts.sentences_forgotten;
       let next;
-      if (result.status !== 'verified') {
+      if (result.status !== 'verified' && leftReadable) {
+        next = `${forgotten > 0 ? 'Only part was forgotten' : 'Nothing was forgotten for sure'}: the memory service found part of it still readable afterwards (a memory or saved sentence that says it in other words). `
+          + 'Tell the user briefly that some of it may still be stored; prepare again, in other words if needed, to forget the rest.'
+          + (counts.changed > 0 ? ' Some memories also changed meanwhile and were kept.' : '');
+      } else if (result.status !== 'verified') {
         next = `${forgotten > 0 ? 'Only part was forgotten' : 'Nothing was forgotten yet'}: some memories changed meanwhile and were kept. Prepare again to forget them.`;
       } else if (forgotten > 0) {
         next = 'Done. Tell the user briefly what was forgotten.'
@@ -759,11 +847,12 @@ const TOOLS = [
         next = 'It was already forgotten: nothing was left to remove. Tell the user briefly.';
       }
       if (changedElsewhere.forgotten + changedElsewhere.unreadable > 0) {
-        next += ` Other memories changed with it: ${changedElsewhere.forgotten} forgotten too, ${changedElsewhere.unreadable} no longer readable until the user says them again; tell the user briefly.`;
+        next += ` Other memories changed with it: ${changedElsewhere.forgotten} forgotten too, ${changedElsewhere.unreadable} no longer readable; tell the user briefly.`;
       }
       return {
         status: result.status,
         ...counts,
+        ...(leftReadable ? { left_readable: true } : {}),
         ...(changedElsewhere.forgotten + changedElsewhere.unreadable > 0 ? { other_memories_changed: changedElsewhere } : {}),
         ...(whole.length ? { forgotten_whole: whole } : {}),
         outcomes,
@@ -839,11 +928,17 @@ const TOOLS = [
       // too, even when the service answers.
       if (settings.urlProblem || settings.tokenProblem) return { status: 'not_set_up', next: NOT_SET_UP };
       try {
-        await call('GET', '/health', undefined, signal, { auth: false });
+        // The listener check runs as for every other tool: health is 'ok'
+        // only when they may send to the service.
+        await call('GET', '/health', undefined, signal, { auth: false, check: true });
       } catch (error) {
         // Where it looked stays on stderr (unreachable logs it).
         if (error.code !== 'unreachable') throw error;
-        return { status: 'unreachable', next: error.message === STARTING ? STARTING : NOT_RUNNING };
+        if (error.message === STARTING) return { status: 'unreachable', next: STARTING };
+        // The program on the port did not pass the check: memory is off, or
+        // (no answer to the check, no token yet, no core) unavailable.
+        if (error.listener) return { status: error.message === UNAVAILABLE ? 'unavailable' : 'memory_off', next: error.message };
+        return { status: 'unreachable', next: NOT_RUNNING };
       }
       return { status: 'ok', ...(await agentStatus(signal)) };
     },

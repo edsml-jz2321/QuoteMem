@@ -29,17 +29,16 @@ export function recallQuery(settings, text, { statements = settings.recallGate =
   return redacted.text.slice(0, settings.queryMaxChars);
 }
 
-// Recall asks the service for at least this many hits and inserts only
-// `topK`. The agent service ranks to a fixed depth, so its shorter list is
-// the head of a longer one; an older service ranked a short list differently,
-// and the longer one was the better one. The extra hits also fill the block
-// when a higher hit is too long for the character budget.
-export const SEARCH_MIN_HITS = 10;
-const SEARCH_MAX_HITS = 20;
+// Recall asks the service once for its largest list and inserts the first
+// `topK` hits that fit. The agent service's ranking and floors do not depend
+// on `top_k`, so a shorter list is the head of this one; the hits after
+// `topK` fill the block when a higher hit is too long for the character
+// budget or was inserted a few turns ago.
+export const SEARCH_HITS = 20;
 
-/** The /memory/search body for a query: at least SEARCH_MIN_HITS hits are asked for. */
+/** The /memory/search body for a query: always SEARCH_HITS hits are asked for. */
 export function searchBody(settings, query) {
-  const body = { user_id: settings.userId, query, top_k: Math.min(SEARCH_MAX_HITS, Math.max(settings.topK, SEARCH_MIN_HITS)) };
+  const body = { user_id: settings.userId, query, top_k: SEARCH_HITS };
   if (settings.searchOptions.length > 0) body.options = settings.searchOptions;
   return body;
 }
@@ -121,7 +120,7 @@ export function rememberIds(memo, ids) {
   if (memo.ids.length > MAX_MEMO_IDS) memo.ids.splice(0, memo.ids.length - MAX_MEMO_IDS);
 }
 
-/** Build the recall block from a /memory/search answer's hits with the settings' limits. */
+/** Build the recall block from a /memory/search answer's hits with the settings' limits: the first `topK` that fit. */
 export function recallBlock(settings, hits, skipIds = new Set()) {
   return formatRecall(hits, {
     maxChars: settings.maxInjectChars,
@@ -194,8 +193,13 @@ export async function searchRecall(settings, query, { signal, skipIds = new Set(
     // A deadline spent waiting for a rebuilt index: the service answered.
     const why = deadline.aborted ? (rebuilding ? 'index_rebuilding' : 'timeout') : errKind(error);
     // A local service that is being started on demand is not a failure: a
-    // refused connection costs nothing, and the next question finds it.
-    if (why !== 'index_rebuilding' && error?.autostart !== 'started' && error?.autostart !== 'starting') breaker.fail(why === 'timeout' ? 'timeout' : 'error');
+    // refused connection costs nothing, and the next question finds it. Nor
+    // is a listener that answered the check but was not sent the question
+    // (ELISTENER): its check takes milliseconds, and the user is told why
+    // (setupNote). A listener that stalled or broke off on the check
+    // (`no-answer`) is: a busy or paused service, as for any request.
+    const answered = error?.code === 'ELISTENER' && error.kind !== 'no-answer';
+    if (why !== 'index_rebuilding' && !answered && error?.autostart !== 'started' && error?.autostart !== 'starting') breaker.fail(why === 'timeout' || error?.kind === 'no-answer' ? 'timeout' : 'error');
     log?.warnOnce(`recall:${why}`, `recall skipped: ${why}`);
     return null;
   }

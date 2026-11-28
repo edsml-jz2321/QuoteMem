@@ -2,6 +2,9 @@
 
 Per owner and round the transactions run in this order:
 
+0. **withholding** (round 1, ``agent`` mode, right before settlement): the forgotten
+   names settlement cut positions around (``CutPositionV1``), withheld before any
+   review, so whatever a position's review then decides leaves them unreadable;
 1. **settlement** (round 1, after the barrier): the rejections, restatements
    and duplicates and the unresolved primaries (the records);
 2. **rejection**: every position whose disposition writes no memory, the
@@ -10,7 +13,7 @@ Per owner and round the transactions run in this order:
 3. **components**: one transaction per formal component (`commit_component`,
    behind the commit fence).
 
-Settlement and rejection are chunked in canonical order within
+Withholding, settlement and rejection are chunked in canonical order within
 ``MAX_TX_ROWS``; positions are not atomic with each other. Each chunk writes a
 create-once `CommitJournalV1` keyed by its first and last positions, and a
 replay skips every position an earlier journal of the same owner, round and
@@ -31,6 +34,7 @@ from quotemem.core.add_read_view import EvidenceRecord, Sigma
 from quotemem.core.commit_plan import (
     CommitJournalV1,
     CommitTxn,
+    CutPositionV1,
     DuplicatePositionV1,
     JournalMemberV1,
     JournalRowV1,
@@ -489,7 +493,7 @@ class _Chunk:
 
 def commit_chunked(
     writer: Writer, ticket: WriteTicket, *, owner_run_id: str, round_no: RoundNo,
-    txn: Literal["settlement", "rejection"], entries: Sequence[ChunkEntryV1],
+    txn: Literal["withholding", "settlement", "rejection"], entries: Sequence[ChunkEntryV1],
     updated_at: int, publish: Publish, groups_of: GroupsOf, clock: Clock,
 ) -> list[CommittedRows]:
     """Commit positions in canonical order as journaled chunks within ``CHUNK_ROWS``.
@@ -508,8 +512,8 @@ def commit_chunked(
         writer: The single Writer.
         ticket: The owner's ticket; it writes and creates the journals.
         owner_run_id: The Add owner.
-        round_no: The round; settlement is round 1.
-        txn: ``settlement`` or ``rejection``.
+        round_no: The round; withholding and settlement are round 1.
+        txn: ``withholding``, ``settlement`` or ``rejection``.
         entries: The positions in canonical order, each unique.
         updated_at: The transactions' time.
         publish: The read model's publication of each committed chunk.
@@ -743,17 +747,34 @@ def size_settled_position(
     )
 
 
+def _cut_entry(position: CutPositionV1, *, owner_run_id: str) -> ChunkEntryV1:
+    """A withholding position: its spans withheld as ``restated_forgotten``, no row of its
+    own (review or settlement writes its candidate)."""
+
+    def build(txn: TxnRows) -> set[str]:
+        return withhold_spans(txn, position.spans, reason="restated_forgotten",
+                              run_id=owner_run_id)
+
+    return ChunkEntryV1(position_key=position.position_key,
+                        resolution_digest=integrity_digest(position), build=build,
+                        withholds=True)
+
+
 def commit_settlement(
     writer: Writer, ticket: WriteTicket, *, owner_run_id: str,
     positions: Sequence[SettledPositionV1], updated_at: int, publish: Publish, clock: Clock,
-    groups_of: GroupsOf | None = None,
+    groups_of: GroupsOf | None = None, cuts: Sequence[CutPositionV1] = (),
 ) -> list[CommittedRows]:
-    """Commit the settlement transaction of one owner, chunked.
+    """Commit the settlement transaction of one owner, chunked, after its withholding.
 
-    Every position gets its candidate row; a ``denied_by_forget`` position's
-    located spans are withheld in the same chunk, with the expiries they cause;
-    a restatement's head is compared, and a moved head stops the owner with
-    ``target_changed``.
+    First the withholding transaction: the forgotten names settlement cut positions
+    around (``cuts``) are withheld, with the expiries they cause, before any of those
+    positions is settled or reviewed. A reviewed position may then be refused, left pending
+    or never reviewed; none of that leaves such a name readable, and the review reads the
+    message as it will stay. Then every settled position gets its candidate row; a
+    ``denied_by_forget`` position's located spans are withheld in the same chunk, with the
+    expiries they cause; a restatement's head is compared, and a moved head stops the owner
+    with ``target_changed``. A replay skips what the journals of either transaction cover.
 
     Args:
         writer: The single Writer.
@@ -766,6 +787,7 @@ def commit_settlement(
         clock: The owner's trusted clock for its budget checks.
         groups_of: Reads a pending candidate's support groups; by default from
             its stored ``ProposalV2``.
+        cuts: The withholding positions in canonical order (``agent`` mode only).
 
     Returns:
         The chunks committed now.
@@ -774,11 +796,16 @@ def commit_settlement(
         QuoteMemError: ``target_changed`` for a moved restatement head; else as
             `commit_chunked`.
     """
-    return commit_chunked(
+    read = groups_of or proposal_groups(writer)
+    committed = commit_chunked(
+        writer, ticket, owner_run_id=owner_run_id, round_no=1, txn="withholding",
+        entries=[_cut_entry(position, owner_run_id=owner_run_id) for position in cuts],
+        updated_at=updated_at, publish=publish, groups_of=read, clock=clock,
+    ) if cuts else []
+    return committed + commit_chunked(
         writer, ticket, owner_run_id=owner_run_id, round_no=1, txn="settlement",
         entries=[_settled_entry(position, owner_run_id=owner_run_id) for position in positions],
-        updated_at=updated_at, publish=publish, groups_of=groups_of or proposal_groups(writer),
-        clock=clock,
+        updated_at=updated_at, publish=publish, groups_of=read, clock=clock,
     )
 
 

@@ -1736,7 +1736,7 @@ class SnapshotRecallCache:
         self._pending: dict[_Key, Future[_Corpus]] = {}
         self._generation = 0
         self._scope_generations: dict[str, int] = {}
-        self._readings: dict[str, dict[int, object]] = {}
+        self._readings: dict[str, dict[object, object]] = {}
 
     @property
     def root(self) -> RecallSnapshot:
@@ -1827,19 +1827,20 @@ class SnapshotRecallCache:
                     following._retain((kind, scope_id), corpus)
         return following
 
-    def readings(self, scope_id: str) -> dict[int, object]:
+    def readings(self, scope_id: str) -> dict[object, object]:
         """The per-document readings a ranking keeps for one scope of this root.
 
         A ranking stores what it derives from a corpus document alone (keyed by the
-        document's ``id``, holding the document, so the id is never reused while kept).
-        `drop` and `clear` discard them with the corpora, so nothing derived from an erased
-        text outlives it; the next root's cache starts without them.
+        document's ``id``, holding the document, so the id is never reused while kept), and
+        what it derives from the scope's documents together (keyed by the ranking's own key,
+        holding the documents). `drop` and `clear` discard them with the corpora, so nothing
+        derived from an erased text outlives it; the next root's cache starts without them.
 
         Args:
             scope_id (str): The scope.
 
         Returns:
-            dict[int, object]: The scope's readings, shared by every Search of this root.
+            dict[object, object]: The scope's readings, shared by every Search of this root.
         """
         with self._condition:
             return self._readings.setdefault(scope_id, {})

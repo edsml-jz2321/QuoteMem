@@ -250,8 +250,8 @@ class ForgetService:
         report = statements.confirm_report(scope, grant, request)
         outcomes = report.outcomes
         return MemoryForgetStatementResponseV1(
-            status="verified" if all(row.outcome != "changed" for row in outcomes)
-            else "incomplete",
+            status="verified" if all(row.outcome in ("verified", "forgotten_earlier")
+                                     for row in outcomes) else "incomplete",
             request_digest=integrity_digest(request.model_dump(mode="json")),
             outcomes=list(outcomes),
             scope_state="maintenance_pending" if self._scope_state(scope) else "ready",

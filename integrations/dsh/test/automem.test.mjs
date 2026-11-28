@@ -18,7 +18,7 @@ import path from 'node:path';
 import { after, test } from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-import { forgetTargetRefusal } from '../../core/test/helpers.mjs';
+import { forgetTargetRefusal, listenerCheck } from '../../core/test/helpers.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const TOKEN = 'qm-test-token-7c1e9a';
@@ -28,6 +28,14 @@ for (const key of Object.keys(process.env)) {
 }
 // Background senders started by the tests exit soon after a far retry.
 process.env.QUOTEMEM_FLUSHER_MAX_WAIT_MS = '3000';
+// The adapter runs in this process and keeps its forgets and queue under the
+// home folder: a temporary one (HOME, and USERPROFILE on Windows), so a run
+// never writes into the user's own ~/.quotemem. Restored after the run.
+const realHome = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
+const testHome = fs.mkdtempSync(path.join(os.tmpdir(), 'qm-automem-home-'));
+process.env.HOME = testHome;
+process.env.USERPROFILE = testHome;
+process.on('exit', () => { try { fs.rmSync(testHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 }); } catch { /* left for the OS */ } });
 
 const automem = await import(pathToFileURL(path.join(here, '..', 'automem.mjs')).href);
 const { apply, _testing, isMemoryRelated, isTrivial, redactText, formatRecall, RECALL_HEADER } = automem;
@@ -88,6 +96,10 @@ after(async () => {
     server.closeAllConnections?.();
     server.close(() => resolve());
   })));
+  for (const [key, value] of Object.entries(realHome)) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
 });
 
 /** A stub QuoteMem. `handlers[route]` returns {status, body, headers, delay}. */
@@ -97,6 +109,7 @@ async function stubServer(handlers, port = 0) {
     const chunks = [];
     req.on('data', (c) => chunks.push(c));
     req.on('end', async () => {
+      if (listenerCheck(req, res, handlers, TOKEN)) return;
       const body = JSON.parse(Buffer.concat(chunks).toString('utf8') || 'null');
       const entry = { route: req.url, headers: req.headers, body, at: Date.now() };
       requests.push(entry);
@@ -327,7 +340,7 @@ test('recall: gated mode skips statements and ordinary messages, injects for mem
   assert.equal(server.searches().length, 1);
   const search = server.searches()[0];
   assert.deepEqual(Object.keys(search.body).sort(), ['query', 'top_k', 'user_id']);
-  assert.equal(search.body.top_k, 10, 'at least 10 hits are asked for; top_k (5) are inserted');
+  assert.equal(search.body.top_k, 20, 'the service\'s largest list is asked for once; top_k (5) are inserted');
   assert.equal(search.body.query, 'Where do I live? You should remember.', 'only the user\'s own words are searched');
   assert.equal(search.headers.authorization, `Bearer ${TOKEN}`);
   assert.equal(result.startsRequestSeries, true, 'decision fields kept');
@@ -341,7 +354,7 @@ test('recall: gated mode skips statements and ordinary messages, injects for mem
   assert.match(text, /untrusted background data/);
   assert.match(text, /<quotemem-recall count="3">/, 'gated mode adds no score floor of its own: the service applies its relevance floor');
   assert.ok(text.indexOf(ID1) < text.indexOf(ID2), 'server rank order kept');
-  assert.match(text, /<memory-hit id="01JX0000000000000000000001" rank="1" created_at="2026-11-01T10:00:00Z">/);
+  assert.match(text, /<memory-hit id="01JX0000000000000000000001" rank="1" score="0.90" created_at="2026-11-01T10:00:00Z">/);
   assert.match(text, /&gt; "User lives in Lisbon"/, 'quoted source line kept verbatim');
   assert.ok(text.includes(ID3));
 
@@ -378,7 +391,7 @@ test('recall: gated mode skips statements and ordinary messages, injects for mem
 
 test('recall: always mode applies the relevance threshold and search options', async () => {
   const server = await stubServer({
-    '/memory/search': () => ({ body: { data: [HIT(ID1, 'User lives in Lisbon', { score: 0.9 }), HIT(ID2, 'User likes green tea', { score: 0.2 }), HIT(ID3, 'No score')] } }),
+    '/memory/search': () => ({ body: { data: [HIT(ID1, 'User lives in Lisbon', { score: 0.9 }), HIT(ID2, 'User likes green tea', { score: 0.28 }), HIT(ID3, 'No score')] } }),
   });
   const ctx = fakeCtx(root);
   start(ctx, server.url, { captureEvery: 0, stateDir: newState() },
@@ -386,7 +399,7 @@ test('recall: always mode applies the relevance threshold and search options', a
   const result = await ctx.preStep(preStepPayload(session('S-always')), { kind: 'enter', messages: [userMsg('Explain TCP slow start.')] });
   assert.equal(server.searches().length, 1, 'always mode searches every message');
   assert.deepEqual(server.searches()[0].body.options, ['plugin', 'compact']);
-  assert.equal(server.searches()[0].body.top_k, 10, 'a short list is not the head of a longer one: 10 are asked for, 3 inserted');
+  assert.equal(server.searches()[0].body.top_k, 20, 'one search for the largest list: 20 are asked for, 3 inserted');
   const text = result.messages[0].content[0].text;
   assert.match(text, /count="1"/);
   assert.ok(text.includes(ID1) && !text.includes(ID2) && !text.includes(ID3));
@@ -931,7 +944,7 @@ test('settings: no token turns automatic memory off with one warning', () => {
   assert.equal(defaults.forget, 'auto');
   assert.equal(defaults.recallTimeoutMs, 3000);
   assert.ok(!('contextTurns' in defaults), 'no earlier turns are sent again');
-  assert.equal(automem.resolveSettings({ recall: 'always' }, env).recallMinScore, 0.5);
+  assert.equal(automem.resolveSettings({ recall: 'always' }, env).recallMinScore, 0.3);
   assert.equal(automem.resolveSettings({ recallGate: 'broad' }, env).recallGate, 'broad');
 
   // Every row field the schema accepts is a setting the core reads.

@@ -300,7 +300,7 @@ class ForgetShadowV1(StrictModel):
     topic keywords of the versions it tombstones, a forget of sentences those
     of its seed (``recall_agent.shadow_terms``), each term as the workspace's keyed digest
     ``forget-shadow-term``; nothing of what they say is copied. The interactive Search
-    drops a hit that holds a name or two topic keywords (``recall_agent.forget_shadowed``);
+    drops the hits they mark (``recall_agent.forget_shadowed``);
     the bench Search never reads it.
     """
 

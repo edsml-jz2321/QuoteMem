@@ -2,6 +2,84 @@
 
 All notable changes to QuoteMem are listed here. Dates are UTC.
 
+## 0.3.3 - 2026-11-28
+
+- **A day with a time of day is dated.** "next Tuesday at 3 pm", "at 9 am
+  tomorrow" or "tomorrow morning", and the same Chinese forms, now date a
+  memory to that day, as "next Tuesday" alone does.
+- **Searching the past ranks like any Search.** With the default Search
+  profile, a Search with `as_of` now scores its hits from 0 to 1 and gives
+  each memory a status read at that time. A `world` Search returns as hits
+  only the message parts said by then. docs/service.md documents `as_of`.
+- **Every hit clears the relevance floor.** With the default Search profile,
+  a Search no longer returns a hit scored below 0.25, nor a memory that
+  came with such a hit.
+- **A service on this computer must prove it holds the token.** Before the
+  plugins, the MCP server and the `quotemem` commands send the token to a URL
+  on `localhost`, `127.x`, `[::1]`, `0.0.0.0` or `[::]`, the program on its
+  port must prove that it holds it. See docs/agents.md.
+- **Recalled memories show how close they are.** Each hit in the plugins'
+  memory block now shows its relevance, from 0 to 1, and the block calls a
+  score below about 0.4 a weak match. With `QUOTEMEM_RECALL=always`, a hit
+  needs a relevance of 0.3 (it was 0.5).
+- **The smallest recall budget is 2500 characters.** A smaller
+  `QUOTEMEM_MAX_INJECT_CHARS`, or OpenClaw `maxInjectChars`, is raised to
+  2500, which leaves room for the block's notes.
+- **Search answers faster on a long history.** What a Search reads from a
+  user's whole store (each memory's status, what a forget hides) is now read
+  once and reused until the store changes, and similar memories are found
+  through an index instead of one by one. The results are the same.
+- **On a terminal, setup shows a `*` for each key character and says plainly
+  whether the key works.** Its menus and notes are one short line each. The
+  check ends with `Key works.`, or with the model that failed, the provider's
+  error code and a hint. `quotemem check` reports that code too (`provider_code`).
+- **Windows paths stay as they are in hook commands.** On Windows the Codex
+  installer now writes each path of a hook command in quotes with single
+  backslashes, as `quotemem install` does, and so do the install commands
+  `quotemem install` prints for Gemini CLI, OpenClaw and Cursor.
+- **Background saves hold their files on Windows too.** When Windows refuses
+  for a moment to replace a state file, to grant a lock that was just let
+  go, or to remove a temporary file, the plugins now try again. A lock left
+  by a process that died is broken by one process at a time.
+- **No background send waits for the next prompt.** A send asked for while
+  the background sender was still starting, a forget included, now starts
+  once that start is done, and a hook waits for that start before it exits.
+- **The demo ends cleanly on Windows.** When the service never answers
+  `/health` with 200, `examples/demo/demo.mjs` now ends by itself with exit
+  code 1.
+- **The package check runs on Windows.** `npm run check` now runs npm and the
+  installed commands on Windows too, and CI runs the plugin tests, the package
+  check and the server smoke test on Windows.
+- **A memory that states no name can drop a corrected name from its quote.**
+  After the correction "my cat is called Max, not Bob", "The user has a cat."
+  quotes "My cat" instead of "My cat is called Bob". Other memories of the cat
+  that state no name can be requoted too, when the shorter quote supports them.
+- **A question for a name finds the memory that gives it first.** "What is
+  the name of the user's cat?" now ranks "The user's cat is named Max, not
+  Bob." above "The user has a cat.". So do "What is the user's cat
+  called?" and the same question asked in Chinese.
+- **A forgotten name is looked for when it comes up again.** In the agent
+  mode, a later message that a memory quotes is checked for the name before
+  the review.
+- **A forget also takes what names the old value as ended.** In the agent
+  mode, for a target not marked `bundled`, a memory or sentence that names its
+  own value after ", not" or the user's "I no longer", or its number or e-mail
+  after "no longer" or "previous", is reworded, forgotten or withheld. The
+  prepare lists what changes.
+- **A forget of an old value can keep the current one.** A memory that names the
+  old value beside the current one (", not 14 Oak Street", "rather than Arkwright
+  Media") is reworded without it, or forgotten with it; the prepare lists which.
+  A memory marked sensitive (credentials, health) is forgotten whole, with every quote.
+- **A confirmation says what it left.** When its checks find a forgotten name,
+  value, number or code still readable, a forget by statement answers
+  `incomplete` with a last outcome `left_readable`, and the plugins report it
+  to the user.
+- **The prepare lists more of what a forget changes.** It also lists the
+  memories that the user's words hide when a forget withholds sentences alone,
+  and a past memory that leaves the list with the memories that replaced it.
+- **A forget splits sentences as the plugins do.** A dot inside an e-mail
+  address or a word no longer ends a saved sentence.
+
 ## 0.3.2 - 2026-11-26
 
 - **`quotemem_add` no longer sends a guessed time.** The MCP tool no longer
